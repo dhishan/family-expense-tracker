@@ -1,0 +1,30 @@
+# Family Expense Tracker - Terraform Variables
+# Copy this file to terraform.tfvars and fill in your values
+
+# Project ID (REQUIRED - Set this to your GCP project ID)
+project_id = "personal-projects-473219"
+
+# Region
+region = "us-central1"
+
+# Environment
+environment = "dev"
+
+# Firestore location
+firestore_location = "us-central1"
+
+# Frontend bucket name (must be globally unique)
+frontend_bucket_name = "expense-tracker-frontend-dev"
+
+# Domain configuration
+root_domain = "blueelephants.org"
+
+# Google OAuth client ID for verifying Google Sign-In tokens
+google_client_id = "your-client-id.apps.googleusercontent.com"
+
+# JWT secret key for signing tokens (generate with: openssl rand -hex 32)
+jwt_secret_key = "your-jwt-secret-key"
+
+# Cloudflare configuration
+cloudflare_api_token = "your-cloudflare-api-token"
+cloudflare_zone_id   = "1eb0ae8907a74b14d5226384b92946b7"

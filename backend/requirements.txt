@@ -1,0 +1,30 @@
+# FastAPI and server
+fastapi
+uvicorn[standard]
+
+# Google Cloud
+google-cloud-firestore
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+
+# Authentication
+python-jose[cryptography]
+passlib[bcrypt]
+httpx
+
+# Utilities
+pydantic[email]
+pydantic-settings
+python-dotenv
+pytz
+
+# Testing
+pytest
+pytest-asyncio
+pytest-cov
+httpx
+
+# Development
+ruff
+black
