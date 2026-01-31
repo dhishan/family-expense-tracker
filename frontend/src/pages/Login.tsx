@@ -37,16 +37,22 @@ export default function Login() {
 
   const handleGoogleCallback = useCallback(
     async (response: { credential: string }) => {
+      console.log('Google Sign-In callback triggered')
       try {
+        console.log('Calling backend auth API...')
         const authResponse = await authApi.googleLogin(response.credential, 'id_token')
+        console.log('Auth successful, user:', authResponse.user.email)
+        
         login(authResponse.access_token, authResponse.user)
 
         // If user has a family, fetch it
         if (authResponse.user.family_id) {
           try {
+            console.log('Fetching family data:', authResponse.user.family_id)
             const familyData = await familyApi.get(authResponse.user.family_id)
             setFamily(familyData)
             setFamilyMembers(familyData.members)
+            console.log('Family data loaded')
           } catch (err) {
             console.error('Failed to fetch family:', err)
           }

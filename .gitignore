@@ -33,7 +33,6 @@ Thumbs.db
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl
-terraform/workspaces/*/terraform.tfvars
 crash.log
 
 # Credentials (NEVER commit these)

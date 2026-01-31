@@ -12,7 +12,8 @@ env:
   BACKEND_SERVICE: expense-tracker-backend
   ARTIFACT_REGISTRY: us-central1-docker.pkg.dev
   REPOSITORY: expense-tracker-backend
-  FRONTEND_BUCKET: expense-tracker-frontend-dev
+  FRONTEND_BUCKET: family-expenses-frontend-bucket-dev
+  TF_WORKSPACE: dev
 
 jobs:
   test-backend:
@@ -115,18 +116,17 @@ jobs:
       - name: Build and Push Docker image
         run: |
           cd backend
-          docker build -t ${{ env.ARTIFACT_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.BACKEND_SERVICE }}:${{ github.sha }} .
-          docker build -t ${{ env.ARTIFACT_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.BACKEND_SERVICE }}:latest .
+          docker build --platform=linux/amd64 \
+            -t ${{ env.ARTIFACT_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.BACKEND_SERVICE }}:${{ github.sha }} \
+            -t ${{ env.ARTIFACT_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.BACKEND_SERVICE }}:latest .
           docker push ${{ env.ARTIFACT_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.BACKEND_SERVICE }}:${{ github.sha }}
           docker push ${{ env.ARTIFACT_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.BACKEND_SERVICE }}:latest
       
-      - name: Deploy to Cloud Run
+      - name: Deploy to Cloud Run via Terraform
         run: |
-          gcloud run deploy ${{ env.BACKEND_SERVICE }} \
-            --image ${{ env.ARTIFACT_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.BACKEND_SERVICE }}:${{ github.sha }} \
-            --platform managed \
-            --region ${{ env.REGION }} \
-            --allow-unauthenticated
+          cd terraform/main
+          terraform init -backend-config=../workspaces/${{ env.TF_WORKSPACE }}/backend.conf
+          terraform apply -var-file=../workspaces/${{ env.TF_WORKSPACE }}/terraform.tfvars -auto-approve
 
   deploy-frontend:
     name: Deploy Frontend
@@ -158,7 +158,7 @@ jobs:
           cd frontend
           npm run build
         env:
-          VITE_API_URL: https://api.blueelephants.org
+          VITE_API_URL: https://api.expense-tracker.blueelephants.org
           VITE_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
       
       - name: Authenticate to Google Cloud
@@ -173,5 +173,9 @@ jobs:
       - name: Deploy to Cloud Storage
         run: |
           gsutil -m rsync -r -d frontend/dist gs://${{ env.FRONTEND_BUCKET }}
-          gsutil -m setmeta -h "Cache-Control:public, max-age=3600" gs://${{ env.FRONTEND_BUCKET }}/**/*.html
-          gsutil -m setmeta -h "Cache-Control:public, max-age=31536000" "gs://${{ env.FRONTEND_BUCKET }}/**/*.js" "gs://${{ env.FRONTEND_BUCKET }}/**/*.css"
+          gsutil setmeta -h "Cache-Control:no-cache, no-store, must-revalidate" gs://${{ env.FRONTEND_BUCKET }}/index.html
+          gsutil -m setmeta -h "Cache-Control:public, max-age=31536000, immutable" gs://${{ env.FRONTEND_BUCKET }}/assets/*.js gs://${{ env.FRONTEND_BUCKET }}/assets/*.css 2>/dev/null || true
+      
+      - name: Invalidate CDN Cache
+        run: |
+          gcloud compute url-maps invalidate-cdn-cache ${{ env.BACKEND_SERVICE }}-frontend --path "/*" --async

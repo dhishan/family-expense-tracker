@@ -32,3 +32,14 @@ output "frontend_load_balancer_ip" {
   description = "Reserved global IPv4 address serving the frontend"
   value       = google_compute_global_address.frontend.address
 }
+
+output "jwt_secret_id" {
+  description = "ID of the JWT secret in Secret Manager"
+  value       = google_secret_manager_secret.jwt_secret.secret_id
+}
+
+output "jwt_secret_value" {
+  description = "Generated JWT secret key (sensitive - only use for local development)"
+  value       = random_password.jwt_secret.result
+  sensitive   = true
+}

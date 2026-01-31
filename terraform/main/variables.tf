@@ -45,18 +45,6 @@ variable "google_client_id" {
   default     = ""
 }
 
-variable "jwt_secret_key" {
-  description = "Secret key for signing JWT tokens"
-  type        = string
-  sensitive   = true
-}
-
-variable "cloudflare_api_token" {
-  description = "Cloudflare API Token for DNS management"
-  type        = string
-  sensitive   = true
-}
-
 variable "cloudflare_zone_id" {
   description = "Cloudflare zone ID for root domain (blueelephants.org)"
   type        = string

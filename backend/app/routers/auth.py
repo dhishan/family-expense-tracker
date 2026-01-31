@@ -32,13 +32,21 @@ async def google_auth(request: GoogleAuthRequest):
     Accepts either a Google ID token or access token.
     Creates user if not exists, returns JWT token.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"Google auth attempt with token_type: {request.token_type}")
+    
     try:
         # Verify Google token and get user info
         if request.token_type == "id_token":
             google_user = await verify_google_token(request.token)
         else:
             google_user = await get_google_user_info(request.token)
+        
+        logger.info(f"Google auth successful for user: {google_user.get('email')}")
     except ValueError as e:
+        logger.error(f"Google auth failed: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(e),

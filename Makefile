@@ -122,8 +122,8 @@ deploy-backend: build-backend docker-push-backend ## Deploy backend to Cloud Run
 		--allow-unauthenticated \
 		--set-env-vars "GCP_PROJECT_ID=$(PROJECT_ID)" \
 		--set-env-vars "FIRESTORE_DATABASE=family-expense-tracker-$(ENV)" \
-		--set-env-vars "ENVIRONMENT=production" \
-		--set-env-vars "FRONTEND_URL=https://app.blueelephants.org" \
+		--set-env-vars "ENVIRONMENT=$(ENV)" \
+		--set-env-vars "FRONTEND_URL=https://ui.expense-tracker.blueelephants.org" \
 		--min-instances 0 \
 		--max-instances 10 \
 		--memory 512Mi \
@@ -135,12 +135,23 @@ deploy-frontend: build-frontend ## Deploy frontend to Cloud Storage (served via 
 	@echo "Deploying frontend to Cloud Storage..."
 	@FRONTEND_BUCKET=$${FRONTEND_BUCKET:-$$(terraform -chdir=$(TF_DIR) output -raw frontend_bucket_name 2>/dev/null || echo $(FRONTEND_BUCKET))}; \
 	gsutil -m rsync -r -d frontend/dist gs://$$FRONTEND_BUCKET; \
-	gsutil -m setmeta -h "Cache-Control:public, max-age=3600" gs://$$FRONTEND_BUCKET/**/*.html; \
-	gsutil -m setmeta -h "Cache-Control:public, max-age=31536000" gs://$$FRONTEND_BUCKET/**/*.{js,css,png,jpg,svg}; \
-	echo "✅ Frontend deployed"; \
-	echo "Bucket: gs://$$FRONTEND_BUCKET"
+	gsutil setmeta -h "Cache-Control:no-cache, no-store, must-revalidate" gs://$$FRONTEND_BUCKET/index.html; \
+	gsutil -m setmeta -h "Cache-Control:public, max-age=31536000, immutable" gs://$$FRONTEND_BUCKET/assets/*.js gs://$$FRONTEND_BUCKET/assets/*.css 2>/dev/null || true; \
+	echo "✅ Frontend deployed to gs://$$FRONTEND_BUCKET"; \
+	echo "Invalidating CDN cache..."; \
+	gcloud compute url-maps invalidate-cdn-cache $(BACKEND_SERVICE_NAME)-frontend --path "/*" --async; \
+	echo "✅ CDN cache invalidation initiated"
 
 deploy: deploy-backend deploy-frontend ## Deploy both backend and frontend
+
+terraform-cleanup: ## Clean up Terraform local files
+	@echo "Cleaning up Terraform local files..."
+	rm -rf $(TF_DIR)/.terraform
+	rm -f $(TF_DIR)/.terraform.lock.hcl
+	rm -f $(TF_DIR)/.terraform.tfstate
+	rm -f $(TF_DIR)/.terraform.tfstate.backup
+	rm -f $(TF_DIR)/.bw-provider-state
+	@echo "✅ Terraform local files cleaned"
 
 # Terraform operations
 terraform-init: ## Initialize Terraform

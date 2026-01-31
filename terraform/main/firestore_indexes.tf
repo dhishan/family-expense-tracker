@@ -1,6 +1,6 @@
 # Firestore indexes for Family Expense Tracker
 
-# Index for querying expenses by family and date
+# Index for querying expenses by family and date (descending for list)
 resource "google_firestore_index" "expenses_family_date" {
   project    = var.project_id
   database   = google_firestore_database.database.name
@@ -19,6 +19,30 @@ resource "google_firestore_index" "expenses_family_date" {
   fields {
     field_path = "__name__"
     order      = "DESCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
+
+# Index for querying expenses by family and date range (ascending for summary)
+resource "google_firestore_index" "expenses_family_date_range" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "expenses"
+
+  fields {
+    field_path = "family_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "date"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "__name__"
+    order      = "ASCENDING"
   }
 
   depends_on = [google_firestore_database.database]

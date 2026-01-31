@@ -28,6 +28,16 @@ resource "google_project_service" "artifactregistry" {
   disable_on_destroy = false
 }
 
+# Artifact Registry repository for backend Docker images
+resource "google_artifact_registry_repository" "backend" {
+  location      = var.region
+  repository_id = "expense-tracker-backend"
+  description   = "Expense Tracker backend Docker images"
+  format        = "DOCKER"
+
+  depends_on = [google_project_service.artifactregistry]
+}
+
 resource "google_project_service" "secretmanager" {
   service            = "secretmanager.googleapis.com"
   disable_on_destroy = false
@@ -54,8 +64,8 @@ data "google_project" "current" {
 
 locals {
   root_domain_fqdn     = trim(var.root_domain, ".")
-  frontend_domain_fqdn = "app.${trim(var.root_domain, ".")}"
-  backend_domain_fqdn  = "api.${trim(var.root_domain, ".")}"
+  frontend_domain_fqdn = "ui.expense-tracker.${trim(var.root_domain, ".")}"
+  backend_domain_fqdn  = "api.expense-tracker.${trim(var.root_domain, ".")}"
   dns_zone_name        = "${replace(trim(var.root_domain, "."), ".", "-")}-zone"
   backend_image_path   = "us-central1-docker.pkg.dev/${var.project_id}/expense-tracker-backend/expense-tracker-backend:latest"
 }
@@ -102,6 +112,12 @@ resource "google_project_iam_member" "backend_artifact_registry_access" {
   depends_on = [google_project_service.artifactregistry]
 }
 
+# Generate a random JWT secret key
+resource "random_password" "jwt_secret" {
+  length  = 64
+  special = false
+}
+
 # Secret for JWT signing key
 resource "google_secret_manager_secret" "jwt_secret" {
   secret_id = "${var.backend_service_name}-jwt-secret"
@@ -118,7 +134,7 @@ resource "google_secret_manager_secret" "jwt_secret" {
 
 resource "google_secret_manager_secret_version" "jwt_secret" {
   secret      = google_secret_manager_secret.jwt_secret.id
-  secret_data = var.jwt_secret_key
+  secret_data = random_password.jwt_secret.result
 }
 
 # Cloud Run service for backend
@@ -309,7 +325,7 @@ resource "google_cloud_run_domain_mapping" "backend" {
 # Cloudflare DNS records
 resource "cloudflare_record" "frontend_a" {
   zone_id = var.cloudflare_zone_id
-  name    = "app"
+  name    = "ui.expense-tracker"
   type    = "A"
   content = google_compute_global_address.frontend.address
   proxied = false
@@ -320,7 +336,7 @@ resource "cloudflare_record" "frontend_a" {
 
 resource "cloudflare_record" "backend_cname" {
   zone_id = var.cloudflare_zone_id
-  name    = "api"
+  name    = "api.expense-tracker"
   type    = "CNAME"
   content = "ghs.googlehosted.com"
   proxied = false

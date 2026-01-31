@@ -41,7 +41,9 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    // Only redirect on 401 for authenticated routes, not for login itself
+    if (error.response?.status === 401 && !error.config?.url?.includes('/auth/google')) {
+      console.error('Authentication failed, redirecting to login')
       useAuthStore.getState().logout()
       window.location.href = '/login'
     }

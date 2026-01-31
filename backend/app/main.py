@@ -24,7 +24,7 @@ cors_origins = [
 
 if settings.environment == "production":
     cors_origins.extend([
-        "https://app.blueelephants.org",
+        "https://ui.expense-tracker.blueelephants.org",
         "https://blueelephants.org",
     ])
 
