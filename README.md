@@ -244,11 +244,12 @@ echo "${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 Go to your GitHub repository → Settings → Secrets and variables → Actions → New repository secret
 
 Add these secrets:
+
 | Secret Name | Value |
 |-------------|-------|
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/610355955735/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider` |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/610355955735/locations/global/workloadIdentityPools/github-pool/providers/github-provider` |
 | `GCP_SERVICE_ACCOUNT` | `tf-github@personal-projects-473219.iam.gserviceaccount.com` |
-| `GOOGLE_CLIENT_ID` |  |
+| `GOOGLE_CLIENT_ID` | `610355955735-0uv0l16rbkr6bd345c34ck690s892kn6.apps.googleusercontent.com` |
 
 #### 8. Create Artifact Registry Repository
 
