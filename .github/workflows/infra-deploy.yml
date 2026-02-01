@@ -34,6 +34,9 @@ on:
 env:
   PROJECT_ID: personal-projects-473219
   REGION: us-central1
+  # Default values for when workflow is triggered by PR/push (not workflow_dispatch)
+  TF_ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+  TF_ACTION: ${{ github.event.inputs.action || 'plan' }}
 
 jobs:
   deploy-infra:
@@ -75,27 +78,27 @@ jobs:
 
       - name: Initialize Terraform
         run: |
-          make terraform-init TF_ENV=${{ github.event.inputs.environment }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
+          make terraform-init TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 
       - name: Terraform Plan
-        if: github.event.inputs.action == 'plan'
+        if: env.TF_ACTION == 'plan'
         run: |
-          make terraform-plan TF_ENV=${{ github.event.inputs.environment }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
+          make terraform-plan TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 
       - name: Terraform Apply
-        if: github.event.inputs.action == 'apply'
+        if: env.TF_ACTION == 'apply'
         run: |
-          make terraform-apply TF_ENV=${{ github.event.inputs.environment }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
+          make terraform-apply TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 
       - name: Terraform Destroy
-        if: github.event.inputs.action == 'destroy'
+        if: env.TF_ACTION == 'destroy'
         run: |
-          make terraform-destroy TF_ENV=${{ github.event.inputs.environment }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
+          make terraform-destroy TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 
       - name: Display Terraform Outputs
         run: |
           echo "Terraform Outputs:"
-          make terraform-output TF_ENV=${{ github.event.inputs.environment }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }} >> tf_outputs.txt
+          make terraform-output TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }} >> tf_outputs.txt
           cat tf_outputs.txt
           cat tf_outputs.txt > ${GITHUB_STEP_SUMMARY}
 
