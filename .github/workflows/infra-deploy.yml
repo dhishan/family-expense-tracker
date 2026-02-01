@@ -52,24 +52,18 @@ jobs:
       - name: Verify Authentication
         run: |
           echo "Verifying GCP authentication..."
-          echo "Auth output: ${{ steps.auth.outputs.credentials_file_path }}"
-          echo "Credentials file exists: $(test -f $GOOGLE_APPLICATION_CREDENTIALS && echo 'yes' || echo 'no')"
+          echo "Credentials file: $GOOGLE_APPLICATION_CREDENTIALS"
           
-          if [ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
-            echo "Credentials file size: $(wc -c < $GOOGLE_APPLICATION_CREDENTIALS) bytes"
-          fi
+          # Explicitly activate the service account using the credentials file
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          gcloud config set project ${{ env.PROJECT_ID }}
           
           # Verify the service account
           gcloud auth list
-          echo "Current project: $(gcloud config get-value project)"
+          echo "Active account: $(gcloud config get-value account)"
           
           echo "Testing GCS bucket access..."
-          gsutil ls gs://dhishan-terraform-assets/ || {
-            echo "ERROR: Cannot access Terraform state bucket"
-            echo "Trying with explicit authentication..."
-            gcloud auth application-default print-access-token > /dev/null 2>&1 || echo "No ADC token available"
-            exit 1
-          }
+          gsutil ls gs://dhishan-terraform-assets/
           echo "✓ Successfully authenticated and verified bucket access"
       
       - name: Set up Terraform
