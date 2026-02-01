@@ -81,17 +81,17 @@ jobs:
           make terraform-init TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 
       - name: Terraform Plan
-        if: ${{ env.TF_ACTION == 'plan' }}
+        if: env.TF_ACTION == 'plan'
         run: |
           make terraform-plan TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 
       - name: Terraform Apply
-        if: ${{ env.TF_ACTION == 'apply' }}
+        if: env.TF_ACTION == 'apply'
         run: |
           make terraform-apply TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 
       - name: Terraform Destroy
-        if: ${{ env.TF_ACTION == 'destroy' }}
+        if: env.TF_ACTION == 'destroy'
         run: |
           make terraform-destroy TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 
