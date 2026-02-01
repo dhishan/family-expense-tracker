@@ -52,7 +52,8 @@ jobs:
           terraform_version: 1.9.0
 
       - name: Initialize Terraform
-        run: terraform -chdir=terraform/main init
+        run: |
+          make terraform-init TF_ENV=${{ github.event.inputs.environment }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 
       - name: Terraform Plan
         if: github.event.inputs.action == 'plan'
