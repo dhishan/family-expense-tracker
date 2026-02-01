@@ -1,6 +1,6 @@
 # Project ID (REQUIRED - Set this to your GCP project ID)
 project_id = "personal-projects-473219"
-
+environment = "dev"
 # Region (must support Cloud Run domain mappings)
 region = "us-central1"
 

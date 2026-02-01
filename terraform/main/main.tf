@@ -161,7 +161,7 @@ resource "google_cloud_run_service" "backend" {
 
         env {
           name  = "ENVIRONMENT"
-          value = "production"
+          value = var.environment
         }
 
         env {
