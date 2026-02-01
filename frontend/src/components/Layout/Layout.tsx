@@ -12,7 +12,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { useAuthStore } from '../../store/auth'
 import { useQuery } from '@tanstack/react-query'
-import { notificationsApi } from '../../services/api'
+import { notificationsApi, authApi } from '../../services/api'
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: HomeIcon },
@@ -23,6 +23,7 @@ const navigation = [
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
 
@@ -32,9 +33,15 @@ export default function Layout() {
     refetchInterval: 30000, // Refresh every 30 seconds
   })
 
-  const handleLogout = () => {
-    logout()
-    navigate('/login')
+  const handleLogout = async () => {
+    try {
+      await authApi.logout()
+    } catch (error) {
+      console.error('Logout error:', error)
+    } finally {
+      logout()
+      navigate('/login')
+    }
   }
 
   return (
@@ -70,6 +77,15 @@ export default function Layout() {
               </NavLink>
             ))}
           </nav>
+          <div className="p-4 border-t">
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-3 px-3 py-2 w-full text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <ArrowRightOnRectangleIcon className="h-5 w-5" />
+              Logout
+            </button>
+          </div>
         </div>
       </div>
 
@@ -133,23 +149,64 @@ export default function Layout() {
           </button>
 
           {/* User menu */}
-          <div className="flex items-center gap-3">
-            {user?.photo_url ? (
-              <img
-                src={user.photo_url}
-                alt={user.display_name}
-                className="h-8 w-8 rounded-full"
-              />
-            ) : (
-              <div className="h-8 w-8 rounded-full bg-primary-100 flex items-center justify-center">
-                <span className="text-sm font-medium text-primary-700">
-                  {user?.display_name?.[0]?.toUpperCase() || 'U'}
-                </span>
-              </div>
+          <div className="relative">
+            <button
+              onClick={() => setUserMenuOpen(!userMenuOpen)}
+              className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+            >
+              {user?.photo_url ? (
+                <img
+                  src={user.photo_url}
+                  alt={user.display_name}
+                  className="h-8 w-8 rounded-full"
+                />
+              ) : (
+                <div className="h-8 w-8 rounded-full bg-primary-100 flex items-center justify-center">
+                  <span className="text-sm font-medium text-primary-700">
+                    {user?.display_name?.[0]?.toUpperCase() || 'U'}
+                  </span>
+                </div>
+              )}
+              <span className="hidden sm:block text-sm font-medium text-gray-700">
+                {user?.display_name}
+              </span>
+            </button>
+
+            {/* Dropdown menu */}
+            {userMenuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-10"
+                  onClick={() => setUserMenuOpen(false)}
+                />
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-20">
+                  <div className="px-4 py-2 border-b border-gray-100">
+                    <p className="text-sm font-medium text-gray-900">{user?.display_name}</p>
+                    <p className="text-xs text-gray-500 truncate">{user?.email}</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setUserMenuOpen(false)
+                      navigate('/settings')
+                    }}
+                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                  >
+                    <Cog6ToothIcon className="h-4 w-4" />
+                    Settings
+                  </button>
+                  <button
+                    onClick={() => {
+                      setUserMenuOpen(false)
+                      handleLogout()
+                    }}
+                    className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-gray-100 flex items-center gap-2"
+                  >
+                    <ArrowRightOnRectangleIcon className="h-4 w-4" />
+                    Sign Out
+                  </button>
+                </div>
+              </>
             )}
-            <span className="hidden sm:block text-sm font-medium text-gray-700">
-              {user?.display_name}
-            </span>
           </div>
         </div>
 
