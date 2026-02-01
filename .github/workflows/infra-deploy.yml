@@ -76,10 +76,6 @@ jobs:
         with:
           terraform_version: 1.9.0
 
-      - name: Initialize Terraform
-        run: |
-          make terraform-init TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
-
       - name: Terraform Plan
         if: env.TF_ACTION == 'plan'
         run: |
