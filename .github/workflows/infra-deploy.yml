@@ -29,11 +29,11 @@ jobs:
   deploy-infra:
     name: Deploy Infrastructure
     runs-on: ubuntu-latest
-    
+
     permissions:
       contents: read
       id-token: write
-    
+
     steps:
       - uses: actions/checkout@v4
 
@@ -45,10 +45,10 @@ jobs:
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
           create_credentials_file: true
           export_environment_variables: true
-      
+
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
-      
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
@@ -79,5 +79,4 @@ jobs:
           make terraform-output TF_ENV=${{ github.event.inputs.environment }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }} >> tf_outputs.txt
           cat tf_outputs.txt
           cat tf_outputs.txt > ${GITHUB_STEP_SUMMARY}
-      
-            
+
