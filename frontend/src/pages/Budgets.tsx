@@ -8,11 +8,6 @@ import { useAuthStore } from '../store/auth'
 import { CATEGORY_INFO } from '../types'
 import type { BudgetCreate, BudgetPeriod, Budget, ExpenseCategory } from '../types'
 
-const CATEGORIES: ExpenseCategory[] = [
-  'groceries', 'dining', 'transportation', 'utilities', 'entertainment',
-  'healthcare', 'shopping', 'travel', 'education', 'other',
-]
-
 interface BudgetFormData {
   name: string
   amount: number
@@ -25,8 +20,14 @@ export default function Budgets() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null)
 
-  const { user, familyMembers } = useAuthStore()
+  const { user, familyMembers, family } = useAuthStore()
   const queryClient = useQueryClient()
+
+  // Use family categories or fallback to default
+  const categories = family?.categories || [
+    'groceries', 'dining', 'transportation', 'utilities', 'entertainment',
+    'healthcare', 'shopping', 'travel', 'education', 'other',
+  ]
 
   const { data, isLoading } = useQuery({
     queryKey: ['budgets'],
@@ -328,9 +329,9 @@ export default function Budgets() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2"
                 >
                   <option value="">All Categories</option>
-                  {CATEGORIES.map((cat) => (
+                  {categories.map((cat) => (
                     <option key={cat} value={cat}>
-                      {CATEGORY_INFO[cat].label}
+                      {CATEGORY_INFO[cat as ExpenseCategory]?.label || cat.charAt(0).toUpperCase() + cat.slice(1)}
                     </option>
                   ))}
                 </select>

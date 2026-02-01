@@ -112,6 +112,14 @@ export const familyApi = {
     )
     return response.data
   },
+
+  updateSettings: async (
+    familyId: string,
+    settings: { categories?: string[]; beneficiary_labels?: Record<string, string> }
+  ): Promise<Family> => {
+    const response = await api.put<Family>(`/families/${familyId}/settings`, settings)
+    return response.data
+  },
 }
 
 // Expenses API

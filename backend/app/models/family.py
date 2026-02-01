@@ -7,6 +7,12 @@ from pydantic import BaseModel
 class FamilyBase(BaseModel):
     """Base family model."""
     name: str
+    categories: List[str] = [
+        "groceries", "dining", "transportation", "utilities", 
+        "entertainment", "healthcare", "shopping", "travel", 
+        "education", "other"
+    ]
+    beneficiary_labels: dict[str, str] = {"family": "Entire Family"}
 
 
 class FamilyCreate(FamilyBase):
@@ -32,6 +38,8 @@ class FamilyResponse(BaseModel):
     created_at: datetime
     created_by: str
     invite_code: str
+    categories: List[str]
+    beneficiary_labels: dict[str, str]
 
 
 class FamilyWithMembers(FamilyResponse):
@@ -50,6 +58,12 @@ class FamilyMember(BaseModel):
 class JoinFamilyRequest(BaseModel):
     """Request to join a family."""
     invite_code: str
+
+
+class FamilySettingsUpdate(BaseModel):
+    """Update family settings."""
+    categories: Optional[List[str]] = None
+    beneficiary_labels: Optional[dict[str, str]] = None
 
 
 # Update forward reference

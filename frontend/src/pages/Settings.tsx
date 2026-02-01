@@ -2,7 +2,14 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import toast from 'react-hot-toast'
-import { ClipboardDocumentIcon, ArrowPathIcon, UserPlusIcon } from '@heroicons/react/24/outline'
+import { 
+  ClipboardDocumentIcon, 
+  ArrowPathIcon, 
+  UserPlusIcon,
+  PlusIcon,
+  XMarkIcon,
+  PencilIcon,
+} from '@heroicons/react/24/outline'
 import { familyApi } from '../services/api'
 import { useAuthStore } from '../store/auth'
 
@@ -10,6 +17,11 @@ export default function Settings() {
   const { user, family, familyMembers, setFamily, setFamilyMembers, setUser } = useAuthStore()
   const queryClient = useQueryClient()
   const [_showJoinModal, setShowJoinModal] = useState(false)
+  const [editingCategories, setEditingCategories] = useState(false)
+  const [categories, setCategories] = useState<string[]>([])
+  const [newCategory, setNewCategory] = useState('')
+  const [editingBeneficiaryLabels, setEditingBeneficiaryLabels] = useState(false)
+  const [beneficiaryLabels, setBeneficiaryLabels] = useState<Record<string, string>>({})
 
   // Create family form
   const {
@@ -79,6 +91,18 @@ export default function Settings() {
     onError: () => toast.error('Failed to leave family'),
   })
 
+  // Update family settings mutation
+  const updateSettingsMutation = useMutation({
+    mutationFn: (settings: { categories?: string[]; beneficiary_labels?: Record<string, string> }) =>
+      familyApi.updateSettings(family!.id, settings),
+    onSuccess: (updatedFamily) => {
+      setFamily(updatedFamily)
+      queryClient.invalidateQueries()
+      toast.success('Settings updated!')
+    },
+    onError: () => toast.error('Failed to update settings'),
+  })
+
   const copyInviteCode = () => {
     if (family?.invite_code) {
       navigator.clipboard.writeText(family.invite_code)
@@ -92,6 +116,61 @@ export default function Settings() {
 
   const onJoinFamily = (data: { invite_code: string }) => {
     joinFamilyMutation.mutate(data.invite_code)
+  }
+
+  const handleEditCategories = () => {
+    setCategories([...(family?.categories || [])])
+    setEditingCategories(true)
+  }
+
+  const handleSaveCategories = () => {
+    if (categories.length === 0) {
+      toast.error('Must have at least one category')
+      return
+    }
+    updateSettingsMutation.mutate(
+      { categories },
+      {
+        onSuccess: () => setEditingCategories(false),
+      }
+    )
+  }
+
+  const handleAddCategory = () => {
+    const trimmed = newCategory.trim().toLowerCase()
+    if (!trimmed) return
+    if (categories.includes(trimmed)) {
+      toast.error('Category already exists')
+      return
+    }
+    setCategories([...categories, trimmed])
+    setNewCategory('')
+  }
+
+  const handleRemoveCategory = (index: number) => {
+    setCategories(categories.filter((_, i) => i !== index))
+  }
+
+  const handleEditBeneficiaryLabels = () => {
+    setBeneficiaryLabels({ ...(family?.beneficiary_labels || {}) })
+    setEditingBeneficiaryLabels(true)
+  }
+
+  const handleSaveBeneficiaryLabels = () => {
+    if (!beneficiaryLabels.family) {
+      toast.error('Must have a label for "Entire Family"')
+      return
+    }
+    updateSettingsMutation.mutate(
+      { beneficiary_labels: beneficiaryLabels },
+      {
+        onSuccess: () => setEditingBeneficiaryLabels(false),
+      }
+    )
+  }
+
+  const handleUpdateBeneficiaryLabel = (key: string, value: string) => {
+    setBeneficiaryLabels({ ...beneficiaryLabels, [key]: value })
   }
 
   return (
@@ -202,6 +281,167 @@ export default function Settings() {
                   </div>
                 ))}
               </div>
+            </div>
+
+            {/* Categories */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-gray-500">
+                  Expense Categories
+                </label>
+                {!editingCategories && (
+                  <button
+                    onClick={handleEditCategories}
+                    className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1"
+                  >
+                    <PencilIcon className="h-4 w-4" />
+                    Edit
+                  </button>
+                )}
+              </div>
+              
+              {editingCategories ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    {categories.map((category, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center gap-1 px-3 py-1 bg-primary-50 text-primary-700 rounded-full text-sm"
+                      >
+                        <span className="capitalize">{category}</span>
+                        <button
+                          onClick={() => handleRemoveCategory(index)}
+                          className="hover:text-primary-900"
+                        >
+                          <XMarkIcon className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newCategory}
+                      onChange={(e) => setNewCategory(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleAddCategory()}
+                      placeholder="Add new category"
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    />
+                    <button
+                      onClick={handleAddCategory}
+                      className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+                    >
+                      <PlusIcon className="h-5 w-5" />
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        setEditingCategories(false)
+                        setNewCategory('')
+                      }}
+                      className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveCategories}
+                      disabled={updateSettingsMutation.isPending}
+                      className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 text-sm"
+                    >
+                      {updateSettingsMutation.isPending ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {family.categories?.map((category) => (
+                    <span
+                      key={category}
+                      className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm capitalize"
+                    >
+                      {category}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Beneficiary Labels */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-gray-500">
+                  "For" Labels
+                </label>
+                {!editingBeneficiaryLabels && (
+                  <button
+                    onClick={handleEditBeneficiaryLabels}
+                    className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1"
+                  >
+                    <PencilIcon className="h-4 w-4" />
+                    Edit
+                  </button>
+                )}
+              </div>
+              
+              {editingBeneficiaryLabels ? (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <div>
+                      <label className="text-xs text-gray-600">Entire Family Label</label>
+                      <input
+                        type="text"
+                        value={beneficiaryLabels.family || ''}
+                        onChange={(e) => handleUpdateBeneficiaryLabel('family', e.target.value)}
+                        placeholder="e.g., Entire Family, Household"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mt-1"
+                      />
+                    </div>
+                    {familyMembers.map((member) => (
+                      <div key={member.id}>
+                        <label className="text-xs text-gray-600">{member.display_name}</label>
+                        <input
+                          type="text"
+                          value={beneficiaryLabels[member.id] || member.display_name}
+                          onChange={(e) => handleUpdateBeneficiaryLabel(member.id, e.target.value)}
+                          placeholder={member.display_name}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mt-1"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setEditingBeneficiaryLabels(false)}
+                      className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveBeneficiaryLabels}
+                      disabled={updateSettingsMutation.isPending}
+                      className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 text-sm"
+                    >
+                      {updateSettingsMutation.isPending ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between py-1">
+                    <span className="text-gray-600">Entire Family:</span>
+                    <span className="font-medium text-gray-900">{family.beneficiary_labels?.family || 'Entire Family'}</span>
+                  </div>
+                  {familyMembers.map((member) => (
+                    <div key={member.id} className="flex justify-between py-1">
+                      <span className="text-gray-600">{member.display_name}:</span>
+                      <span className="font-medium text-gray-900">
+                        {family.beneficiary_labels?.[member.id] || member.display_name}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Leave family */}

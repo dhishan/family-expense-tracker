@@ -16,6 +16,8 @@ export interface Family {
   created_at: string
   created_by: string
   invite_code: string
+  categories: string[]
+  beneficiary_labels: Record<string, string>
 }
 
 export interface FamilyMember {

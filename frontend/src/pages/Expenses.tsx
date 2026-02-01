@@ -15,11 +15,6 @@ import { useAuthStore } from '../store/auth'
 import { CATEGORY_INFO, PAYMENT_METHOD_LABELS } from '../types'
 import type { ExpenseCreate, ExpenseCategory, PaymentMethod, Expense } from '../types'
 
-const CATEGORIES: ExpenseCategory[] = [
-  'groceries', 'dining', 'transportation', 'utilities', 'entertainment',
-  'healthcare', 'shopping', 'travel', 'education', 'other',
-]
-
 const PAYMENT_METHODS: PaymentMethod[] = [
   'cash', 'credit', 'debit', 'bank_transfer', 'paypal', 'venmo', 'other',
 ]
@@ -45,8 +40,14 @@ export default function Expenses() {
   const [showFilters, setShowFilters] = useState(false)
   const [page, setPage] = useState(1)
 
-  const { user, familyMembers } = useAuthStore()
+  const { user, familyMembers, family } = useAuthStore()
   const queryClient = useQueryClient()
+
+  // Use family categories or fallback to default
+  const categories = family?.categories || [
+    'groceries', 'dining', 'transportation', 'utilities', 'entertainment',
+    'healthcare', 'shopping', 'travel', 'education', 'other',
+  ]
 
   const { data, isLoading } = useQuery({
     queryKey: ['expenses', page, filters],
@@ -180,9 +181,9 @@ export default function Expenses() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2"
               >
                 <option value="">All Categories</option>
-                {CATEGORIES.map((cat) => (
+                {categories.map((cat) => (
                   <option key={cat} value={cat}>
-                    {CATEGORY_INFO[cat].label}
+                    {CATEGORY_INFO[cat as ExpenseCategory]?.label || cat.charAt(0).toUpperCase() + cat.slice(1)}
                   </option>
                 ))}
               </select>
@@ -416,9 +417,9 @@ export default function Expenses() {
                   {...register('category', { required: true })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2"
                 >
-                  {CATEGORIES.map((cat) => (
+                  {categories.map((cat) => (
                     <option key={cat} value={cat}>
-                      {CATEGORY_INFO[cat].label}
+                      {CATEGORY_INFO[cat as ExpenseCategory]?.label || cat.charAt(0).toUpperCase() + cat.slice(1)}
                     </option>
                   ))}
                 </select>

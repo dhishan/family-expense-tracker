@@ -12,6 +12,7 @@ from app.models.family import (
     FamilyWithMembers,
     FamilyMember,
     JoinFamilyRequest,
+    FamilySettingsUpdate,
 )
 from app.services.firestore import get_firestore_client
 
@@ -38,12 +39,18 @@ async def create_family(
     db = get_firestore_client()
     now = datetime.utcnow()
     
+    # Initialize beneficiary labels with creator
+    beneficiary_labels = family.beneficiary_labels.copy()
+    beneficiary_labels[current_user.id] = current_user.display_name
+    
     # Create family
     family_data = {
         "name": family.name,
         "created_at": now,
         "created_by": current_user.id,
         "invite_code": generate_invite_code(),
+        "categories": family.categories,
+        "beneficiary_labels": beneficiary_labels,
     }
     
     family_ref = db.collection("families").document()
@@ -93,6 +100,9 @@ async def get_family(
     )
     
     members = []
+    beneficiary_labels = family_data.get("beneficiary_labels", {"family": "Entire Family"})
+    needs_update = False
+    
     for member_doc in members_query.stream():
         member_data = member_doc.to_dict()
         members.append(FamilyMember(
@@ -101,6 +111,17 @@ async def get_family(
             display_name=member_data["display_name"],
             photo_url=member_data.get("photo_url"),
         ))
+        
+        # Automatically add member to beneficiary_labels if not present
+        if member_doc.id not in beneficiary_labels:
+            beneficiary_labels[member_doc.id] = member_data["display_name"]
+            needs_update = True
+    
+    # Update family if new members were added to labels
+    if needs_update:
+        family_ref = db.collection("families").document(family_id)
+        family_ref.update({"beneficiary_labels": beneficiary_labels})
+        family_data["beneficiary_labels"] = beneficiary_labels
     
     return FamilyWithMembers(
         **family_data,
@@ -273,3 +294,54 @@ async def regenerate_invite_code(
     family_ref.update({"invite_code": new_code})
     
     return {"invite_code": new_code}
+
+
+@router.put("/{family_id}/settings", response_model=FamilyResponse)
+async def update_family_settings(
+    family_id: str,
+    settings: FamilySettingsUpdate,
+    current_user: User = Depends(get_current_user),
+):
+    """Update family settings (categories and beneficiary labels)."""
+    if current_user.family_id != family_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this family",
+        )
+    
+    db = get_firestore_client()
+    
+    # Prepare update data
+    update_data = {}
+    if settings.categories is not None:
+        if not settings.categories:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Categories list cannot be empty",
+            )
+        update_data["categories"] = settings.categories
+    
+    if settings.beneficiary_labels is not None:
+        if "family" not in settings.beneficiary_labels:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Beneficiary labels must include 'family' key",
+            )
+        update_data["beneficiary_labels"] = settings.beneficiary_labels
+    
+    if not update_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No settings to update",
+        )
+    
+    # Update family
+    family_ref = db.collection("families").document(family_id)
+    family_ref.update(update_data)
+    
+    # Get updated family
+    family_doc = family_ref.get()
+    family_data = family_doc.to_dict()
+    family_data["id"] = family_doc.id
+    
+    return FamilyResponse(**family_data)
