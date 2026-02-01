@@ -1,8 +1,17 @@
 """Pytest configuration and fixtures."""
 import pytest
+import os
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
+
+# Set test environment before importing app
+os.environ['ENVIRONMENT'] = 'test'
+os.environ['GCP_PROJECT_ID'] = 'test-project'
+os.environ['FIRESTORE_DATABASE'] = 'test-database'
+os.environ['GOOGLE_CLIENT_ID'] = 'test-client-id'
+os.environ['JWT_SECRET_KEY'] = 'test-secret-key-for-testing-only'
+os.environ['FRONTEND_URL'] = 'http://localhost:5173'
 
 from app.main import app
 from app.models.user import User

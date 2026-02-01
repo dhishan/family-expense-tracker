@@ -16,11 +16,16 @@ def get_firestore_client() -> firestore.Client:
     
     Uses a singleton pattern to reuse the client across requests.
     Will use Application Default Credentials (ADC) when available.
+    In test environment, returns None to be mocked by tests.
     
     Returns:
-        Firestore client
+        Firestore client or None in test environment
     """
     global _db_client
+    
+    # In test environment, don't initialize the client - let tests mock it
+    if settings.environment == "test":
+        return _db_client
     
     if _db_client is None:
         # Use Application Default Credentials (works both locally and in Cloud Run)
@@ -28,8 +33,6 @@ def get_firestore_client() -> firestore.Client:
             project=settings.gcp_project_id,
             database=settings.firestore_database,
         )
-    
-    return _db_client
     
     return _db_client
 
