@@ -15,7 +15,6 @@ TF_ENV ?= dev
 TF_DIR := terraform/main
 TF_VARS_REL := ../workspaces/$(TF_ENV)/terraform.tfvars
 TF_VARS_PATH := $(TF_DIR)/../workspaces/$(TF_ENV)/terraform.tfvars
-GOOGLE_APPLICATION_CREDENTIALS ?= ~/.config/gcloud/application_default_credentials.json
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'

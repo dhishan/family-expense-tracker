@@ -13,6 +13,11 @@ os.environ['GOOGLE_CLIENT_ID'] = 'test-client-id'
 os.environ['JWT_SECRET_KEY'] = 'test-secret-key-for-testing-only'
 os.environ['FRONTEND_URL'] = 'http://localhost:5173'
 
+# Mock Firestore client before any app imports
+mock_firestore_client = MagicMock()
+firestore_patcher = patch('google.cloud.firestore.Client', return_value=mock_firestore_client)
+firestore_patcher.start()
+
 from app.main import app
 from app.models.user import User
 
