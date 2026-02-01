@@ -65,7 +65,7 @@ jobs:
           gcloud auth list
           
           echo "Testing GCS bucket access..."
-          gsutil ls gs://dhishan-terraform-assets/
+          gcloud storage ls gs://dhishan-terraform-assets/
           echo "✓ Successfully authenticated and verified bucket access"
 
       - name: Set up Terraform
