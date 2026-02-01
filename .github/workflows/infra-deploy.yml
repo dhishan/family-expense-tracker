@@ -1,6 +1,16 @@
 name: infra-deploy
 
 on:
+  pull_request:
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/infra-deploy.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/infra-deploy.yml'
   workflow_dispatch:
     inputs:
       environment:
