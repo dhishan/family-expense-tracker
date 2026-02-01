@@ -37,6 +37,7 @@ env:
   # Default values for when workflow is triggered by PR/push (not workflow_dispatch)
   TF_ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
   TF_ACTION: ${{ github.event.inputs.action || 'plan' }}
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
 jobs:
   deploy-infra:
