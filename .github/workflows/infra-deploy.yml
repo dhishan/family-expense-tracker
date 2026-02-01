@@ -1,6 +1,16 @@
 name: infra-deploy
 
 on:
+  pull_request:
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/infra-deploy.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/infra-deploy.yml'
   workflow_dispatch:
     inputs:
       environment:
@@ -24,16 +34,19 @@ on:
 env:
   PROJECT_ID: personal-projects-473219
   REGION: us-central1
+  # Default values for when workflow is triggered by PR/push (not workflow_dispatch)
+  TF_ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+  TF_ACTION: ${{ github.event.inputs.action || 'plan' }}
 
 jobs:
   deploy-infra:
     name: Deploy Infrastructure
     runs-on: ubuntu-latest
-    
+
     permissions:
       contents: read
       id-token: write
-    
+
     steps:
       - uses: actions/checkout@v4
 
@@ -45,19 +58,19 @@ jobs:
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
           create_credentials_file: true
           export_environment_variables: true
-      
+
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
-      
+
       - name: Verify Authentication
         run: |
           echo "Verifying GCP authentication..."
           gcloud auth list
           
-          echo "Testing GCS bucket access with gcloud storage..."
+          echo "Testing GCS bucket access..."
           gcloud storage ls gs://dhishan-terraform-assets/
           echo "✓ Successfully authenticated and verified bucket access"
-      
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
@@ -65,28 +78,27 @@ jobs:
 
       - name: Initialize Terraform
         run: |
-          make terraform-init TF_ENV=${{ github.event.inputs.environment }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
+          make terraform-init TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 
       - name: Terraform Plan
-        if: github.event.inputs.action == 'plan'
+        if: env.TF_ACTION == 'plan'
         run: |
-          make terraform-plan TF_ENV=${{ github.event.inputs.environment }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
+          make terraform-plan TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 
       - name: Terraform Apply
-        if: github.event.inputs.action == 'apply'
+        if: env.TF_ACTION == 'apply'
         run: |
-          make terraform-apply TF_ENV=${{ github.event.inputs.environment }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
+          make terraform-apply TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 
       - name: Terraform Destroy
-        if: github.event.inputs.action == 'destroy'
+        if: env.TF_ACTION == 'destroy'
         run: |
-          make terraform-destroy TF_ENV=${{ github.event.inputs.environment }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
+          make terraform-destroy TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 
       - name: Display Terraform Outputs
         run: |
           echo "Terraform Outputs:"
-          make terraform-output TF_ENV=${{ github.event.inputs.environment }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }} >> tf_outputs.txt
+          make terraform-output TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }} >> tf_outputs.txt
           cat tf_outputs.txt
           cat tf_outputs.txt > ${GITHUB_STEP_SUMMARY}
-      
-            
+
