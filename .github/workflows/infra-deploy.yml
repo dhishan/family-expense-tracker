@@ -43,8 +43,6 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-          create_credentials_file: true
-          export_environment_variables: true
       
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
@@ -52,15 +50,8 @@ jobs:
       - name: Verify Authentication
         run: |
           echo "Verifying GCP authentication..."
-          echo "Credentials file: $GOOGLE_APPLICATION_CREDENTIALS"
-          
-          # Explicitly activate the service account using the credentials file
-          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
-          gcloud config set project ${{ env.PROJECT_ID }}
-          
-          # Verify the service account
           gcloud auth list
-          echo "Active account: $(gcloud config get-value account)"
+          gcloud config get-value project
           
           echo "Testing GCS bucket access..."
           gsutil ls gs://dhishan-terraform-assets/
