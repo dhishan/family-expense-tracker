@@ -125,6 +125,35 @@ resource "google_firestore_index" "expenses_beneficiary_family_date" {
   depends_on = [google_firestore_database.database]
 }
 
+# Index for budget spending queries: category equality + family_id equality + date range
+resource "google_firestore_index" "expenses_category_family_date" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "expenses"
+
+  fields {
+    field_path = "category"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "family_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "date"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "__name__"
+    order      = "ASCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
+
 # Index for querying budgets by family
 resource "google_firestore_index" "budgets_family" {
   project    = var.project_id

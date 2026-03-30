@@ -64,16 +64,19 @@ async def create_expense(
     
     try:
         result = await expense_service.create(expense, current_user)
-        
-        # Check budgets asynchronously (don't block response)
-        await check_budgets_after_expense(current_user.family_id)
-        
-        return result
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+    # Check budgets — don't fail expense creation if this errors
+    try:
+        await check_budgets_after_expense(current_user.family_id)
+    except Exception:
+        pass
+
+    return result
 
 
 @router.get("", response_model=ExpenseListResponse)

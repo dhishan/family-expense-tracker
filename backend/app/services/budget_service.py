@@ -206,9 +206,12 @@ class BudgetService:
         
         statuses = []
         for budget in budgets:
-            status = await self.get_status(budget.id, family_id)
-            if status:
-                statuses.append(status)
+            try:
+                status = await self.get_status(budget.id, family_id)
+                if status:
+                    statuses.append(status)
+            except Exception:
+                pass
         
         return statuses
     
