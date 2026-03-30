@@ -55,6 +55,21 @@ export default function Expenses() {
     enabled: !!user?.family_id,
   })
 
+  const { data: allExpensesData } = useQuery({
+    queryKey: ['expenses-merchants'],
+    queryFn: () => expensesApi.list({ page: 1, page_size: 200 }),
+    enabled: !!user?.family_id,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const pastMerchants = Array.from(
+    new Set(
+      (allExpensesData?.expenses ?? [])
+        .map((e) => e.merchant)
+        .filter((m): m is string => !!m && m.trim().length > 0)
+    )
+  ).sort()
+
   const createMutation = useMutation({
     mutationFn: expensesApi.create,
     onSuccess: () => {
@@ -404,9 +419,16 @@ export default function Expenses() {
                 <input
                   type="text"
                   {...register('merchant')}
+                  list="merchants-datalist"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2"
                   placeholder="Store or vendor name"
+                  autoComplete="off"
                 />
+                <datalist id="merchants-datalist">
+                  {pastMerchants.map((m) => (
+                    <option key={m} value={m} />
+                  ))}
+                </datalist>
               </div>
 
               <div>
