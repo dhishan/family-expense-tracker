@@ -1,16 +1,21 @@
 import { test as setup, expect } from '@playwright/test'
 import * as https from 'https'
+import * as fs from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const authFile = join(__dirname, '.auth/user.json')
+const STATE_FILE = join(__dirname, '.test-state.json')
 
-async function post(hostname: string, path: string, body: string, headers: Record<string, string>): Promise<unknown> {
+const API = process.env.API_URL || 'https://api.expense-tracker.blueelephants.org/api/v1'
+
+function get(url: string, token: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    const u = new URL(url)
     const req = https.request(
-      { hostname, path, method: 'POST', headers: { ...headers, 'Content-Length': Buffer.byteLength(body) } },
+      { hostname: u.hostname, path: u.pathname + u.search, method: 'GET', headers: { Authorization: `Bearer ${token}` } },
       (res) => {
         let data = ''
         res.on('data', (chunk) => (data += chunk))
@@ -18,66 +23,23 @@ async function post(hostname: string, path: string, body: string, headers: Recor
       }
     )
     req.on('error', reject)
-    req.write(body)
     req.end()
   })
 }
 
-async function getFreshIdToken(): Promise<string> {
-  const refreshToken = process.env.GOOGLE_TEST_REFRESH_TOKEN
-  const clientId = process.env.VITE_GOOGLE_CLIENT_ID
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET
-
-  if (!refreshToken) throw new Error('GOOGLE_TEST_REFRESH_TOKEN env var is required')
-  if (!clientId) throw new Error('VITE_GOOGLE_CLIENT_ID env var is required')
-  if (!clientSecret) throw new Error('GOOGLE_CLIENT_SECRET env var is required')
-
-  const body = new URLSearchParams({
-    client_id: clientId,
-    client_secret: clientSecret,
-    refresh_token: refreshToken,
-    grant_type: 'refresh_token',
-  }).toString()
-
-  const tokens = await post('oauth2.googleapis.com', '/token', body, {
-    'Content-Type': 'application/x-www-form-urlencoded',
-  }) as Record<string, string>
-
-  if (!tokens.id_token) {
-    throw new Error(`Failed to get id_token from Google: ${JSON.stringify(tokens)}`)
-  }
-
-  return tokens.id_token
-}
-
-setup('authenticate via Google refresh token', async ({ page }) => {
+setup('authenticate test user', async ({ page }) => {
   const baseURL = process.env.BASE_URL || 'https://ui.expense-tracker.blueelephants.org'
-  const apiBase = process.env.API_URL || 'https://api.expense-tracker.blueelephants.org/api/v1'
 
-  // Step 1: Exchange refresh token for fresh Google ID token
-  const idToken = await getFreshIdToken()
-
-  // Step 2: Exchange Google ID token for app JWT
-  const authBody = JSON.stringify({ token: idToken, token_type: 'id_token' })
-  const authRes = await post('api.expense-tracker.blueelephants.org', '/api/v1/auth/google', authBody, {
-    'Content-Type': 'application/json',
-  }) as Record<string, unknown>
-
-  if (!authRes.access_token) {
-    throw new Error(`Backend auth failed: ${JSON.stringify(authRes)}`)
+  if (!fs.existsSync(STATE_FILE)) {
+    throw new Error('global-setup must run before auth.setup — .test-state.json not found')
   }
 
-  const jwt = authRes.access_token as string
-  const user = authRes.user
+  const { jwt } = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
 
-  // Step 3: Fetch full user profile
-  const userRes = await page.request.get(`${apiBase}/auth/me`, {
-    headers: { Authorization: `Bearer ${jwt}` },
-  })
-  expect(userRes.ok(), `Failed to fetch user profile: ${await userRes.text()}`).toBeTruthy()
-  const userProfile = await userRes.json()
+  // Fetch full user profile using the JWT from global setup
+  const userProfile = await get(`${API}/auth/me`, jwt) as Record<string, unknown>
 
-  // Step 4: Inject auth state into localStorage
+  // Inject auth state into localStorage
   await page.goto(baseURL)
   await page.evaluate(
     ({ token, user }) => {
@@ -90,5 +52,5 @@ setup('authenticate via Google refresh token', async ({ page }) => {
   )
 
   await page.context().storageState({ path: authFile })
-  console.log(`✅ Authenticated as ${userProfile.email}`)
+  console.log(`✅ Browser authenticated as ${userProfile.email}`)
 })
