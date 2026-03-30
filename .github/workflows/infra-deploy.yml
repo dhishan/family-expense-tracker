@@ -84,6 +84,8 @@ jobs:
 
       - name: Terraform Apply
         if: env.TF_ACTION == 'apply'
+        env:
+          TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: |
           make terraform-apply TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 

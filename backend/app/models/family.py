@@ -38,8 +38,8 @@ class FamilyResponse(BaseModel):
     created_at: datetime
     created_by: str
     invite_code: str
-    categories: List[str]
-    beneficiary_labels: dict[str, str]
+    categories: List[str] = []
+    beneficiary_labels: dict[str, str] = {}
 
 
 class FamilyWithMembers(FamilyResponse):

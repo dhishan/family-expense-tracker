@@ -16,3 +16,4 @@ root_domain      = "blueelephants.org"
 
 # Google OAuth
 google_client_id = "610355955735-0uv0l16rbkr6bd345c34ck690s892kn6.apps.googleusercontent.com"
+# google_client_secret is passed via TF_VAR_google_client_secret env var in CI

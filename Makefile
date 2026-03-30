@@ -111,8 +111,10 @@ docker-push-backend: build-backend ## Push backend image to Artifact Registry
 	docker push $(GCR_IMAGE):latest
 	@echo "✅ Backend image pushed: $(GCR_IMAGE):latest"
 
+push-backend: docker-push-backend ## Build and push backend image only (CI/CD uses this, then terraform-apply)
+
 # Deployment
-deploy-backend: build-backend docker-push-backend ## Deploy backend to Cloud Run
+deploy-backend: build-backend docker-push-backend ## Deploy backend to Cloud Run (local/emergency only - CI/CD uses push-backend + terraform-apply)
 	@echo "Deploying backend to Cloud Run..."
 	gcloud run deploy $(BACKEND_SERVICE_NAME) \
 		--image $(GCR_IMAGE):latest \
@@ -123,6 +125,8 @@ deploy-backend: build-backend docker-push-backend ## Deploy backend to Cloud Run
 		--set-env-vars "FIRESTORE_DATABASE=family-expense-tracker-$(ENV)" \
 		--set-env-vars "ENVIRONMENT=$(ENV)" \
 		--set-env-vars "FRONTEND_URL=https://ui.expense-tracker.blueelephants.org" \
+		--set-env-vars "GOOGLE_CLIENT_ID=$(GOOGLE_CLIENT_ID)" \
+		--set-env-vars "GOOGLE_CLIENT_SECRET=$(GOOGLE_CLIENT_SECRET)" \
 		--min-instances 0 \
 		--max-instances 10 \
 		--memory 512Mi \
@@ -185,6 +189,17 @@ terraform-unlock: ## Force unlock Terraform state
 
 terraform-output: ## Show Terraform outputs
 	terraform -chdir=$(TF_DIR) output
+
+# Secret management
+push-secret: ## Push a secret to Secret Manager. Usage: make push-secret SECRET_NAME=<name> SECRET_VALUE=<value>
+	@if [ -z "$(SECRET_NAME)" ] || [ -z "$(SECRET_VALUE)" ]; then \
+		echo "Usage: make push-secret SECRET_NAME=<name> SECRET_VALUE=<value>"; \
+		exit 1; \
+	fi
+	@echo "$(SECRET_VALUE)" | gcloud secrets versions add $(SECRET_NAME) --data-file=- --project=$(PROJECT_ID) 2>/dev/null || \
+	(echo "Secret does not exist, creating..."; \
+	echo "$(SECRET_VALUE)" | gcloud secrets create $(SECRET_NAME) --data-file=- --project=$(PROJECT_ID) --replication-policy=user-managed --locations=$(REGION))
+	@echo "✅ Secret $(SECRET_NAME) updated"
 
 # Setup helpers
 setup-tfstate-bucket: ## Create GCS bucket for Terraform state

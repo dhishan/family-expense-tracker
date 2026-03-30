@@ -137,6 +137,25 @@ resource "google_secret_manager_secret_version" "jwt_secret" {
   secret_data = random_password.jwt_secret.result
 }
 
+# Secret for Google OAuth client secret
+resource "google_secret_manager_secret" "google_client_secret" {
+  secret_id = "${var.backend_service_name}-google-client-secret"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "google_client_secret" {
+  secret      = google_secret_manager_secret.google_client_secret.id
+  secret_data = var.google_client_secret
+}
+
 # Cloud Run service for backend
 resource "google_cloud_run_service" "backend" {
   name     = var.backend_service_name
@@ -184,6 +203,16 @@ resource "google_cloud_run_service" "backend" {
           }
         }
 
+        env {
+          name = "GOOGLE_CLIENT_SECRET"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.google_client_secret.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
         resources {
           limits = {
             cpu    = "1000m"
@@ -216,7 +245,8 @@ resource "google_cloud_run_service" "backend" {
 
   depends_on = [
     google_project_service.run,
-    google_secret_manager_secret_version.jwt_secret
+    google_secret_manager_secret_version.jwt_secret,
+    google_secret_manager_secret_version.google_client_secret
   ]
 }
 

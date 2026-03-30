@@ -45,6 +45,13 @@ variable "google_client_id" {
   default     = ""
 }
 
+variable "google_client_secret" {
+  description = "OAuth client secret for Google Sign-In"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "cloudflare_zone_id" {
   description = "Cloudflare zone ID for root domain (blueelephants.org)"
   type        = string
