@@ -96,6 +96,35 @@ resource "google_firestore_index" "expenses_family_user_date" {
   depends_on = [google_firestore_database.database]
 }
 
+# Index for querying expenses by beneficiary, family, and date (for budget spending calculation)
+resource "google_firestore_index" "expenses_beneficiary_family_date" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "expenses"
+
+  fields {
+    field_path = "beneficiary"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "family_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "date"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "__name__"
+    order      = "ASCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
+
 # Index for querying budgets by family
 resource "google_firestore_index" "budgets_family" {
   project    = var.project_id
