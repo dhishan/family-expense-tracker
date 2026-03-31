@@ -122,6 +122,15 @@ export default async function globalSetup() {
 
   let familyId = user.family_id as string | null
 
+  // Verify the family still exists (could have been deleted externally)
+  if (familyId) {
+    const familyCheck = await get(`${API}/families/${familyId}`, jwt) as any
+    if (familyCheck.detail === 'Family not found' || familyCheck.status_code === 404) {
+      console.log('   ⚠️  Stale family_id detected — family was deleted externally')
+      familyId = null
+    }
+  }
+
   if (!familyId) {
     console.log('   🏠 Creating test family...')
     const family = await post('api.expense-tracker.blueelephants.org', '/api/v1/families',
@@ -132,14 +141,15 @@ export default async function globalSetup() {
     console.log(`   ✅ Test family created: ${familyId}`)
   } else {
     console.log(`   🏠 Using existing test family: ${familyId}`)
+
+    // Wipe all test data from previous runs
+    console.log('   🧹 Cleaning up previous test data...')
+    await Promise.all([
+      deleteAllExpenses(jwt),
+      deleteAllBudgets(jwt),
+    ])
   }
 
-  // Wipe all test data from previous runs
-  console.log('   🧹 Cleaning up previous test data...')
-  await Promise.all([
-    deleteAllExpenses(jwt),
-    deleteAllBudgets(jwt),
-  ])
   console.log('   ✅ Clean slate ready\n')
 
   // Save state for teardown and auth.setup.ts

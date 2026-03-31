@@ -263,14 +263,28 @@ async def leave_family(
     
     db = get_firestore_client()
     
-    # Update user to remove family_id
     now = datetime.utcnow()
-    user_ref = db.collection("users").document(current_user.id)
-    user_ref.update({
+
+    # Remove family_id from the leaving user
+    db.collection("users").document(current_user.id).update({
         "family_id": None,
         "updated_at": now,
     })
-    
+
+    # Check if any members remain
+    remaining = list(
+        db.collection("users")
+        .where(filter=FieldFilter("family_id", "==", family_id))
+        .stream()
+    )
+
+    if not remaining:
+        # Last member left — cascade delete everything for this family
+        for col in ("expenses", "budgets", "notifications"):
+            for doc in db.collection(col).where(filter=FieldFilter("family_id", "==", family_id)).stream():
+                doc.reference.delete()
+        db.collection("families").document(family_id).delete()
+
     return {"message": "Successfully left the family"}
 
 
