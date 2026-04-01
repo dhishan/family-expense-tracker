@@ -1,5 +1,7 @@
+import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from './store/auth'
+import { familyApi } from './services/api'
 import Layout from './components/Layout/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -8,7 +10,19 @@ import Budgets from './pages/Budgets'
 import Settings from './pages/Settings'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuthStore()
+  const { isAuthenticated, isLoading, user, family, setFamily, setFamilyMembers } = useAuthStore()
+
+  // Re-fetch family on mount if authenticated but family not loaded (e.g. after page refresh)
+  useEffect(() => {
+    if (isAuthenticated && user?.family_id && !family) {
+      familyApi.get(user.family_id)
+        .then((familyData) => {
+          setFamily(familyData)
+          setFamilyMembers(familyData.members)
+        })
+        .catch(() => {}) // stale family_id — ignore, Settings will show create form
+    }
+  }, [isAuthenticated, user?.family_id, family, setFamily, setFamilyMembers])
 
   if (isLoading) {
     return (
