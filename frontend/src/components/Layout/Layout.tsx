@@ -128,7 +128,7 @@ export default function Layout() {
       {/* Main content */}
       <div className="lg:pl-64">
         {/* Top bar */}
-        <div className="sticky top-0 z-40 flex h-16 items-center gap-4 border-b bg-white px-4 sm:px-6 lg:px-8">
+        <div className="safe-top sticky top-0 z-40 flex h-16 items-center gap-4 border-b bg-white px-4 sm:px-6 lg:px-8">
           <button
             className="lg:hidden"
             onClick={() => setSidebarOpen(true)}
@@ -211,10 +211,29 @@ export default function Layout() {
         </div>
 
         {/* Page content */}
-        <main className="p-4 sm:p-6 lg:p-8">
+        <main className="p-4 sm:p-6 lg:p-8 pb-24 lg:pb-8">
           <Outlet />
         </main>
       </div>
+
+      {/* Mobile bottom tab bar */}
+      <nav className="safe-bottom lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 flex">
+        {navigation.map((item) => (
+          <NavLink
+            key={item.name}
+            to={item.href}
+            end={item.href === '/'}
+            className={({ isActive }) =>
+              `flex flex-col items-center justify-center gap-0.5 flex-1 py-2 text-xs font-medium transition-colors ${
+                isActive ? 'text-primary-600' : 'text-gray-400 hover:text-gray-600'
+              }`
+            }
+          >
+            <item.icon className="h-6 w-6" />
+            {item.name}
+          </NavLink>
+        ))}
+      </nav>
     </div>
   )
 }

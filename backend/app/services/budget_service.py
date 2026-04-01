@@ -163,20 +163,21 @@ class BudgetService:
         return budgets
     
     async def get_status(
-        self, 
-        budget_id: str, 
-        family_id: str
+        self,
+        budget_id: str,
+        family_id: str,
+        reference_date: Optional[date] = None,
     ) -> Optional[BudgetStatus]:
         """Get budget status with spending info."""
         budget = await self.get(budget_id, family_id)
-        
+
         if not budget:
             return None
-        
-        # Get current period dates
+
+        # Get current period dates — use client's local date when provided
         period = BudgetPeriod(budget.period)
-        period_start, period_end = self._get_period_dates(period)
-        
+        period_start, period_end = self._get_period_dates(period, reference_date=reference_date)
+
         # Get spending
         expense_service = get_expense_service()
         spent = await expense_service.get_spending_for_budget(
@@ -186,10 +187,10 @@ class BudgetService:
             category=budget.category,
             beneficiary=budget.beneficiary,
         )
-        
+
         remaining = budget.amount - spent
         percentage_used = (spent / budget.amount * 100) if budget.amount > 0 else 0
-        
+
         return BudgetStatus(
             budget=budget,
             spent=spent,
@@ -199,15 +200,15 @@ class BudgetService:
             period_start=period_start,
             period_end=period_end,
         )
-    
-    async def list_with_status(self, family_id: str) -> List[BudgetStatus]:
+
+    async def list_with_status(self, family_id: str, reference_date: Optional[date] = None) -> List[BudgetStatus]:
         """List all budgets with their current status."""
         budgets = await self.list(family_id)
-        
+
         statuses = []
         for budget in budgets:
             try:
-                status = await self.get_status(budget.id, family_id)
+                status = await self.get_status(budget.id, family_id, reference_date=reference_date)
                 if status:
                     statuses.append(status)
             except Exception:

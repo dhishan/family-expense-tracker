@@ -1,5 +1,7 @@
 """Budgets router."""
-from fastapi import APIRouter, HTTPException, status, Depends
+from datetime import date
+from typing import Optional
+from fastapi import APIRouter, HTTPException, status, Depends, Query
 
 from app.auth.dependencies import get_current_user
 from app.models.user import User
@@ -41,6 +43,7 @@ async def create_budget(
 @router.get("", response_model=BudgetListResponse)
 async def list_budgets(
     current_user: User = Depends(get_current_user),
+    reference_date: Optional[date] = Query(None, description="Client's local date (YYYY-MM-DD) for period calculation"),
 ):
     """List all budgets with their current status."""
     if not current_user.family_id:
@@ -48,10 +51,10 @@ async def list_budgets(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You must be part of a family to view budgets",
         )
-    
+
     budget_service = get_budget_service()
-    statuses = await budget_service.list_with_status(current_user.family_id)
-    
+    statuses = await budget_service.list_with_status(current_user.family_id, reference_date=reference_date)
+
     return BudgetListResponse(
         budgets=statuses,
         total=len(statuses),

@@ -1,4 +1,4 @@
-.PHONY: help install dev stop build test clean deploy-backend deploy-frontend deploy terraform-init terraform-plan terraform-apply terraform-destroy docker-dev docker-up docker-down
+.PHONY: help install dev-native dev-backend dev-frontend local-up local-reset local-down stop build test clean deploy-backend deploy-frontend deploy terraform-init terraform-plan terraform-apply terraform-destroy docker-dev docker-up docker-down
 
 # Variables
 PROJECT_ID ?= $(shell gcloud config get-value project)
@@ -33,7 +33,7 @@ install: ## Install all dependencies
 	cd frontend && npm install
 	@echo "✅ Dependencies installed"
 
-dev: ## Run both backend and frontend in development mode
+dev-native: ## Run backend + frontend natively (no Docker, requires venv)
 	@echo "Starting development servers..."
 	@trap 'kill 0' EXIT; \
 	(cd backend && . venv/bin/activate && python -m uvicorn app.main:app --reload --port 8000) & \
@@ -237,6 +237,26 @@ setup: enable-apis setup-tfstate-bucket setup-artifact-registry install ## Compl
 	@echo "3. Copy terraform/workspaces/dev/terraform.tfvars.example to terraform.tfvars"
 	@echo "4. Run 'make terraform-apply' to provision infrastructure"
 	@echo "5. Run 'make dev' to start local development"
+
+local-up: ## Start local dev stack (Firebase emulator + backend + frontend). Creates .env.local from example if missing.
+	@if [ ! -f backend/.env.local ]; then \
+		echo "⚠️  backend/.env.local not found — copying from backend/.env.local.example"; \
+		cp backend/.env.local.example backend/.env.local; \
+		echo "📝 Fill in backend/.env.local with your credentials, then re-run make local-up"; \
+		exit 1; \
+	fi
+	GOOGLE_CLIENT_ID=$$(grep '^GOOGLE_CLIENT_ID' backend/.env.local | cut -d= -f2) \
+		docker compose up --build firebase backend-dev frontend-dev
+
+local-reset: ## Wipe emulator data and restart from a clean state
+	docker compose stop firebase backend-dev frontend-dev
+	docker compose rm -f firebase backend-dev frontend-dev
+	docker volume rm $$(docker volume ls -q | grep firebase) 2>/dev/null || true
+	@$(MAKE) local-up
+
+local-down: ## Stop and remove local dev stack containers
+	docker compose stop firebase backend-dev frontend-dev
+	docker compose rm -f firebase backend-dev frontend-dev
 
 # Status
 status: ## Show deployment status

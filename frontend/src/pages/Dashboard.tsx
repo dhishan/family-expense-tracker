@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { format, startOfMonth, endOfMonth, subMonths } from 'date-fns'
+import { format, startOfMonth, endOfMonth, subMonths, getDaysInMonth } from 'date-fns'
 import {
   Chart as ChartJS,
   ArcElement,
@@ -22,6 +22,7 @@ ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarEle
 export default function Dashboard() {
   const { user, family } = useAuthStore()
   const [selectedMonth, setSelectedMonth] = useState(new Date())
+  const [budgetView, setBudgetView] = useState<'period' | 'monthly'>('period')
 
   const startDate = format(startOfMonth(selectedMonth), 'yyyy-MM-dd')
   const endDate = format(endOfMonth(selectedMonth), 'yyyy-MM-dd')
@@ -203,39 +204,88 @@ export default function Dashboard() {
 
         {/* Budget status */}
         <div className="bg-white rounded-xl shadow-sm p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
-            Budget Status
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Budget Status</h2>
+            <div className="flex text-xs rounded-lg overflow-hidden border border-gray-200">
+              <button
+                onClick={() => setBudgetView('period')}
+                className={`px-3 py-1.5 ${budgetView === 'period' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                This Period
+              </button>
+              <button
+                onClick={() => setBudgetView('monthly')}
+                className={`px-3 py-1.5 ${budgetView === 'monthly' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                {format(selectedMonth, 'MMM')}
+              </button>
+            </div>
+          </div>
           {budgetsLoading ? (
             <div className="h-64 flex items-center justify-center">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
             </div>
           ) : budgetsData?.budgets && budgetsData.budgets.length > 0 ? (
             <div className="space-y-4 max-h-64 overflow-y-auto">
-              {budgetsData.budgets.map((status) => (
-                <div key={status.budget.id}>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="font-medium text-gray-900">
-                      {status.budget.name}
-                    </span>
-                    <span className={status.is_over_budget ? 'text-red-600' : 'text-gray-600'}>
-                      ${status.spent.toFixed(2)} / ${status.budget.amount.toFixed(2)}
-                    </span>
+              {budgetsData.budgets.map((status) => {
+                const daysInMonth = getDaysInMonth(selectedMonth)
+                const monthlyLimit =
+                  status.budget.period === 'weekly'
+                    ? status.budget.amount * (daysInMonth / 7)
+                    : status.budget.amount
+
+                const monthlySpent = budgetView === 'monthly'
+                  ? (status.budget.category
+                      ? (summary?.by_category?.[status.budget.category] ?? 0)
+                      : (summary?.total_amount ?? 0))
+                  : null
+
+                const displayLimit = budgetView === 'monthly' ? monthlyLimit : status.budget.amount
+                const displaySpent = budgetView === 'monthly' ? (monthlySpent ?? 0) : status.spent
+                const displayPct = displayLimit > 0 ? (displaySpent / displayLimit) * 100 : 0
+                const isOver = displaySpent > displayLimit
+
+                return (
+                  <div key={status.budget.id}>
+                    <div className="flex justify-between text-sm mb-1">
+                      <div>
+                        <span className="font-medium text-gray-900">
+                          {status.budget.name}
+                        </span>
+                        {budgetView === 'period' ? (
+                          <div className="text-xs text-gray-400">
+                            {new Date(status.period_start + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            {' – '}
+                            {new Date(status.period_end + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-400">
+                            {format(selectedMonth, 'MMMM')} · {daysInMonth} days
+                            {status.budget.period !== 'monthly' && (
+                              <> · extrapolated from {status.budget.period}</>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <span className={isOver ? 'text-red-600' : 'text-gray-600'}>
+                        ${displaySpent.toFixed(2)} / ${displayLimit.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          isOver
+                            ? 'bg-red-500'
+                            : displayPct > 80
+                            ? 'bg-yellow-500'
+                            : 'bg-green-500'
+                        }`}
+                        style={{ width: `${Math.min(displayPct, 100)}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all ${
-                        status.is_over_budget
-                          ? 'bg-red-500'
-                          : status.percentage_used > 80
-                          ? 'bg-yellow-500'
-                          : 'bg-green-500'
-                      }`}
-                      style={{ width: `${Math.min(status.percentage_used, 100)}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           ) : (
             <div className="h-64 flex items-center justify-center text-gray-500">

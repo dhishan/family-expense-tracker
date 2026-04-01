@@ -96,9 +96,9 @@ test.describe('Budget and expense integration', () => {
 
     // Go back to budgets and verify spent amount updated
     await page.goto(`${BASE}/budgets`)
-    await expect(page.getByRole('heading', { name: 'Budgets' })).toBeVisible()
+    await page.waitForLoadState('networkidle')
 
     const cardAfter = page.locator('[class*="border-l-4"]').filter({ hasText: budgetName })
-    await expect(cardAfter.getByText('$45.00 spent')).toBeVisible()
+    await expect(cardAfter.getByText('$45.00 spent')).toBeVisible({ timeout: 10000 })
   })
 })

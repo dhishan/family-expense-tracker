@@ -67,6 +67,48 @@ services:
     profiles:
       - dev
 
+  firebase:
+    build:
+      context: .
+      dockerfile: backend/emulator.Dockerfile
+    ports:
+      - "4000:4000"
+      - "8080:8080"
+      - "9099:9099"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - expense-network
+
+  backend-dev:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.local
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    environment:
+      FIRESTORE_EMULATOR_HOST: firebase:8080
+      FIREBASE_AUTH_EMULATOR_HOST: firebase:9099
+      GCP_PROJECT_ID: demo-family-expense-tracker
+      FIRESTORE_DATABASE: (default)
+      ENVIRONMENT: local
+    env_file:
+      - ./backend/.env.local
+    depends_on:
+      firebase:
+        condition: service_healthy
+    networks:
+      - expense-network
+
 networks:
   expense-network:
     driver: bridge
+
+volumes:
+  firebase-data:

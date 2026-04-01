@@ -161,6 +161,11 @@ export default function Budgets() {
                       <> • {CATEGORY_INFO[status.budget.category as ExpenseCategory]?.label || status.budget.category}</>
                     )}
                   </p>
+                  <p className="text-xs text-gray-400">
+                    {new Date(status.period_start + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    {' – '}
+                    {new Date(status.period_end + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  </p>
                 </div>
                 <div className="flex gap-1">
                   <button

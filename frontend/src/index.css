@@ -57,3 +57,7 @@ textarea:focus {
 .animate-spin {
   animation: spin 1s linear infinite;
 }
+
+/* Safe area insets for iPhone notch / home bar */
+.safe-top { padding-top: env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
