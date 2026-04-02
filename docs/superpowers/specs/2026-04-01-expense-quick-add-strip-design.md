@@ -81,7 +81,15 @@ Replace the current 7-field modal with a persistent quick-add strip at the top o
 - **~300 merchants** targeting SF and Bay Area
 - Categories covered: grocery, dining (fast food + sit-down), gas stations, pharmacies, utilities, transit, entertainment, shopping, healthcare
 - **Skew toward young crowd + Indian community** in the Bay Area
-- Key merchants: Safeway, Trader Joe's, Whole Foods, Rainbow Grocery, Bi-Rite, 99 Ranch Market, India Cash & Carry, Apna Bazar, Patel Brothers, In-N-Out, Chipotle, Philz Coffee, Blue Bottle, Sightglass, Starbucks, Boba Guys, Quickly, Chevron, Walgreens, CVS, BART, Muni, Caltrain, Lyft, Uber, Target, Costco, IKEA Emeryville, AMC Bay Street, Regal, H Mart, Mitsuwa, Nijiya Market, etc.
+- Grocery/wholesale: Safeway, Trader Joe's, Whole Foods, Rainbow Grocery, Bi-Rite, 99 Ranch Market, India Cash & Carry, Apna Bazar, Patel Brothers, H Mart, Mitsuwa, Nijiya Market, Walmart, Target, Costco
+- Dining/coffee: In-N-Out, Chipotle, Philz Coffee, Blue Bottle, Sightglass, Starbucks, Boba Guys, Quickly, Panda Express, Subway, Taco Bell, McDonald's, Chick-fil-A, Raising Cane's, Jamba Juice
+- Beauty: Ulta Beauty, Sephora, Sally Beauty, Lush
+- Clothing/fashion: Zara, H&M, Uniqlo, Forever 21, Gap, Banana Republic, Old Navy, Nordstrom, Nordstrom Rack, TJ Maxx, Ross, Marshalls, Madewell, Anthropologie, Free People, Nike, Adidas, Lululemon
+- Home/electronics: IKEA Emeryville, Best Buy, HomeGoods, Home Depot, Lowe's
+- Transit: BART, Muni, Caltrain, Lyft, Uber
+- Pharmacy/health: Walgreens, CVS, Rite Aid
+- Gas: Chevron, Shell, Arco, 76
+- Entertainment: AMC Bay Street, AMC Metreon, Regal
 - Stored as: `frontend/src/data/merchants-bay-area.json` — array of strings
 - Bundle size estimate: ~6–8 KB
 
