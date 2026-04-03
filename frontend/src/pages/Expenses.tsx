@@ -96,7 +96,6 @@ export default function Expenses() {
     register,
     handleSubmit,
     reset,
-    formState: { errors },
   } = useForm<EditFormData>()
 
   const onEditSubmit = (data: EditFormData) => {
@@ -338,9 +337,6 @@ export default function Expenses() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2"
                   placeholder="0.00"
                 />
-                {errors.amount && (
-                  <p className="text-red-500 text-sm mt-1">Amount is required</p>
-                )}
               </div>
 
               <div>
@@ -373,9 +369,16 @@ export default function Expenses() {
                 <input
                   type="text"
                   {...register('merchant')}
+                  list="merchants-datalist"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2"
                   placeholder="Store or vendor name"
+                  autoComplete="off"
                 />
+                <datalist id="merchants-datalist">
+                  {pastMerchants.map((m) => (
+                    <option key={m} value={m} />
+                  ))}
+                </datalist>
               </div>
 
               <div>
