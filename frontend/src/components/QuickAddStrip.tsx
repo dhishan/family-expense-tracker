@@ -34,14 +34,12 @@ export default function QuickAddStrip({
   onSubmit,
   isSubmitting,
 }: QuickAddStripProps) {
-  const savedCategory = localStorage.getItem(LAST_CATEGORY_KEY) as ExpenseCategory | null
-  const defaultCategory = (savedCategory && categories.includes(savedCategory)
-    ? savedCategory
-    : categories[0] ?? 'other') as ExpenseCategory
-
   const [amount, setAmount] = useState(0)
   const [amountInput, setAmountInput] = useState('0')
-  const [category, setCategory] = useState<ExpenseCategory>(defaultCategory)
+  const [category, setCategory] = useState<ExpenseCategory>(() => {
+    const saved = localStorage.getItem(LAST_CATEGORY_KEY) as ExpenseCategory | null
+    return (saved && categories.includes(saved) ? saved : categories[0] ?? 'other') as ExpenseCategory
+  })
   const [merchant, setMerchant] = useState('')
   const [note, setNote] = useState('')
   const [date, setDate] = useState(toLocalISODate())
@@ -159,7 +157,7 @@ export default function QuickAddStrip({
         {/* Submit button */}
         <button
           onClick={handleSubmit}
-          disabled={isSubmitting || parseFloat(amountInput) <= 0}
+          disabled={isSubmitting || !(parseFloat(amountInput) > 0)}
           className="flex-shrink-0 flex items-center justify-center w-10 h-10 bg-primary-600 text-white rounded-full hover:bg-primary-700 disabled:opacity-50"
         >
           <PlusIcon className="h-5 w-5" />
