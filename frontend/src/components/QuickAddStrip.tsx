@@ -90,7 +90,7 @@ export default function QuickAddStrip({
 
   function handleSubmit() {
     const parsedAmount = parseFloat(amountInput)
-    if (!parsedAmount || parsedAmount <= 0) return
+    if (!(parsedAmount > 0)) return
     localStorage.setItem(LAST_CATEGORY_KEY, category)
     onSubmit({
       amount: parsedAmount,
