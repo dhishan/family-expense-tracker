@@ -67,6 +67,7 @@ export default function Expenses() {
     mutationFn: expensesApi.create,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] })
+      queryClient.invalidateQueries({ queryKey: ['expenses-merchants'] })
       toast.success('Expense added!')
     },
     onError: () => toast.error('Failed to add expense'),
