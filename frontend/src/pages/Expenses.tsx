@@ -4,7 +4,6 @@ import { format } from 'date-fns'
 import { useForm } from 'react-hook-form'
 import toast from 'react-hot-toast'
 import {
-  PlusIcon,
   FunnelIcon,
   PencilIcon,
   TrashIcon,
@@ -12,25 +11,20 @@ import {
 } from '@heroicons/react/24/outline'
 import { expensesApi } from '../services/api'
 import { useAuthStore } from '../store/auth'
-import { CATEGORY_INFO, PAYMENT_METHOD_LABELS } from '../types'
-import type { ExpenseCreate, ExpenseCategory, PaymentMethod, Expense } from '../types'
+import { CATEGORY_INFO } from '../types'
+import type { ExpenseCreate, ExpenseCategory, Expense } from '../types'
+import QuickAddStrip from '../components/QuickAddStrip'
 
-const PAYMENT_METHODS: PaymentMethod[] = [
-  'cash', 'credit', 'debit', 'bank_transfer', 'paypal', 'venmo', 'other',
-]
-
-interface ExpenseFormData {
+interface EditFormData {
   amount: number
   date: string
   description: string
   merchant: string
   category: ExpenseCategory
-  payment_method: PaymentMethod
   beneficiary: string
 }
 
 export default function Expenses() {
-  const [showAddModal, setShowAddModal] = useState(false)
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
   const [filters, setFilters] = useState<{
     category?: ExpenseCategory
@@ -43,7 +37,6 @@ export default function Expenses() {
   const { user, familyMembers, family } = useAuthStore()
   const queryClient = useQueryClient()
 
-  // Use family categories or fallback to default
   const categories = family?.categories || [
     'groceries', 'dining', 'transportation', 'utilities', 'entertainment',
     'healthcare', 'shopping', 'travel', 'education', 'other',
@@ -74,14 +67,13 @@ export default function Expenses() {
     mutationFn: expensesApi.create,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] })
-      setShowAddModal(false)
       toast.success('Expense added!')
     },
     onError: () => toast.error('Failed to add expense'),
   })
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<ExpenseFormData> }) =>
+    mutationFn: ({ id, data }: { id: string; data: Partial<EditFormData> }) =>
       expensesApi.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] })
@@ -105,21 +97,11 @@ export default function Expenses() {
     handleSubmit,
     reset,
     formState: { errors },
-  } = useForm<ExpenseFormData>({
-    defaultValues: {
-      date: format(new Date(), 'yyyy-MM-dd'),
-      category: 'other',
-      payment_method: 'credit',
-      beneficiary: 'family',
-    },
-  })
+  } = useForm<EditFormData>()
 
-  const onSubmit = (data: ExpenseFormData) => {
-    if (editingExpense) {
-      updateMutation.mutate({ id: editingExpense.id, data })
-    } else {
-      createMutation.mutate(data as ExpenseCreate)
-    }
+  const onEditSubmit = (data: EditFormData) => {
+    if (!editingExpense) return
+    updateMutation.mutate({ id: editingExpense.id, data })
   }
 
   const openEditModal = (expense: Expense) => {
@@ -130,23 +112,8 @@ export default function Expenses() {
       description: expense.description,
       merchant: expense.merchant || '',
       category: expense.category,
-      payment_method: expense.payment_method,
       beneficiary: expense.beneficiary,
     })
-  }
-
-  const openAddModal = () => {
-    setEditingExpense(null)
-    reset({
-      date: format(new Date(), 'yyyy-MM-dd'),
-      category: 'other',
-      payment_method: 'credit',
-      beneficiary: 'family',
-      amount: undefined,
-      description: '',
-      merchant: '',
-    })
-    setShowAddModal(true)
   }
 
   if (!user?.family_id) {
@@ -162,23 +129,23 @@ export default function Expenses() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h1 className="text-2xl font-bold text-gray-900">Expenses</h1>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-          >
-            <FunnelIcon className="h-5 w-5" />
-            Filters
-          </button>
-          <button
-            onClick={openAddModal}
-            className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
-          >
-            <PlusIcon className="h-5 w-5" />
-            Add Expense
-          </button>
-        </div>
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+        >
+          <FunnelIcon className="h-5 w-5" />
+          Filters
+        </button>
       </div>
+
+      {/* Quick Add Strip */}
+      <QuickAddStrip
+        categories={categories}
+        familyMembers={familyMembers}
+        pastMerchants={pastMerchants}
+        onSubmit={(data: ExpenseCreate) => createMutation.mutate(data)}
+        isSubmitting={createMutation.isPending}
+      />
 
       {/* Filters */}
       {showFilters && (
@@ -263,9 +230,6 @@ export default function Expenses() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                       Amount
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                      Payment
-                    </th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                       Actions
                     </th>
@@ -275,7 +239,7 @@ export default function Expenses() {
                   {data.expenses.map((expense) => (
                     <tr key={expense.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {format(new Date(expense.date), 'MMM d, yyyy')}
+                        {format(new Date(expense.date + 'T00:00:00'), 'MMM d, yyyy')}
                       </td>
                       <td className="px-6 py-4">
                         <div className="text-sm font-medium text-gray-900">
@@ -296,9 +260,6 @@ export default function Expenses() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         ${expense.amount.toFixed(2)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {PAYMENT_METHOD_LABELS[expense.payment_method]}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right">
                         <button
@@ -349,30 +310,23 @@ export default function Expenses() {
           </>
         ) : (
           <div className="p-8 text-center text-gray-500">
-            No expenses found. Add your first expense!
+            No expenses found. Add your first expense above!
           </div>
         )}
       </div>
 
-      {/* Add/Edit Modal */}
-      {(showAddModal || editingExpense) && (
+      {/* Edit Modal */}
+      {editingExpense && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-4 border-b">
-              <h2 className="text-lg font-semibold">
-                {editingExpense ? 'Edit Expense' : 'Add Expense'}
-              </h2>
-              <button
-                onClick={() => {
-                  setShowAddModal(false)
-                  setEditingExpense(null)
-                }}
-              >
+              <h2 className="text-lg font-semibold">Edit Expense</h2>
+              <button onClick={() => setEditingExpense(null)}>
                 <XMarkIcon className="h-6 w-6 text-gray-500" />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit(onSubmit)} className="p-4 space-y-4">
+            <form onSubmit={handleSubmit(onEditSubmit)} className="p-4 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Amount *
@@ -402,13 +356,13 @@ export default function Expenses() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Description *
+                  Note
                 </label>
                 <input
                   type="text"
-                  {...register('description', { required: true })}
+                  {...register('description')}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                  placeholder="What was this expense for?"
+                  placeholder="Note..."
                 />
               </div>
 
@@ -419,16 +373,9 @@ export default function Expenses() {
                 <input
                   type="text"
                   {...register('merchant')}
-                  list="merchants-datalist"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2"
                   placeholder="Store or vendor name"
-                  autoComplete="off"
                 />
-                <datalist id="merchants-datalist">
-                  {pastMerchants.map((m) => (
-                    <option key={m} value={m} />
-                  ))}
-                </datalist>
               </div>
 
               <div>
@@ -442,22 +389,6 @@ export default function Expenses() {
                   {categories.map((cat) => (
                     <option key={cat} value={cat}>
                       {CATEGORY_INFO[cat as ExpenseCategory]?.label || cat.charAt(0).toUpperCase() + cat.slice(1)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Payment Method
-                </label>
-                <select
-                  {...register('payment_method')}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                >
-                  {PAYMENT_METHODS.map((method) => (
-                    <option key={method} value={method}>
-                      {PAYMENT_METHOD_LABELS[method]}
                     </option>
                   ))}
                 </select>
@@ -483,24 +414,17 @@ export default function Expenses() {
               <div className="flex gap-3 pt-4">
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowAddModal(false)
-                    setEditingExpense(null)
-                  }}
+                  onClick={() => setEditingExpense(null)}
                   className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={createMutation.isPending || updateMutation.isPending}
+                  disabled={updateMutation.isPending}
                   className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
                 >
-                  {createMutation.isPending || updateMutation.isPending
-                    ? 'Saving...'
-                    : editingExpense
-                    ? 'Update'
-                    : 'Add Expense'}
+                  {updateMutation.isPending ? 'Saving...' : 'Update'}
                 </button>
               </div>
             </form>
