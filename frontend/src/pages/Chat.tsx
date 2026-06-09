@@ -192,13 +192,32 @@ export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [streaming, setStreaming] = useState(false)
+  const [stickToBottom, setStickToBottom] = useState(true)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const { token } = useAuthStore()
 
+  // Detect when the user scrolls up — pause auto-scroll until they return
+  // to the bottom. Without this, every streamed token snaps the view down
+  // and the user can't read previous messages while a response is in flight.
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    setStickToBottom(distanceFromBottom < 80) // px tolerance
+  }, [])
+
   useEffect(() => {
+    if (stickToBottom) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages, stickToBottom])
+
+  const jumpToLatest = useCallback(() => {
+    setStickToBottom(true)
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [])
 
   const toggleToolBlock = useCallback((msgIdx: number, blockIdx: number) => {
     setMessages((prev) =>
@@ -402,7 +421,11 @@ export default function Chat() {
       </div>
 
       {/* Message area */}
-      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 bg-gray-50">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 bg-gray-50 relative"
+      >
         {isEmpty ? (
           <div className="flex flex-col items-center justify-center h-full gap-6">
             <div className="text-center">
@@ -448,6 +471,19 @@ export default function Chat() {
           </>
         )}
         <div ref={bottomRef} />
+
+        {/* Floating "jump to latest" — appears when user is scrolled up while a response streams in */}
+        {!stickToBottom && messages.length > 0 && (
+          <button
+            type="button"
+            onClick={jumpToLatest}
+            aria-label="Jump to latest message"
+            className="sticky bottom-4 left-1/2 -translate-x-1/2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/90 text-white text-xs font-medium shadow-lg hover:bg-slate-900 transition-colors"
+          >
+            <ChevronDownIcon className="h-4 w-4" />
+            {streaming ? 'Streaming — jump to latest' : 'Jump to latest'}
+          </button>
+        )}
       </div>
 
       {/* Composer */}
