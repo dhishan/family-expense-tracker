@@ -5,7 +5,7 @@
   "targets": {
     "personal-projects-473219": {
       "hosting": {
-        "ui": ["family-expense-tracker"]
+        "ui": ["family-expense-tracker-ble"]
       }
     }
   }

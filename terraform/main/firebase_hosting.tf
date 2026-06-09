@@ -10,9 +10,9 @@
 # Migration plan (zero-downtime):
 #   1. Provision the Firebase Hosting site here (this file).
 #   2. CI starts deploying to BOTH the bucket and Firebase Hosting.
-#   3. Verify https://family-expense-tracker.web.app serves the build.
+#   3. Verify https://family-expense-tracker-ble.web.app serves the build.
 #   4. Cutover Cloudflare DNS: change ui.expense-tracker from A->LB-IP to
-#      CNAME->family-expense-tracker.web.app. Done in a follow-up commit
+#      CNAME->family-expense-tracker-ble.web.app. Done in a follow-up commit
 #      that also adds the google_firebase_hosting_custom_domain resource.
 #   5. Tear down the LB + bucket + cert in a final cleanup commit.
 #
@@ -32,12 +32,12 @@ resource "google_project_service" "firebasehosting" {
 # to create new sites.
 
 # Named Firebase Hosting site dedicated to this app. Gives us a stable
-# https://family-expense-tracker.web.app URL we can use as the CNAME
+# https://family-expense-tracker-ble.web.app URL we can use as the CNAME
 # target after DNS cutover.
 resource "google_firebase_hosting_site" "frontend" {
   provider = google-beta
   project  = var.project_id
-  site_id  = "family-expense-tracker"
+  site_id  = "family-expense-tracker-ble"
 
   depends_on = [
     google_project_service.firebase,

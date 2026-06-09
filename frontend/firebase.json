@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "family-expense-tracker",
+    "site": "family-expense-tracker-ble",
     "public": "dist",
     "ignore": [
       "firebase.json",
