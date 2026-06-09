@@ -45,6 +45,42 @@ resource "google_firebase_hosting_site" "frontend" {
   ]
 }
 
+# Register the production hostname as a custom domain on the Firebase site.
+# This is the FIRST step of the DNS cutover, deliberately decoupled from
+# the Cloudflare DNS change. After this resource is applied:
+#
+#   * Firebase begins provisioning a managed SSL cert for the hostname.
+#   * Cert provisioning can complete via either the existing DNS (if it
+#     can reach an HTTP-01 challenge) or via TXT verification records
+#     that we'd add to Cloudflare in a follow-up.
+#   * The existing HTTPS LB continues serving user traffic — no user
+#     impact during this step.
+#
+# Once Firebase reports `READY` status (or the cert is issued), the
+# Cloudflare A record gets swapped to a CNAME → family-expense-tracker-ble.web.app
+# in a follow-up commit. That cutover is the ONLY user-visible step.
+resource "google_firebase_hosting_custom_domain" "frontend" {
+  provider      = google-beta
+  project       = var.project_id
+  site_id       = google_firebase_hosting_site.frontend.site_id
+  custom_domain = local.frontend_domain_fqdn
+
+  # Don't wait synchronously inside terraform — cert provisioning is
+  # async and can take hours. We'll poll Firebase API separately.
+  wait_dns_verification = false
+
+  # Don't redirect from the .web.app URL to the custom domain; both
+  # should serve directly so we can keep using the .web.app for testing.
+  redirect_target = null
+}
+
+output "firebase_hosting_custom_domain_status" {
+  value = {
+    domain = google_firebase_hosting_custom_domain.frontend.custom_domain
+    state  = "see firebase console or `gcloud firebase hosting:channel:list` for cert/verification status"
+  }
+}
+
 output "firebase_hosting_default_url" {
   value       = "https://${google_firebase_hosting_site.frontend.site_id}.web.app"
   description = "Default Firebase Hosting URL — verify the build serves here before DNS cutover."
