@@ -975,19 +975,25 @@ async def _stream_chat(
     session_id: str,
 ) -> AsyncGenerator[str, None]:
     """Core agentic loop: stream tokens, handle tool calls, continue until end_turn."""
-    # Lazy Langfuse init — skipped if env vars are absent so dev works without them.
-    lf_trace = None
+    # Lazy Langfuse init (v4 SDK) — skipped if env vars are absent so dev
+    # works without them. Each chat request gets one observation; user_id
+    # and session_id are stored in metadata so the Langfuse UI can filter
+    # by them. The previous v3 `lf.trace(...)` call silently failed on v4
+    # because that method no longer exists.
+    lf = None
+    lf_obs = None
     try:
         from langfuse import Langfuse  # type: ignore
-
         lf = Langfuse()
-        lf_trace = lf.trace(
+        lf_obs = lf.start_observation(
             name="portfolio-chat",
-            session_id=session_id,
-            user_id=user_id,
+            as_type="span",
+            metadata={"user_id": user_id, "session_id": session_id},
         )
-    except Exception:
-        pass  # Langfuse optional
+    except Exception as e:
+        logger.warning("Langfuse init failed (continuing without): %s", e)
+        lf = None
+        lf_obs = None
 
     client = anthropic.AsyncAnthropic()
 
@@ -1182,24 +1188,32 @@ async def _stream_chat(
 
         yield _sse({"type": "done"})
 
-        # Langfuse: log complete generation
-        if lf_trace:
+        # Langfuse: close observation with final output
+        if lf_obs:
             try:
-                lf_trace.update(
+                lf_obs.update(
                     output={"text": "".join(output_text_parts)},
-                    metadata={"turns": len(msgs)},
+                    metadata={
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "turns": len(msgs),
+                    },
                 )
-                lf.flush()
-            except Exception:
-                pass
+                lf_obs.end()
+                if lf:
+                    lf.flush()
+            except Exception as e:
+                logger.warning("Langfuse trace close failed: %s", e)
 
     except Exception as exc:
         logger.exception("Chat stream error for user %s", user_id)
         yield _sse({"type": "error", "message": str(exc)})
-        if lf_trace:
+        if lf_obs:
             try:
-                lf_trace.update(metadata={"error": str(exc)})
-                lf.flush()  # type: ignore
+                lf_obs.update(metadata={"error": str(exc), "user_id": user_id})
+                lf_obs.end()
+                if lf:
+                    lf.flush()
             except Exception:
                 pass
 
