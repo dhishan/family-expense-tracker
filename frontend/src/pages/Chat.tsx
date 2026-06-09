@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useAuthStore } from '../store/auth'
 import { PaperAirplaneIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon } from '@heroicons/react/24/outline'
 
@@ -103,8 +104,46 @@ function Bubble({ msg, onToolToggle }: {
               return <p key={idx} className="whitespace-pre-wrap text-sm">{block.text}</p>
             }
             return (
-              <div key={idx} className="prose prose-sm max-w-none text-gray-800 [&_code]:bg-gray-100 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-gray-100 [&_pre]:p-3 [&_pre]:rounded-lg [&_pre]:overflow-auto [&_h2]:text-base [&_h2]:font-semibold [&_h2]:mt-4 [&_h2]:mb-1 [&_h3]:text-sm [&_h3]:font-semibold [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4">
-                <ReactMarkdown>{block.text}</ReactMarkdown>
+              <div
+                key={idx}
+                className={[
+                  // Tailwind Typography base
+                  'prose prose-sm prose-slate max-w-none',
+                  // Body text — softer than black, more readable on long-form
+                  'prose-p:text-slate-700 prose-p:leading-relaxed prose-p:my-2',
+                  // Headings — refined hierarchy, looser tracking
+                  'prose-headings:font-semibold prose-headings:text-slate-900 prose-headings:tracking-tight',
+                  'prose-h1:text-lg prose-h1:mt-5 prose-h1:mb-2',
+                  'prose-h2:text-base prose-h2:mt-5 prose-h2:mb-2 prose-h2:pb-1 prose-h2:border-b prose-h2:border-slate-200',
+                  'prose-h3:text-sm prose-h3:mt-4 prose-h3:mb-1.5',
+                  // Emphasis
+                  'prose-strong:text-slate-900 prose-strong:font-semibold',
+                  'prose-em:text-slate-700',
+                  // Links — indigo, underline only on hover
+                  'prose-a:text-indigo-600 prose-a:font-medium prose-a:no-underline hover:prose-a:underline',
+                  // Lists — tighter
+                  'prose-ul:my-2 prose-ol:my-2 prose-li:text-slate-700 prose-li:my-0.5 prose-li:marker:text-slate-400',
+                  // Inline code — pink accent on subtle bg, no quote marks
+                  'prose-code:text-pink-700 prose-code:bg-slate-100 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:font-normal prose-code:text-[0.85em]',
+                  "prose-code:before:content-[''] prose-code:after:content-['']",
+                  // Fenced code blocks — dark
+                  'prose-pre:bg-slate-900 prose-pre:text-slate-100 prose-pre:rounded-lg prose-pre:p-3 prose-pre:my-3',
+                  // Blockquote — soft indigo left bar with tinted bg
+                  'prose-blockquote:border-l-indigo-300 prose-blockquote:bg-indigo-50/40 prose-blockquote:py-1 prose-blockquote:px-3',
+                  'prose-blockquote:not-italic prose-blockquote:text-slate-700 prose-blockquote:rounded-r',
+                  // HR
+                  'prose-hr:my-4 prose-hr:border-slate-200',
+                  // Tables — refined, striped, hover
+                  '[&_table]:w-full [&_table]:my-3 [&_table]:text-sm [&_table]:border-collapse',
+                  '[&_thead]:bg-slate-50',
+                  '[&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:text-xs [&_th]:font-semibold',
+                  '[&_th]:uppercase [&_th]:tracking-wide [&_th]:text-slate-600 [&_th]:border-b [&_th]:border-slate-200',
+                  '[&_td]:px-3 [&_td]:py-2 [&_td]:text-slate-700 [&_td]:border-b [&_td]:border-slate-100',
+                  '[&_tbody_tr:hover]:bg-slate-50/60',
+                  '[&_tbody_tr:last-child_td]:border-b-0',
+                ].join(' ')}
+              >
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>
               </div>
             )
           }
