@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 type IoniconsName = React.ComponentProps<typeof Ionicons>['name']
 
@@ -16,6 +17,11 @@ function TabIcon({
 }
 
 export default function TabsLayout() {
+  // Respect the home-indicator area at the bottom of modern iPhones.
+  // Without insets.bottom, the tab labels sit on top of the home bar
+  // and get visually clipped.
+  const insets = useSafeAreaInsets()
+
   return (
     <Tabs
       screenOptions={{
@@ -25,13 +31,19 @@ export default function TabsLayout() {
           backgroundColor: '#fff',
           borderTopColor: '#e5e7eb',
           borderTopWidth: 1,
-          paddingBottom: 8,
-          paddingTop: 8,
-          height: 64,
+          paddingBottom: Math.max(insets.bottom, 8),
+          paddingTop: 6,
+          height: 56 + Math.max(insets.bottom, 8),
         },
         tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '500',
+          // Smaller + tighter so 6 tabs fit on an iPhone Pro without
+          // truncating "Dashboard" → "Dashbo…" or "Investments" → "Invest…"
+          fontSize: 10,
+          fontWeight: '600',
+          marginTop: 2,
+        },
+        tabBarItemStyle: {
+          paddingHorizontal: 0,
         },
         headerShown: false,
       }}
@@ -39,7 +51,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Dashboard',
+          title: 'Home',
           tabBarIcon: ({ color, focused }) => (
             <TabIcon name="home" focused={focused} color={color} />
           ),
@@ -66,7 +78,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="investments"
         options={{
-          title: 'Investments',
+          title: 'Stocks',
           tabBarIcon: ({ color, focused }) => (
             <TabIcon name="trending-up" focused={focused} color={color} />
           ),
