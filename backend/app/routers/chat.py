@@ -984,13 +984,18 @@ async def _stream_chat(
                 # Prompt caching: system + tools never change between turns
                 # of the agentic loop. Auto-caches the last cacheable block,
                 # so subsequent turns read the (system + tools) prefix at
-                # ~10% of normal input cost. Critical for staying under the
-                # 30K input-tokens-per-minute tier limit when the loop fires
-                # 3-5 tool calls in quick succession.
+                # ~10% of normal input cost.
                 cache_control={"type": "ephemeral"},
                 system=[{"type": "text", "text": SYSTEM_PROMPT}],
                 thinking={"type": "adaptive"},
                 output_config={"effort": effort_level},
+                # Server-side context compaction (Anthropic beta). When the
+                # conversation history grows past the trigger threshold,
+                # Claude itself summarizes older tool results in-place so
+                # the input-token cost per turn stays bounded. Without this,
+                # 4-5 tool-heavy turns blow past the 30K input TPM limit.
+                betas=["compact-2026-01-12"],
+                context_management={"edits": [{"type": "compact_20260112"}]},
                 tools=TOOLS,
                 messages=msgs,
             )
@@ -999,7 +1004,7 @@ async def _stream_chat(
                 # tools (e.g. web_search_20260209) across agentic-loop turns.
                 stream_kwargs["container"] = server_container_id
 
-            async with client.messages.stream(**stream_kwargs) as stream:
+            async with client.beta.messages.stream(**stream_kwargs) as stream:
                 async for event in stream:
                     etype = event.type
 
