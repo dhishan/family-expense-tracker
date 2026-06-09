@@ -13,11 +13,25 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native'
+import Slider from '@react-native-community/slider'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { expensesApi } from '@/services/api'
 import { useAuthStore } from '@/store/auth'
 import { CATEGORY_INFO } from '@/types'
 import type { ExpenseCategory, ExpenseCreate, Expense } from '@/types'
+
+const CATEGORY_EMOJI: Record<string, string> = {
+  groceries: '🛒',
+  dining: '🍽',
+  transportation: '🚗',
+  utilities: '💡',
+  entertainment: '🎬',
+  healthcare: '🏥',
+  shopping: '🛍',
+  travel: '✈️',
+  education: '📚',
+  other: '📝',
+}
 
 function toLocalISODate(d: Date = new Date()) {
   const y = d.getFullYear()
@@ -106,11 +120,19 @@ function AddEditModal({
     })
   }
 
+  // Mirror the web's QuickAddStrip: category chips at top (always visible
+  // even when the keyboard is open), amount with slider + numeric input,
+  // merchant typeahead, then a collapsible "Advanced" section for date +
+  // beneficiary.
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const sliderValue = Math.min(parseFloat(form.amount) || 0, 100)
+
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
       >
         <View style={modalStyles.container}>
           <View style={modalStyles.header}>
@@ -127,16 +149,57 @@ function AddEditModal({
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
+          {/* Category chips — pinned to the TOP so they remain visible even
+              when the keyboard is open (was the user's main complaint). */}
+          <View style={modalStyles.chipsBar}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {CATEGORIES.map((cat) => {
+                const active = form.category === cat
+                return (
+                  <TouchableOpacity
+                    key={cat}
+                    style={[modalStyles.catChip, active && modalStyles.catChipActive]}
+                    onPress={() => set('category')(cat)}
+                    testID={`category-chip-${cat}`}
+                  >
+                    <Text style={modalStyles.catEmoji}>{CATEGORY_EMOJI[cat] ?? '📝'}</Text>
+                    <Text style={[modalStyles.catLabel, active && modalStyles.catLabelActive]}>
+                      {CATEGORY_INFO[cat].label}
+                    </Text>
+                  </TouchableOpacity>
+                )
+              })}
+            </ScrollView>
+          </View>
+
+          <ScrollView
+            style={{ flex: 1 }}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ paddingBottom: 64 }}
+          >
             <View style={modalStyles.form}>
-              <Text style={modalStyles.label}>Amount ($)</Text>
-              <TextInput
-                style={modalStyles.input}
-                value={form.amount}
-                onChangeText={set('amount')}
-                keyboardType="decimal-pad"
-                placeholder="0.00"
-                testID="amount-input"
+              {/* Amount — big display + slider underneath */}
+              <Text style={modalStyles.label}>Amount</Text>
+              <View style={modalStyles.amountRow}>
+                <Text style={modalStyles.dollar}>$</Text>
+                <TextInput
+                  style={modalStyles.amountInput}
+                  value={form.amount}
+                  onChangeText={set('amount')}
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  testID="amount-input"
+                />
+              </View>
+              <Slider
+                minimumValue={0}
+                maximumValue={100}
+                step={1}
+                value={sliderValue}
+                onValueChange={(v) => set('amount')(String(v))}
+                minimumTrackTintColor="#2563eb"
+                maximumTrackTintColor="#e5e7eb"
+                style={{ marginBottom: 16 }}
               />
 
               <Text style={modalStyles.label}>Description *</Text>
@@ -146,6 +209,7 @@ function AddEditModal({
                 onChangeText={set('description')}
                 placeholder="What was this for?"
                 testID="description-input"
+                returnKeyType="next"
               />
 
               <Text style={modalStyles.label}>Merchant</Text>
@@ -154,64 +218,75 @@ function AddEditModal({
                 value={form.merchant}
                 onChangeText={set('merchant')}
                 placeholder="Optional"
+                returnKeyType="next"
               />
 
-              <Text style={modalStyles.label}>Date</Text>
-              <TextInput
-                style={modalStyles.input}
-                value={form.date}
-                onChangeText={set('date')}
-                placeholder="YYYY-MM-DD"
-              />
+              {/* Advanced toggle — Date + Beneficiary collapsed by default */}
+              <TouchableOpacity
+                onPress={() => setShowAdvanced((v) => !v)}
+                style={modalStyles.advancedToggle}
+              >
+                <Text style={modalStyles.advancedToggleText}>
+                  {showAdvanced ? '▾' : '▸'}  Advanced
+                </Text>
+              </TouchableOpacity>
 
-              <Text style={modalStyles.label}>Category</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
-                {CATEGORIES.map((cat) => (
-                  <TouchableOpacity
-                    key={cat}
-                    style={[
-                      modalStyles.chip,
-                      form.category === cat && modalStyles.chipActive,
-                    ]}
-                    onPress={() => set('category')(cat)}
-                    testID={`category-chip-${cat}`}
-                  >
-                    <Text
-                      style={[
-                        modalStyles.chipText,
-                        form.category === cat && modalStyles.chipTextActive,
-                      ]}
-                    >
-                      {CATEGORY_INFO[cat].label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-
-              {familyMembers.length > 1 && (
+              {showAdvanced && (
                 <>
-                  <Text style={modalStyles.label}>Beneficiary</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
-                    {familyMembers.map((m) => (
-                      <TouchableOpacity
-                        key={m.id}
-                        style={[
-                          modalStyles.chip,
-                          form.beneficiary === m.id && modalStyles.chipActive,
-                        ]}
-                        onPress={() => set('beneficiary')(m.id)}
+                  <Text style={modalStyles.label}>Date</Text>
+                  <TextInput
+                    style={modalStyles.input}
+                    value={form.date}
+                    onChangeText={set('date')}
+                    placeholder="YYYY-MM-DD"
+                  />
+
+                  {familyMembers.length > 1 && (
+                    <>
+                      <Text style={modalStyles.label}>For</Text>
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        style={{ marginBottom: 16 }}
                       >
-                        <Text
+                        <TouchableOpacity
                           style={[
-                            modalStyles.chipText,
-                            form.beneficiary === m.id && modalStyles.chipTextActive,
+                            modalStyles.chip,
+                            form.beneficiary === '' && modalStyles.chipActive,
                           ]}
+                          onPress={() => set('beneficiary')('')}
                         >
-                          {m.display_name}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
+                          <Text
+                            style={[
+                              modalStyles.chipText,
+                              form.beneficiary === '' && modalStyles.chipTextActive,
+                            ]}
+                          >
+                            Family
+                          </Text>
+                        </TouchableOpacity>
+                        {familyMembers.map((m) => (
+                          <TouchableOpacity
+                            key={m.id}
+                            style={[
+                              modalStyles.chip,
+                              form.beneficiary === m.id && modalStyles.chipActive,
+                            ]}
+                            onPress={() => set('beneficiary')(m.id)}
+                          >
+                            <Text
+                              style={[
+                                modalStyles.chipText,
+                                form.beneficiary === m.id && modalStyles.chipTextActive,
+                              ]}
+                            >
+                              {m.display_name}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    </>
+                  )}
                 </>
               )}
             </View>
@@ -257,6 +332,61 @@ const modalStyles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   chipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
+
+  // ── QuickAdd-strip styles ─────────────────────────────────────────────
+  chipsBar: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+    backgroundColor: '#fafafa',
+  },
+  catChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#fff',
+    marginRight: 8,
+  },
+  catChipActive: {
+    backgroundColor: '#eef2ff',
+    borderColor: '#2563eb',
+  },
+  catEmoji: { fontSize: 16, marginRight: 6 },
+  catLabel: { fontSize: 13, color: '#374151', fontWeight: '500' },
+  catLabelActive: { color: '#1d4ed8', fontWeight: '600' },
+
+  amountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  dollar: { fontSize: 22, color: '#6b7280', fontWeight: '600' },
+  amountInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  advancedToggle: {
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  advancedToggleText: {
+    fontSize: 13,
+    color: '#6b7280',
+    fontWeight: '500',
+  },
   chipText: { fontSize: 13, color: '#374151' },
   chipTextActive: { color: '#fff' },
 })

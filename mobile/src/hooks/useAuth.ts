@@ -1,80 +1,87 @@
-import { useCallback } from 'react'
-import * as Google from 'expo-auth-session/providers/google'
-import * as WebBrowser from 'expo-web-browser'
+import { useCallback, useEffect, useState } from 'react'
+import {
+  GoogleSignin,
+  statusCodes,
+} from '@react-native-google-signin/google-signin'
 import { useAuthStore } from '../store/auth'
 import { authApi, familyApi } from '../services/api'
 
-WebBrowser.maybeCompleteAuthSession()
-
-// Platform-specific OAuth clients. The Web client is used by expo-auth-session
-// internally for the OpenID discovery + browser; the iOS/Android clients are
-// what Google actually validates against based on the bundle ID / package name.
-// Create separate clients in GCP Console with "iOS" and "Android" types and
-// the app's bundleIdentifier / package (org.blueelephants.familyexpensetracker).
+// Use the iOS client for native sign-in. Fall back to the web client only
+// because expo-auth-session used to require it; the native module needs the
+// iOS client when running on iOS, Android client when running on Android.
 const IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? ''
-const ANDROID_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? ''
 const WEB_CLIENT_ID =
   process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ??
-  // Backwards-compat: older configs used a single var.
   process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ??
   ''
 
+// Configure once at module load — happens before any sign-in attempt.
+// The native SDK opens Google's bottom-sheet auth UI and returns an
+// id_token directly (no implicit-grant deprecation issues, no URL-scheme
+// redirect race conditions, no Safari hop).
+GoogleSignin.configure({
+  iosClientId: IOS_CLIENT_ID,
+  // webClientId is also accepted by the SDK for OIDC audience purposes
+  // even on iOS — set it if available so the id_token can be validated
+  // against the web client when the backend prefers that audience.
+  webClientId: WEB_CLIENT_ID || undefined,
+  scopes: ['openid', 'profile', 'email'],
+  offlineAccess: false,
+})
+
 export function useGoogleAuth() {
   const { setToken, setUser, setFamily, setFamilyMembers } = useAuthStore()
-
-  // useIdTokenAuthRequest runs the implicit-OIDC flow: Google returns
-  // an id_token directly via the URL scheme redirect — no backend code
-  // exchange required (which won't work on mobile because we don't ship
-  // the client secret). useAuthRequest by contrast does the authorization
-  // code flow which expects a backend exchange we don't have.
-  const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
-    clientId: WEB_CLIENT_ID,
-    iosClientId: IOS_CLIENT_ID || WEB_CLIENT_ID,
-    androidClientId: ANDROID_CLIENT_ID || WEB_CLIENT_ID,
-    scopes: ['openid', 'profile', 'email'],
-  })
+  const [signingIn, setSigningIn] = useState(false)
 
   const signIn = useCallback(async () => {
-    const result = await promptAsync()
-    if (result?.type !== 'success') {
-      throw new Error(result?.type === 'cancel' ? 'Sign-in cancelled' : 'Sign-in failed')
-    }
+    try {
+      setSigningIn(true)
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: false })
+      const userInfo = await GoogleSignin.signIn()
 
-    // useIdTokenAuthRequest returns the id_token in result.params for
-    // implicit grants. Older auth flows that did code exchange put it on
-    // result.authentication — keep that fallback so this works in either
-    // shape across SDK versions.
-    const idToken =
-      (result.params as Record<string, string> | undefined)?.id_token ??
-      result.authentication?.idToken
-    const accessToken = result.authentication?.accessToken
+      // SDK v13+ returns { type: 'success', data: { idToken, user } }
+      // older versions returned { idToken, user } directly. Handle both.
+      const idToken =
+        // v13+ shape
+        (userInfo as unknown as { data?: { idToken?: string } })?.data?.idToken ??
+        // older shape
+        (userInfo as unknown as { idToken?: string })?.idToken
 
-    if (!idToken && !accessToken) {
-      throw new Error('No token returned from Google')
-    }
-
-    // Exchange with backend
-    const authResponse = await authApi.googleLogin(
-      idToken ?? accessToken!,
-      idToken ? 'id_token' : 'access_token'
-    )
-
-    await setToken(authResponse.access_token)
-    setUser(authResponse.user)
-
-    // Load family if user has one
-    if (authResponse.user.family_id) {
-      try {
-        const family = await familyApi.get(authResponse.user.family_id)
-        setFamily(family)
-        setFamilyMembers(family.members)
-      } catch {
-        // non-critical
+      if (!idToken) {
+        throw new Error('Google returned a user but no idToken — check that the iOS OAuth client bundle ID matches.')
       }
+
+      const authResponse = await authApi.googleLogin(idToken, 'id_token')
+
+      await setToken(authResponse.access_token)
+      setUser(authResponse.user)
+
+      if (authResponse.user.family_id) {
+        try {
+          const family = await familyApi.get(authResponse.user.family_id)
+          setFamily(family)
+          setFamilyMembers(family.members)
+        } catch {
+          // non-critical
+        }
+      }
+
+      return authResponse.user
+    } catch (err) {
+      // Map common errors to clean messages
+      const e = err as { code?: string; message?: string }
+      if (e.code === statusCodes.SIGN_IN_CANCELLED) throw new Error('Sign-in cancelled')
+      if (e.code === statusCodes.IN_PROGRESS) throw new Error('Sign-in already in progress')
+      if (e.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE)
+        throw new Error('Google Play services unavailable')
+      throw err
+    } finally {
+      setSigningIn(false)
     }
+  }, [setToken, setUser, setFamily, setFamilyMembers])
 
-    return authResponse.user
-  }, [promptAsync, setToken, setUser, setFamily, setFamilyMembers])
-
-  return { request, response, signIn }
+  return { signIn, signingIn }
 }
+
+// keep useEffect import used for backwards-compat in case other code referenced it
+void useEffect

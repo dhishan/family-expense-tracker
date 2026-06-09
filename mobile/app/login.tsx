@@ -36,7 +36,7 @@ export default function LoginScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.emoji}>💰</Text>
-        <Text style={styles.title}>Family Expense Tracker</Text>
+        <Text style={styles.title}>Expenses</Text>
         <Text style={styles.subtitle}>
           Track spending, manage budgets, and monitor investments together.
         </Text>
