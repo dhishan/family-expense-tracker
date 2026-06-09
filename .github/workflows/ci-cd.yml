@@ -184,5 +184,17 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
       
       - name: Deploy to Cloud Storage
+        # Kept during migration window — the existing HTTPS LB still
+        # serves ui.expense-tracker from this bucket. Will be removed
+        # in the follow-up cleanup commit after DNS cutover.
         run: |
           make deploy-frontend ENV=${{ env.ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
+
+      - name: Deploy to Firebase Hosting
+        # Second deploy target during the migration window. Once the
+        # Cloudflare DNS cutover is done, this becomes the primary.
+        # Uses the same WIF-authenticated gcloud session — Firebase CLI
+        # picks up the ADC creds automatically.
+        run: |
+          cd frontend
+          npx --yes firebase-tools deploy --only hosting --project ${{ env.PROJECT_ID }} --non-interactive

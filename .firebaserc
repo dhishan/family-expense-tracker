@@ -1,5 +1,12 @@
 {
   "projects": {
-    "default": "demo-family-expense-tracker"
+    "default": "personal-projects-473219"
+  },
+  "targets": {
+    "personal-projects-473219": {
+      "hosting": {
+        "ui": ["family-expense-tracker"]
+      }
+    }
   }
 }

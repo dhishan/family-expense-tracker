@@ -1207,9 +1207,46 @@ async def _generate_turn(
                 model=model_id,
                 input={"messages_len": len(msgs), "effort": effort_level},
             )
+            # Accumulate token usage from streaming events. `final_msg.usage`
+            # on the beta streaming SDK only carries the trailing delta
+            # (output tokens of the last chunk, no input count), which is
+            # why earlier Langfuse traces showed `input=13` on every turn
+            # regardless of context size. The cumulative counts arrive on
+            # message_start (full input + cache breakdown) and message_delta
+            # (running output). We read them directly.
+            stream_usage = {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            }
             async with client.beta.messages.stream(**stream_kwargs) as stream:
                 async for event in stream:
                     etype = event.type
+
+                    if etype == "message_start":
+                        u = getattr(getattr(event, "message", None), "usage", None)
+                        if u is not None:
+                            stream_usage["input_tokens"] = getattr(u, "input_tokens", 0) or 0
+                            stream_usage["cache_read_input_tokens"] = (
+                                getattr(u, "cache_read_input_tokens", 0) or 0
+                            )
+                            stream_usage["cache_creation_input_tokens"] = (
+                                getattr(u, "cache_creation_input_tokens", 0) or 0
+                            )
+                            # message_start may include a partial output count
+                            stream_usage["output_tokens"] = max(
+                                stream_usage["output_tokens"],
+                                getattr(u, "output_tokens", 0) or 0,
+                            )
+                    elif etype == "message_delta":
+                        u = getattr(event, "usage", None)
+                        if u is not None:
+                            # output_tokens on message_delta is cumulative
+                            stream_usage["output_tokens"] = max(
+                                stream_usage["output_tokens"],
+                                getattr(u, "output_tokens", 0) or 0,
+                            )
 
                     if etype == "content_block_start":
                         block = event.content_block
@@ -1274,16 +1311,20 @@ async def _generate_turn(
             output_text_parts.extend(text_parts)
             stop_reason = final_msg.stop_reason
 
-            # Close the per-turn generation observation with usage + stop reason
-            usage = getattr(final_msg, "usage", None)
-            usage_dict = {}
-            if usage is not None:
-                usage_dict = {
-                    "input": getattr(usage, "input_tokens", 0) or 0,
-                    "output": getattr(usage, "output_tokens", 0) or 0,
-                    "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
-                    "cache_creation": getattr(usage, "cache_creation_input_tokens", 0) or 0,
-                }
+            # Prefer the cumulative counts captured from the stream events.
+            # Fall back to final_msg.usage as a safety net (in case the SDK
+            # changes its event shape).
+            fmu = getattr(final_msg, "usage", None)
+            usage_dict = {
+                "input": stream_usage["input_tokens"]
+                    or (getattr(fmu, "input_tokens", 0) or 0),
+                "output": stream_usage["output_tokens"]
+                    or (getattr(fmu, "output_tokens", 0) or 0),
+                "cache_read": stream_usage["cache_read_input_tokens"]
+                    or (getattr(fmu, "cache_read_input_tokens", 0) or 0),
+                "cache_creation": stream_usage["cache_creation_input_tokens"]
+                    or (getattr(fmu, "cache_creation_input_tokens", 0) or 0),
+            }
             _safe_end(
                 gen_obs,
                 output={"text": "".join(text_parts)[:2000], "tool_calls": [t["name"] for t in tool_use_blocks]},
