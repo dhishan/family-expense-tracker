@@ -21,6 +21,7 @@ interface UIMessage {
   role: 'user' | 'assistant'
   content: string
   streaming?: boolean
+  failed?: boolean
 }
 
 // Notion-inspired markdown styles — slate palette, indigo accents
@@ -153,38 +154,57 @@ export default function ChatScreen() {
     setInput('')
   }, [isStreaming])
 
-  const sendMessage = useCallback(async () => {
-    const text = input.trim()
+  const runChat = useCallback(async (text: string, isRetry: boolean) => {
     if (!text || isStreaming) return
-
-    setInput('')
-
-    const userMsg: UIMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: text,
-    }
 
     const assistantId = `assistant-${Date.now()}`
     streamingIdRef.current = assistantId
 
-    const assistantMsg: UIMessage = {
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-      streaming: true,
-    }
+    let nextMessages: UIMessage[] = []
+    setMessages((prev) => {
+      // On retry: drop the trailing failed assistant bubble but keep the
+      // original user message. On a fresh send: append both user + new
+      // assistant bubble.
+      let base = prev
+      if (isRetry) {
+        // Drop trailing assistant bubbles that are failed/empty
+        while (base.length > 0) {
+          const last = base[base.length - 1]
+          if (last.role === 'assistant' && (last.failed || !last.content)) {
+            base = base.slice(0, -1)
+          } else {
+            break
+          }
+        }
+      } else {
+        const userMsg: UIMessage = {
+          id: `user-${Date.now()}`,
+          role: 'user',
+          content: text,
+        }
+        base = [...base, userMsg]
+      }
+      const assistantMsg: UIMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        streaming: true,
+      }
+      nextMessages = [...base, assistantMsg]
+      return nextMessages
+    })
 
-    setMessages((prev) => [...prev, userMsg, assistantMsg])
     setIsStreaming(true)
     scrollToBottom()
 
-    // Build history for API
-    const history: ChatMessage[] = messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }))
-    history.push({ role: 'user', content: text })
+    // Build history for API from the post-mutation message list — exclude
+    // the new (empty) assistant bubble.
+    const history: ChatMessage[] = nextMessages
+      .filter((m) => !(m.role === 'assistant' && m.id === assistantId))
+      .map((m) => ({ role: m.role, content: m.content }))
+    if (history.length === 0 || history[history.length - 1].content !== text) {
+      history.push({ role: 'user', content: text })
+    }
 
     await chatApi.sendMessage(
       history,
@@ -211,7 +231,7 @@ export default function ChatScreen() {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
-              ? { ...m, content: `Error: ${err}`, streaming: false }
+              ? { ...m, content: `Error: ${err}`, streaming: false, failed: true }
               : m
           )
         )
@@ -219,7 +239,27 @@ export default function ChatScreen() {
         streamingIdRef.current = null
       }
     )
-  }, [input, isStreaming, messages, user?.family_id, scrollToBottom])
+  }, [isStreaming, user?.family_id, scrollToBottom])
+
+  const sendMessage = useCallback(async () => {
+    const text = input.trim()
+    if (!text) return
+    setInput('')
+    await runChat(text, false)
+  }, [input, runChat])
+
+  const retryLast = useCallback(async () => {
+    // Find the most recent user message and re-send it.
+    let lastUser: string | null = null
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        lastUser = messages[i].content
+        break
+      }
+    }
+    if (!lastUser) return
+    await runChat(lastUser, true)
+  }, [messages, runChat])
 
   const renderMessage = ({ item }: { item: UIMessage }) => {
     const isUser = item.role === 'user'
@@ -259,6 +299,17 @@ export default function ChatScreen() {
                   <View style={[styles.streamingDot, { animationDelay: '0.2s' }]} />
                   <View style={[styles.streamingDot, { animationDelay: '0.4s' }]} />
                 </View>
+              ) : null}
+              {item.failed ? (
+                <TouchableOpacity
+                  onPress={retryLast}
+                  disabled={isStreaming}
+                  style={styles.retryBtn}
+                  testID="retry-btn"
+                >
+                  <Ionicons name="refresh" size={14} color="#2563eb" />
+                  <Text style={styles.retryText}>Retry</Text>
+                </TouchableOpacity>
               ) : null}
             </>
           )}
@@ -445,6 +496,22 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: 3,
     backgroundColor: '#c7d2fe',  // indigo-200
+  },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#eef2ff',  // indigo-50
+  },
+  retryText: {
+    color: '#2563eb',
+    fontSize: 13,
+    fontWeight: '600',
   },
   inputRow: {
     flexDirection: 'row',

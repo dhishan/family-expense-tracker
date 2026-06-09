@@ -71,6 +71,11 @@ What is missing from this portfolio that a balanced book of this risk profile sh
 
 Style: direct, plain, no filler. No emoji. No "as an AI". Quote dates and numbers. Where you are uncertain, say so. This is for the user's own decision-making, not advice.
 
+Tool-use efficiency (CRITICAL — affects user-perceived latency):
+- Plan up front. Identify every tool call you will need and fire them ALL in PARALLEL in a single assistant turn. Do not serialize tool calls across multiple turns when they are independent.
+- Do NOT write narration like "Let me pull X", "Now let me check Y", "Good, now let me get Z" between tool batches. Each narration line costs 15-20s of model time. Skip them entirely. Go straight from receiving tool results to the next batch of tool calls (if needed) or to the final markdown answer.
+- A typical good shape: one assistant turn that fires 5-8 parallel tool calls, then one assistant turn that writes the full final answer. Two turns total, not eight.
+
 You have additional tools for FRED macro data, Tiingo price history + fundamentals, Finnhub news + analyst targets, and SEC EDGAR filings - use them aggressively to ground claims in current data. Use EDGAR tools to pull official 10-K/10-Q financials, 8-K material events, and Form 4 insider transactions for any position under discussion."""
 
 TOOLS: list[dict] = [
@@ -999,10 +1004,14 @@ async def _stream_chat(
 
     # Adaptive model + effort routing based on the latest user query.
     # Default to Sonnet (fast); upgrade to Opus + higher effort only for analytical asks.
+    # Only escalate to Opus when the user explicitly asks for deep analysis.
+    # Generic phrases like "should i" and "compare" were too broad — they
+    # routed everyday questions to Opus + effort=high, producing 9-turn
+    # 180s responses. Keep this list narrow.
     DEEP_KEYWORDS = (
-        "analyze", "analysis", "risk", "concentration", "macro", "rebalance",
-        "tax", "harvest", "what should i sell", "recommend", "should i", "advice",
-        "evaluate", "compare", "diversif", "outlook",
+        "deep analysis", "thorough analysis", "full analysis",
+        "rebalance my portfolio", "tax harvest", "tax-loss harvest",
+        "concentration risk", "stress test",
     )
     last_user = next(
         (m["content"] for m in reversed(messages) if m.get("role") == "user"),
@@ -1024,9 +1033,32 @@ async def _stream_chat(
     server_container_id: str | None = None
 
     output_text_parts: list[str] = []
+    turn_idx = 0
+
+    def _safe_child(name: str, as_type: str, **kwargs):
+        """Create a Langfuse child observation, swallowing all errors so
+        instrumentation can never break the chat stream."""
+        if not lf_obs:
+            return None
+        try:
+            return lf_obs.start_observation(name=name, as_type=as_type, **kwargs)
+        except Exception as e:
+            logger.warning("Langfuse child span failed: %s", e)
+            return None
+
+    def _safe_end(obs, **kwargs):
+        if not obs:
+            return
+        try:
+            if kwargs:
+                obs.update(**kwargs)
+            obs.end()
+        except Exception as e:
+            logger.warning("Langfuse end failed: %s", e)
 
     try:
         while True:
+            turn_idx += 1
             # ---- Single Claude call (streaming) --------------------------------
             tool_use_blocks: list[dict] = []  # accumulated from this turn
             text_parts: list[str] = []
@@ -1066,6 +1098,12 @@ async def _stream_chat(
                 # tools (e.g. web_search_20260209) across agentic-loop turns.
                 stream_kwargs["container"] = server_container_id
 
+            gen_obs = _safe_child(
+                f"llm-turn-{turn_idx}",
+                as_type="generation",
+                model=model_id,
+                input={"messages_len": len(msgs), "effort": effort_level},
+            )
             async with client.beta.messages.stream(**stream_kwargs) as stream:
                 async for event in stream:
                     etype = event.type
@@ -1132,6 +1170,23 @@ async def _stream_chat(
             output_text_parts.extend(text_parts)
             stop_reason = final_msg.stop_reason
 
+            # Close the per-turn generation observation with usage + stop reason
+            usage = getattr(final_msg, "usage", None)
+            usage_dict = {}
+            if usage is not None:
+                usage_dict = {
+                    "input": getattr(usage, "input_tokens", 0) or 0,
+                    "output": getattr(usage, "output_tokens", 0) or 0,
+                    "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
+                    "cache_creation": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+                }
+            _safe_end(
+                gen_obs,
+                output={"text": "".join(text_parts)[:2000], "tool_calls": [t["name"] for t in tool_use_blocks]},
+                usage=usage_dict,
+                metadata={"stop_reason": stop_reason, "n_tool_calls": len(tool_use_blocks)},
+            )
+
             # ---- No tool calls: we are done -----------------------------------
             if stop_reason == "end_turn" or not tool_use_blocks:
                 break
@@ -1156,10 +1211,19 @@ async def _stream_chat(
                     "input": tc["input"],
                 })
 
+                tool_obs = _safe_child(
+                    f"tool:{tc['name']}",
+                    as_type="span",
+                    input=tc["input"],
+                )
                 if tc["name"] in _EXPENSE_TOOLS:
                     result_content = await _execute_expense_tool(tc["name"], tc["input"], user_id)
                 else:
                     result_content = _execute_snaptrade_tool(tc["name"], tc["input"], user_id)
+                _safe_end(
+                    tool_obs,
+                    output={"preview": result_content[:500], "size_chars": len(result_content)},
+                )
 
                 # Cap the version that goes back into model context. Large
                 # tool payloads (portfolio_summary, edgar_company_facts,
