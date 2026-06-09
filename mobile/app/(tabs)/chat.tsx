@@ -188,6 +188,12 @@ export default function ChatScreen() {
   const { user } = useAuthStore()
   const listRef = useRef<FlatList>(null)
   const streamingIdRef = useRef<string | null>(null)
+  // Tracks transient SSE-disconnect retries within a single in-flight
+  // assistant turn. We allow up to MAX_SSE_RECONNECTS automatic
+  // reconnects (with backoff) before falling back to the user-visible
+  // retry button. Reset on done/error/explicit retry/new chat.
+  const reconnectAttemptsRef = useRef<number>(0)
+  const MAX_SSE_RECONNECTS = 3
 
   // ─── Durable conversation state ───────────────────────────────────────────
   //
@@ -251,6 +257,7 @@ export default function ChatScreen() {
     convIdRef.current = null
     assistantTurnIdRef.current = null
     lastSeqRef.current = 0
+    reconnectAttemptsRef.current = 0
     setMessages([])
     setInput('')
     if (params.conversation_id) {
@@ -304,9 +311,44 @@ export default function ChatScreen() {
           setIsStreaming(false)
           streamingIdRef.current = null
           streamCleanupRef.current = null
+          reconnectAttemptsRef.current = 0
           scrollToBottom()
         },
         onError: (err: string) => {
+          // Transient SSE drops (lost wifi, switched cell tower, iOS
+          // suspended the JS runtime briefly) shouldn't kill the chat.
+          // The backend kept generating into Firestore and the GET
+          // stream endpoint replays from lastSeq. Try silent
+          // reconnects up to MAX_SSE_RECONNECTS before showing the
+          // user-visible failure + retry button.
+          if (
+            reconnectAttemptsRef.current < MAX_SSE_RECONNECTS &&
+            convIdRef.current &&
+            assistantTurnIdRef.current === turnId
+          ) {
+            reconnectAttemptsRef.current += 1
+            const backoffMs = 500 * Math.pow(2, reconnectAttemptsRef.current - 1)
+            // Surface a faint status so the user knows we're reconnecting
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === turnId
+                  ? { ...m, status: 'Reconnecting…' }
+                  : m,
+              ),
+            )
+            setTimeout(() => {
+              if (assistantTurnIdRef.current === turnId) {
+                openResumeStream(
+                  convIdRef.current!,
+                  turnId,
+                  lastSeqRef.current,
+                )
+              }
+            }, backoffMs)
+            return
+          }
+          // Reconnects exhausted — show the failure UI.
+          reconnectAttemptsRef.current = 0
           setMessages((prev) =>
             prev.map((m) =>
               m.id === turnId
@@ -383,6 +425,7 @@ export default function ChatScreen() {
       })
 
       setIsStreaming(true)
+      reconnectAttemptsRef.current = 0
       scrollToBottom()
 
       let started: Awaited<ReturnType<typeof chatApi.start>>
