@@ -18,19 +18,9 @@ output "firestore_database" {
   value       = google_firestore_database.database.name
 }
 
-output "frontend_bucket_name" {
-  description = "Name of the frontend storage bucket"
-  value       = google_storage_bucket.frontend.name
-}
-
 output "backend_service_account_email" {
   description = "Email of the backend service account"
   value       = google_service_account.backend_sa.email
-}
-
-output "frontend_load_balancer_ip" {
-  description = "Reserved global IPv4 address serving the frontend"
-  value       = google_compute_global_address.frontend.address
 }
 
 output "jwt_secret_id" {

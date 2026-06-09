@@ -553,83 +553,12 @@ resource "google_cloud_run_service_iam_member" "backend_public" {
   member   = "allUsers"
 }
 
-# Storage bucket for frontend
-resource "google_storage_bucket" "frontend" {
-  name          = var.frontend_bucket_name
-  location      = var.region
-  force_destroy = true
-  
-  storage_class = "STANDARD"
-
-  website {
-    main_page_suffix = "index.html"
-    not_found_page   = "index.html"
-  }
-
-  cors {
-    origin          = ["*"]
-    method          = ["GET", "HEAD"]
-    response_header = ["*"]
-    max_age_seconds = 3600
-  }
-
-  uniform_bucket_level_access = true
-
-  depends_on = [google_project_service.storage]
-}
-
-# Allow HTTPS Load Balancer service account to read frontend objects
-resource "google_storage_bucket_iam_member" "frontend_lb_access" {
-  bucket = google_storage_bucket.frontend.name
-  role   = "roles/storage.objectViewer"
-  member = "serviceAccount:service-${data.google_project.current.number}@compute-system.iam.gserviceaccount.com"
-
-  depends_on = [google_project_service.compute]
-}
-
-# HTTPS Load Balancer serving the static frontend from GCS
-resource "google_compute_backend_bucket" "frontend" {
-  name        = "${var.backend_service_name}-frontend"
-  bucket_name = google_storage_bucket.frontend.name
-  enable_cdn  = true
-
-  depends_on = [
-    google_project_service.compute,
-    google_storage_bucket_iam_member.frontend_lb_access
-  ]
-}
-
-resource "google_compute_url_map" "frontend" {
-  name            = "${var.backend_service_name}-frontend"
-  default_service = google_compute_backend_bucket.frontend.id
-}
-
-resource "google_compute_managed_ssl_certificate" "frontend" {
-  name = "${var.backend_service_name}-frontend-cert"
-
-  managed {
-    domains = [local.frontend_domain_fqdn]
-  }
-}
-
-resource "google_compute_target_https_proxy" "frontend" {
-  name             = "${var.backend_service_name}-frontend"
-  url_map          = google_compute_url_map.frontend.id
-  ssl_certificates = [google_compute_managed_ssl_certificate.frontend.id]
-}
-
-resource "google_compute_global_address" "frontend" {
-  name = "${var.backend_service_name}-frontend"
-}
-
-resource "google_compute_global_forwarding_rule" "frontend" {
-  name                  = "${var.backend_service_name}-frontend"
-  ip_protocol           = "TCP"
-  port_range            = "443"
-  target                = google_compute_target_https_proxy.frontend.id
-  load_balancing_scheme = "EXTERNAL"
-  ip_address            = google_compute_global_address.frontend.address
-}
+# NOTE: the previous Cloud Storage bucket + HTTPS LB + managed cert
+# + static IP that used to serve ui.expense-tracker were removed in
+# the Firebase Hosting migration. They cost ~$20/month idle (the
+# forwarding rule + static IP). The replacement stack lives in
+# firebase_hosting.tf and serves the same content from Firebase
+# Hosting at no cost on the free tier.
 
 # Cloud Run domain mapping for backend API
 resource "google_cloud_run_domain_mapping" "backend" {
@@ -647,16 +576,19 @@ resource "google_cloud_run_domain_mapping" "backend" {
   depends_on = [google_project_service.run]
 }
 
-# Cloudflare DNS records
+# Cloudflare DNS — frontend points at Firebase Hosting (not the old LB).
+# Type changed A → CNAME during the Firebase migration. The previous A
+# record pointed at the HTTPS LB static IP; both LB and IP are removed
+# in this same commit.
 resource "cloudflare_record" "frontend_a" {
   zone_id = var.cloudflare_zone_id
   name    = "ui.expense-tracker"
-  type    = "A"
-  content = google_compute_global_address.frontend.address
+  type    = "CNAME"
+  content = "${google_firebase_hosting_site.frontend.site_id}.web.app"
   proxied = false
   ttl     = 300
 
-  depends_on = [google_compute_global_forwarding_rule.frontend]
+  depends_on = [google_firebase_hosting_custom_domain.frontend]
 }
 
 resource "cloudflare_record" "backend_cname" {
