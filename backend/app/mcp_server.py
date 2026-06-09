@@ -381,6 +381,55 @@ def ticker_earnings_calendar(symbol: str, days_ahead: int = 90) -> list[dict]:
     return market_data.finnhub_earnings_calendar(symbol=symbol, days_ahead=days_ahead)
 
 
+# ---- SEC EDGAR tools --------------------------------------------------------
+
+
+@mcp.tool()
+def edgar_company_lookup(ticker: str) -> dict:
+    """Resolve a stock ticker to its SEC CIK number and official company name.
+
+    Use to disambiguate before pulling filings or facts, or when the user asks about
+    a company's SEC identity.
+    """
+    return market_data.edgar_company_lookup(ticker=ticker)
+
+
+@mcp.tool()
+def edgar_recent_filings(
+    ticker: str,
+    form_type: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Recent SEC filings for a ticker from EDGAR.
+
+    Use for fundamental analysis: 10-K (annual), 10-Q (quarterly), 8-K (material events
+    like acquisitions, leadership changes, guidance), DEF 14A (proxy/exec compensation),
+    Form 4 (insider buy/sell). Returns filing dates and document URLs.
+    """
+    return market_data.edgar_recent_filings(ticker=ticker, form_type=form_type, limit=limit)
+
+
+@mcp.tool()
+def edgar_company_facts(ticker: str, concept: str | None = None) -> dict:
+    """SEC XBRL financial facts for a company: revenue, net income, assets, liabilities, EPS.
+
+    Data comes from the company's own EDGAR filings. If concept is omitted, returns a summary
+    of key metrics with latest values. If concept is provided (e.g. 'Revenues', 'NetIncomeLoss',
+    'Assets', 'EarningsPerShareBasic'), returns the full history of that metric across filing periods.
+    """
+    return market_data.edgar_company_facts(ticker=ticker, concept=concept)
+
+
+@mcp.tool()
+def edgar_insider_transactions(ticker: str, days: int = 90) -> list[dict]:
+    """Recent Form 4 insider transaction filings for a company.
+
+    Returns buys and sells by officers, directors, and 10%+ shareholders.
+    Use when assessing management conviction, insider selling pressure, or unusual buying activity.
+    """
+    return market_data.edgar_insider_transactions(ticker=ticker, days=days)
+
+
 # ---- FastAPI mount helper --------------------------------------------------
 
 def build_mcp_app():

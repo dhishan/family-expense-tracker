@@ -68,7 +68,7 @@ What is missing from this portfolio that a balanced book of this risk profile sh
 
 Style: direct, plain, no filler. No emoji. No "as an AI". Quote dates and numbers. Where you are uncertain, say so. This is for the user's own decision-making, not advice.
 
-You have additional tools for FRED macro data, Tiingo price history + fundamentals, and Finnhub news + analyst targets - use them aggressively to ground claims in current data."""
+You have additional tools for FRED macro data, Tiingo price history + fundamentals, Finnhub news + analyst targets, and SEC EDGAR filings - use them aggressively to ground claims in current data. Use EDGAR tools to pull official 10-K/10-Q financials, 8-K material events, and Form 4 insider transactions for any position under discussion."""
 
 TOOLS: list[dict] = [
     {"type": "web_search_20260209", "name": "web_search"},
@@ -343,6 +343,87 @@ TOOLS: list[dict] = [
             "required": ["symbol"],
         },
     },
+    # --- SEC EDGAR ---
+    {
+        "name": "edgar_company_lookup",
+        "description": (
+            "Resolve a stock ticker to its SEC CIK number and official company name. "
+            "Use to disambiguate before pulling filings or facts, or when the user asks about "
+            "a company's SEC identity."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Stock ticker symbol, e.g. AAPL"},
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "edgar_recent_filings",
+        "description": (
+            "Recent SEC filings for a ticker from EDGAR. Use for fundamental analysis: "
+            "10-K (annual report), 10-Q (quarterly), 8-K (material events like acquisitions, "
+            "leadership changes, guidance), DEF 14A (proxy/exec compensation), "
+            "Form 4 (insider buy/sell transactions). Returns filing dates and document URLs."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Stock ticker symbol"},
+                "form_type": {
+                    "type": "string",
+                    "description": "Optional filter: '10-K', '10-Q', '8-K', '4', 'DEF 14A', etc.",
+                },
+                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20},
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "edgar_company_facts",
+        "description": (
+            "SEC XBRL financial facts for a company: revenue, net income, assets, liabilities, "
+            "EPS, shares outstanding, and more. Data comes from the company's own filings. "
+            "If concept is omitted, returns a summary of key metrics with latest values. "
+            "If concept is provided (e.g. 'Revenues', 'NetIncomeLoss', 'Assets'), returns "
+            "the full history of that metric across all filing periods."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Stock ticker symbol"},
+                "concept": {
+                    "type": "string",
+                    "description": (
+                        "Optional XBRL concept: 'Revenues', 'NetIncomeLoss', 'Assets', "
+                        "'Liabilities', 'EarningsPerShareBasic', 'CashAndCashEquivalentsAtCarryingValue'"
+                    ),
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "edgar_insider_transactions",
+        "description": (
+            "Recent Form 4 insider transaction filings (buys and sells by officers, directors, "
+            "and 10%+ shareholders) for a company. Use when assessing management conviction, "
+            "insider selling pressure, or unusual buying activity."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Stock ticker symbol"},
+                "days": {
+                    "type": "integer",
+                    "description": "Lookback window in days (default 90)",
+                    "default": 90,
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
 ]
 
 
@@ -492,6 +573,25 @@ def _execute_snaptrade_tool(name: str, tool_input: dict, user_id: str) -> str:
                 symbol=tool_input["symbol"],
                 days_ahead=tool_input.get("days_ahead", 90),
             )
+        # --- SEC EDGAR tools ---
+        elif name == "edgar_company_lookup":
+            result = market_data.edgar_company_lookup(ticker=tool_input["ticker"])
+        elif name == "edgar_recent_filings":
+            result = market_data.edgar_recent_filings(
+                ticker=tool_input["ticker"],
+                form_type=tool_input.get("form_type"),
+                limit=tool_input.get("limit", 20),
+            )
+        elif name == "edgar_company_facts":
+            result = market_data.edgar_company_facts(
+                ticker=tool_input["ticker"],
+                concept=tool_input.get("concept"),
+            )
+        elif name == "edgar_insider_transactions":
+            result = market_data.edgar_insider_transactions(
+                ticker=tool_input["ticker"],
+                days=tool_input.get("days", 90),
+            )
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 
@@ -566,7 +666,14 @@ async def _stream_chat(
             async with client.messages.stream(
                 model=model_id,
                 max_tokens=16000,
-                system=SYSTEM_PROMPT,
+                # Prompt caching: system + tools never change between turns
+                # of the agentic loop. Auto-caches the last cacheable block,
+                # so subsequent turns read the (system + tools) prefix at
+                # ~10% of normal input cost. Critical for staying under the
+                # 30K input-tokens-per-minute tier limit when the loop fires
+                # 3-5 tool calls in quick succession.
+                cache_control={"type": "ephemeral"},  # type: ignore[arg-type]
+                system=[{"type": "text", "text": SYSTEM_PROMPT}],
                 thinking={"type": "adaptive"},
                 output_config={"effort": effort_level},
                 tools=TOOLS,  # type: ignore[arg-type]

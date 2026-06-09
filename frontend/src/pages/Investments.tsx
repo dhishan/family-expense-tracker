@@ -410,15 +410,19 @@ export default function Investments() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
-              queryClient.invalidateQueries({ queryKey: ['investments'] })
+              // Re-fetch live portfolio data (positions, prices, P&L).
+              // Skip accounts — that list only changes when a brokerage is
+              // explicitly connected/disconnected via the Connect button.
+              queryClient.invalidateQueries({ queryKey: ['investments', 'holdings'] })
+              queryClient.invalidateQueries({ queryKey: ['investments', 'activities'] })
               toast.success('Refreshing portfolio…')
             }}
-            disabled={accountsLoading || holdingsLoading}
-            aria-label="Refresh portfolio"
+            disabled={holdingsLoading}
+            aria-label="Refresh portfolio data"
             className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50 transition-colors"
           >
             <ArrowPathIcon className={`h-4 w-4 ${holdingsLoading ? 'animate-spin' : ''}`} />
-            Refresh
+            Refresh portfolio
           </button>
           <button
             onClick={() => setShowConnect(true)}

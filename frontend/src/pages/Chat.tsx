@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { useAuthStore } from '../store/auth'
-import { PaperAirplaneIcon, ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline'
+import { PaperAirplaneIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon } from '@heroicons/react/24/outline'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -310,9 +310,22 @@ export default function Chat() {
   return (
     <div className="flex flex-col h-[calc(100vh-4rem-2rem)] lg:h-[calc(100vh-4rem-4rem)] -m-4 sm:-m-6 lg:-m-8">
       {/* Header */}
-      <div className="px-4 sm:px-6 py-3 border-b border-gray-200 bg-white shrink-0">
-        <h1 className="text-lg font-semibold text-gray-900">Chat with your portfolio</h1>
-        <p className="text-xs text-gray-500">Powered by Claude Opus — pulls live data from your connected brokers</p>
+      <div className="px-4 sm:px-6 py-3 border-b border-gray-200 bg-white shrink-0 flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-gray-900">Chat with your portfolio</h1>
+          <p className="text-xs text-gray-500">Powered by Claude — pulls live data from your brokers, FRED, Tiingo, Finnhub, and SEC EDGAR</p>
+        </div>
+        {messages.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setMessages([])}
+            aria-label="Start a new chat"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+          >
+            <PlusIcon className="h-4 w-4" />
+            New chat
+          </button>
+        )}
       </div>
 
       {/* Message area */}
