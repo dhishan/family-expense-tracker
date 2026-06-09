@@ -23,10 +23,13 @@ from datetime import date, timedelta
 from typing import Any, AsyncGenerator
 
 import anthropic
+import asyncio
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from app.services.chat_store import get_chat_store
 
 load_dotenv()  # ensure ANTHROPIC_API_KEY + LANGFUSE_* land in os.environ for SDKs
 
@@ -974,17 +977,116 @@ def _sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"
 
 
-async def _stream_chat(
-    messages: list[dict],
+# ─── Background generation ───────────────────────────────────────────────────
+#
+# The chat architecture is split into three pieces:
+#
+#   1. POST /chat/start
+#        Creates the user turn + a "streaming" assistant turn in Firestore,
+#        schedules generation as an asyncio.create_task, and returns IDs
+#        immediately. The background task survives the HTTP response
+#        completing — Cloud Run keeps the container alive via
+#        cpu_idle=false + min_instances=1 (set in terraform).
+#
+#   2. GET /chat/conversations/{conv}/turns/{turn}/stream?from_seq=N
+#        Resumable SSE. Polls Firestore for events with seq > N every
+#        ~200ms, emits them, closes when status == complete | error.
+#        Client backgrounding the app just drops this connection; nothing
+#        breaks on the server. On foreground, the client re-opens with
+#        the last seen seq and resumes exactly where it left off.
+#
+#   3. GET /chat/conversations, GET /chat/conversations/{id}
+#        Conversation listing + full transcript fetch for history UI.
+#
+# Per-user isolation is enforced at every layer:
+#   - Every turn/conv doc is denormalized with `user_id`.
+#   - Every read endpoint verifies the requesting user matches the
+#     owner before returning data; mismatch returns 404 to avoid
+#     leaking existence.
+#   - Cross-user attempts are logged as warnings for incident review.
+#
+# Tracks in-flight generation tasks so the asyncio task doesn't get GC'd
+# while still running. Removed via add_done_callback when each finishes.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _extract_container_id(final_msg: Any) -> str | None:
+    """Server-side tools (web_search_20260209) run in an Anthropic sandbox
+    container whose ID must be threaded across agentic-loop turns. The
+    container shape has shifted across SDK versions — check every place
+    the ID might live."""
+    container = getattr(final_msg, "container", None)
+    if container is None:
+        # Sometimes only the ID is surfaced
+        return getattr(final_msg, "container_id", None)
+    if isinstance(container, str):
+        return container
+    if isinstance(container, dict):
+        return container.get("id") or container.get("container_id")
+    return getattr(container, "id", None) or getattr(container, "container_id", None)
+
+
+async def _generate_turn(
+    *,
+    conv_id: str,
+    assistant_turn_id: str,
     user_id: str,
     session_id: str,
-) -> AsyncGenerator[str, None]:
-    """Core agentic loop: stream tokens, handle tool calls, continue until end_turn."""
-    # Lazy Langfuse init (v4 SDK) — skipped if env vars are absent so dev
-    # works without them. Each chat request gets one observation; user_id
-    # and session_id are stored in metadata so the Langfuse UI can filter
-    # by them. The previous v3 `lf.trace(...)` call silently failed on v4
-    # because that method no longer exists.
+    history: list[dict],
+) -> None:
+    """Background generation task. Writes every event to Firestore so the
+    chat survives client disconnects. Never raises — terminal errors are
+    written to the turn doc as status=error.
+
+    Lifecycle:
+      pending → streaming (set by /chat/start) → complete | error (this)
+    """
+    store = get_chat_store()
+    seq_counter = 0
+
+    def _next_seq() -> int:
+        nonlocal seq_counter
+        seq_counter += 1
+        return seq_counter
+
+    def _now_iso() -> str:
+        return date.today().isoformat()  # cheap, ts not load-bearing on event rows
+
+    async def emit(event_type: str, **fields) -> None:
+        """Append an event row to the turn doc. Caller fills in event-specific
+        fields; we add seq + type. Run in a thread to avoid blocking the
+        async loop on Firestore RPC."""
+        event = {"seq": _next_seq(), "type": event_type, **fields}
+        try:
+            await asyncio.to_thread(
+                store.append_event, conv_id, assistant_turn_id, event=event
+            )
+        except Exception as e:
+            logger.warning("Firestore append_event failed: %s", e)
+
+    # Periodic text-projection flush so resume can render the running
+    # body without replaying every text delta event.
+    full_text_parts: list[str] = []
+    last_flush_at = 0.0
+    FLUSH_INTERVAL_S = 0.6
+
+    async def maybe_flush_text(force: bool = False) -> None:
+        nonlocal last_flush_at
+        now = asyncio.get_event_loop().time()
+        if not force and (now - last_flush_at) < FLUSH_INTERVAL_S:
+            return
+        last_flush_at = now
+        try:
+            await asyncio.to_thread(
+                store.flush_text,
+                conv_id,
+                assistant_turn_id,
+                full_text="".join(full_text_parts),
+            )
+        except Exception as e:
+            logger.warning("Firestore flush_text failed: %s", e)
+
+    # ── Langfuse parent observation ────────────────────────────────────
     lf = None
     lf_obs = None
     try:
@@ -993,13 +1095,15 @@ async def _stream_chat(
         lf_obs = lf.start_observation(
             name="portfolio-chat",
             as_type="span",
-            metadata={"user_id": user_id, "session_id": session_id},
+            metadata={
+                "user_id": user_id,
+                "session_id": session_id,
+                "conv_id": conv_id,
+                "turn_id": assistant_turn_id,
+            },
         )
     except Exception as e:
         logger.warning("Langfuse init failed (continuing without): %s", e)
-        lf = None
-        lf_obs = None
-
     client = anthropic.AsyncAnthropic()
 
     # Adaptive model + effort routing based on the latest user query.
@@ -1014,7 +1118,7 @@ async def _stream_chat(
         "concentration risk", "stress test",
     )
     last_user = next(
-        (m["content"] for m in reversed(messages) if m.get("role") == "user"),
+        (m["content"] for m in reversed(history) if m.get("role") == "user"),
         "",
     ).lower()
     is_deep = any(kw in last_user for kw in DEEP_KEYWORDS)
@@ -1022,8 +1126,17 @@ async def _stream_chat(
     effort_level = "high" if is_deep else "medium"
     logger.info(f"chat routing: model={model_id} effort={effort_level} deep={is_deep}")
 
+    # Record routing decision so resume can render the correct model badge.
+    try:
+        await asyncio.to_thread(
+            store._turns(conv_id).document(assistant_turn_id).update,
+            {"model": model_id},
+        )
+    except Exception as e:
+        logger.warning("Firestore model write failed: %s", e)
+
     # Working copy of the messages list for the agentic loop.
-    msgs: list[dict] = [{"role": m["role"], "content": m["content"]} for m in messages]
+    msgs: list[dict] = [{"role": m["role"], "content": m["content"]} for m in history]
 
     # When the model uses server-side tools like web_search_20260209 that run
     # in Anthropic's code-execution sandbox, the response carries a `container`
@@ -1120,14 +1233,16 @@ async def _stream_chat(
                         elif block.type == "thinking":
                             # Surface a lightweight status so the UI can show
                             # the model is reasoning between tool calls.
-                            yield _sse({"type": "status", "phase": "thinking"})
+                            await emit("status", phase="thinking")
 
                     elif etype == "content_block_delta":
                         delta = event.delta
                         if getattr(delta, "type", None) == "text_delta":
                             text_parts.append(delta.text)
+                            full_text_parts.append(delta.text)
                             current_text_content.append(delta.text)
-                            yield _sse({"type": "text", "text": delta.text})
+                            await emit("text", text=delta.text)
+                            await maybe_flush_text()
                         elif getattr(delta, "type", None) == "input_json_delta" and current_tool_id:
                             current_tool_input_chunks.append(delta.partial_json)
 
@@ -1160,12 +1275,11 @@ async def _stream_chat(
                 final_msg = await stream.get_final_message()
                 # Capture the code-execution container id so subsequent
                 # turns can refer to the same container (required when web
-                # search etc. leaves pending tool uses).
-                container = getattr(final_msg, "container", None)
-                if container is not None:
-                    container_id = getattr(container, "id", None) or container.get("id") if isinstance(container, dict) else getattr(container, "id", None)
-                    if container_id:
-                        server_container_id = container_id
+                # search etc. leaves pending tool uses). Hardened against
+                # multiple SDK response shapes — see _extract_container_id.
+                cid = _extract_container_id(final_msg)
+                if cid:
+                    server_container_id = cid
 
             output_text_parts.extend(text_parts)
             stop_reason = final_msg.stop_reason
@@ -1204,12 +1318,12 @@ async def _stream_chat(
 
             tool_results: list[dict] = []
             for tc in tool_use_blocks:
-                yield _sse({
-                    "type": "tool_call",
-                    "id": tc["id"],
-                    "name": tc["name"],
-                    "input": tc["input"],
-                })
+                await emit(
+                    "tool_call",
+                    id=tc["id"],
+                    name=tc["name"],
+                    input=tc["input"],
+                )
 
                 tool_obs = _safe_child(
                     f"tool:{tc['name']}",
@@ -1225,22 +1339,15 @@ async def _stream_chat(
                     output={"preview": result_content[:500], "size_chars": len(result_content)},
                 )
 
-                # Cap the version that goes back into model context. Large
-                # tool payloads (portfolio_summary, edgar_company_facts,
-                # ticker_news) can be tens of KB; we re-send them every
-                # turn, which dominates input-token usage. Combined with
-                # auto-compaction this keeps the conversation lean.
-                # The FRONTEND still sees the original preview (500 chars)
-                # via the SSE event — the cap only affects what's threaded
-                # back into Claude's history.
+                # See note above about context truncation.
                 context_content = _truncate_tool_result(tc["name"], result_content)
                 preview = result_content[:500]
-                yield _sse({
-                    "type": "tool_result",
-                    "id": tc["id"],
-                    "name": tc["name"],
-                    "content_preview": preview,
-                })
+                await emit(
+                    "tool_result",
+                    id=tc["id"],
+                    name=tc["name"],
+                    content_preview=preview,
+                )
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tc["id"],
@@ -1250,9 +1357,21 @@ async def _stream_chat(
             # Append tool results as user turn.
             msgs.append({"role": "user", "content": tool_results})
 
-        yield _sse({"type": "done"})
+        # Successful completion — finalize the turn doc.
+        await emit("done")
+        await maybe_flush_text(force=True)
+        try:
+            await asyncio.to_thread(
+                store.finalize_turn,
+                conv_id,
+                assistant_turn_id,
+                status="complete",
+                text="".join(full_text_parts),
+                error=None,
+            )
+        except Exception as e:
+            logger.warning("finalize_turn (complete) failed: %s", e)
 
-        # Langfuse: close observation with final output
         if lf_obs:
             try:
                 lf_obs.update(
@@ -1270,8 +1389,19 @@ async def _stream_chat(
                 logger.warning("Langfuse trace close failed: %s", e)
 
     except Exception as exc:
-        logger.exception("Chat stream error for user %s", user_id)
-        yield _sse({"type": "error", "message": str(exc)})
+        logger.exception("Chat generation error for user %s conv %s", user_id, conv_id)
+        try:
+            await emit("error", message=str(exc))
+            await asyncio.to_thread(
+                store.finalize_turn,
+                conv_id,
+                assistant_turn_id,
+                status="error",
+                text="".join(full_text_parts),
+                error=str(exc),
+            )
+        except Exception as e:
+            logger.warning("finalize_turn (error) failed: %s", e)
         if lf_obs:
             try:
                 lf_obs.update(metadata={"error": str(exc), "user_id": user_id})
@@ -1282,30 +1412,275 @@ async def _stream_chat(
                 pass
 
 
-class ChatRequest(BaseModel):
-    messages: list[dict]
+# ─── HTTP API ────────────────────────────────────────────────────────────────
 
 
-@router.post("")
-async def chat(
-    body: ChatRequest,
+class StartChatRequest(BaseModel):
+    # Either start a new conversation (conversation_id=None) or continue
+    # an existing one (conversation_id="conv_xxx"). The server verifies
+    # ownership before continuing.
+    conversation_id: str | None = None
+    message: str
+    family_id: str | None = None  # carried through for tool scoping
+
+
+class StartChatResponse(BaseModel):
+    conversation_id: str
+    user_turn_id: str
+    assistant_turn_id: str
+
+
+def _family_id_for(user: User) -> str | None:
+    """Look up the family_id from Firestore for tool scoping."""
+    try:
+        return _get_family_id(user.id)
+    except Exception:
+        return None
+
+
+@router.post("/start", response_model=StartChatResponse)
+async def chat_start(
+    body: StartChatRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """Stream a Claude Opus response with live SnapTrade portfolio tools."""
-    if not body.messages:
-        return {"error": "messages must not be empty"}
+    """Start (or continue) a chat. Returns immediately with conv + turn IDs;
+    generation continues in a background asyncio task that writes to
+    Firestore. Client subscribes via GET /chat/conversations/{c}/turns/{t}/stream.
 
-    # Session ID: stable hash of (user_id + first user message content)
-    first_content = body.messages[0].get("content", "")
+    Per-user isolation: if `conversation_id` is supplied, we verify it
+    belongs to the requesting user. Foreign convs return 404 (not 403)
+    so an attacker cannot probe for existence of others' chats.
+    """
+    text = (body.message or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="message must not be empty")
+
+    store = get_chat_store()
+    family_id = body.family_id or _family_id_for(current_user)
+
+    # Resolve conversation: either continue an owned one or create a new one.
+    if body.conversation_id:
+        conv = store.get_conversation(body.conversation_id, user_id=current_user.id)
+        if not conv:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        conv_id = conv["id"]
+        existing_turns = store.list_turns(conv_id, user_id=current_user.id)
+        next_seq = len(existing_turns)
+        # Build the history we send to Claude from prior assistant + user turns.
+        history: list[dict] = []
+        for t in existing_turns:
+            if t["role"] == "user" or (t["role"] == "assistant" and t["status"] == "complete"):
+                history.append({"role": t["role"], "content": t.get("text", "")})
+    else:
+        conv_id = store.create_conversation(
+            user_id=current_user.id, family_id=family_id, first_message=text
+        )
+        next_seq = 0
+        history = []
+
+    # Append the user turn + create the assistant turn placeholder.
+    user_turn_id = store.create_user_turn(
+        conv_id=conv_id, user_id=current_user.id, text=text, seq=next_seq
+    )
+    history.append({"role": "user", "content": text})
+
+    # Pick model based on routing logic inside _generate_turn — we record
+    # the placeholder model here; _generate_turn writes the actual one.
+    assistant_turn_id = store.create_assistant_turn(
+        conv_id=conv_id,
+        user_id=current_user.id,
+        seq=next_seq + 1,
+        model="pending",
+    )
+    store.update_conversation_meta(
+        conv_id, last_turn_id=assistant_turn_id, increment_turn_count=2
+    )
+
     session_id = hashlib.sha256(
-        f"{current_user.id}:{first_content}".encode()
+        f"{current_user.id}:{conv_id}".encode()
     ).hexdigest()[:16]
 
-    return StreamingResponse(
-        _stream_chat(body.messages, current_user.id, session_id),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+    # Schedule generation. Cloud Run terraform sets cpu_idle=false and
+    # min_instances=1 so this task survives the HTTP response completing
+    # and continues even if the client backgrounds.
+    task = asyncio.create_task(
+        _generate_turn(
+            conv_id=conv_id,
+            assistant_turn_id=assistant_turn_id,
+            user_id=current_user.id,
+            session_id=session_id,
+            history=history,
+        )
     )
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+
+    return StartChatResponse(
+        conversation_id=conv_id,
+        user_turn_id=user_turn_id,
+        assistant_turn_id=assistant_turn_id,
+    )
+
+
+@router.get("/conversations/{conv_id}/turns/{turn_id}/stream")
+async def chat_stream(
+    conv_id: str,
+    turn_id: str,
+    from_seq: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+):
+    """Resumable SSE for a streaming assistant turn. Emits any events with
+    seq > from_seq, then polls Firestore for new events until status
+    transitions to complete | error.
+
+    On the happy path the client opens this right after /chat/start with
+    from_seq=0. On a backgrounded-then-foregrounded app, the client
+    re-opens with from_seq=last_seen so it only gets the missed events.
+
+    Foreign access returns 404, never reveals existence.
+    """
+    store = get_chat_store()
+
+    # Verify ownership ONCE up-front (the polling loop below trusts the result).
+    initial = store.get_turn(conv_id, turn_id, user_id=current_user.id)
+    if not initial:
+        raise HTTPException(status_code=404, detail="turn not found")
+
+    async def event_source() -> AsyncGenerator[str, None]:
+        last_seq = from_seq
+        terminal: str | None = None
+
+        # First: emit anything already buffered past from_seq from the
+        # initial read we did above.
+        for ev in initial.get("events") or []:
+            if ev.get("seq", 0) > last_seq:
+                yield _sse(ev)
+                last_seq = max(last_seq, ev.get("seq", 0))
+                if ev.get("type") in ("done", "error"):
+                    terminal = ev["type"]
+
+        if initial.get("status") in ("complete", "error"):
+            # Make sure terminal event made it out.
+            if initial["status"] == "error" and terminal != "error":
+                yield _sse({"type": "error", "message": initial.get("error") or "Unknown error"})
+            elif initial["status"] == "complete" and terminal != "done":
+                yield _sse({"type": "done"})
+            return
+
+        # Poll until terminal. 200ms interval keeps perceived latency low
+        # while bounding Firestore reads to ~5/s per active chat.
+        POLL_INTERVAL_S = 0.2
+        MAX_WALL_S = 1800  # absolute ceiling: 30min generation cap
+        started = asyncio.get_event_loop().time()
+
+        while True:
+            if asyncio.get_event_loop().time() - started > MAX_WALL_S:
+                yield _sse({"type": "error", "message": "Generation timed out"})
+                return
+
+            await asyncio.sleep(POLL_INTERVAL_S)
+            try:
+                snap = await asyncio.to_thread(
+                    store._turns(conv_id).document(turn_id).get
+                )
+            except Exception as e:
+                logger.warning("Stream poll read failed: %s", e)
+                continue
+            if not snap.exists:
+                yield _sse({"type": "error", "message": "Turn disappeared"})
+                return
+            data = snap.to_dict() or {}
+            # Defense-in-depth: re-check owner on every poll. Cheap and
+            # catches the (impossible-but-defended) case of doc ownership
+            # changing mid-stream.
+            if data.get("user_id") != current_user.id:
+                yield _sse({"type": "error", "message": "Access revoked"})
+                return
+
+            for ev in data.get("events") or []:
+                if ev.get("seq", 0) > last_seq:
+                    yield _sse(ev)
+                    last_seq = max(last_seq, ev.get("seq", 0))
+                    if ev.get("type") in ("done", "error"):
+                        terminal = ev["type"]
+
+            status = data.get("status")
+            if status in ("complete", "error"):
+                if status == "error" and terminal != "error":
+                    yield _sse({"type": "error", "message": data.get("error") or "Unknown error"})
+                elif status == "complete" and terminal != "done":
+                    yield _sse({"type": "done"})
+                return
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/conversations")
+async def list_conversations(
+    current_user: User = Depends(get_current_user),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Recent conversations for the calling user, newest first."""
+    store = get_chat_store()
+    convs = store.list_conversations(user_id=current_user.id, limit=limit)
+    return {
+        "conversations": [
+            {
+                "id": c["id"],
+                "title": c.get("title", ""),
+                "created_at": c.get("created_at").isoformat() if c.get("created_at") else None,
+                "updated_at": c.get("updated_at").isoformat() if c.get("updated_at") else None,
+                "turn_count": c.get("turn_count", 0),
+                "last_turn_id": c.get("last_turn_id"),
+            }
+            for c in convs
+        ]
+    }
+
+
+@router.get("/conversations/{conv_id}")
+async def get_conversation(
+    conv_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Full conversation transcript. 404 if foreign or missing."""
+    store = get_chat_store()
+    conv = store.get_conversation(conv_id, user_id=current_user.id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    turns = store.list_turns(conv_id, user_id=current_user.id)
+    return {
+        "id": conv["id"],
+        "title": conv.get("title", ""),
+        "created_at": conv.get("created_at").isoformat() if conv.get("created_at") else None,
+        "updated_at": conv.get("updated_at").isoformat() if conv.get("updated_at") else None,
+        "turns": [
+            {
+                "id": t["id"],
+                "role": t["role"],
+                "status": t["status"],
+                "text": t.get("text", ""),
+                "tool_calls": t.get("tool_calls") or [],
+                "error": t.get("error"),
+                "model": t.get("model"),
+                "seq": t.get("seq", 0),
+            }
+            for t in turns
+        ],
+    }
+
+
+@router.delete("/conversations/{conv_id}")
+async def delete_conversation(
+    conv_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    store = get_chat_store()
+    ok = store.delete_conversation(conv_id, user_id=current_user.id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    return {"deleted": True}

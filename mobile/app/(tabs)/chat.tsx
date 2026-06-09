@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   View,
   Text,
@@ -9,12 +9,13 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  AppState,
 } from 'react-native'
+import { useLocalSearchParams, useRouter } from 'expo-router'
 import Markdown from 'react-native-markdown-display'
 import { Ionicons } from '@expo/vector-icons'
 import { chatApi } from '@/services/api'
 import { useAuthStore } from '@/store/auth'
-import type { ChatMessage } from '@/types'
 
 interface UIMessage {
   id: string
@@ -22,6 +23,50 @@ interface UIMessage {
   content: string
   streaming?: boolean
   failed?: boolean
+  /** Live status line shown while tools are running (e.g. "Pulling portfolio data…"). */
+  status?: string | null
+}
+
+// Friendly label per tool name. Server emits tool_call events with the
+// raw name; we render a human-readable status line so the user sees
+// progress without waiting for Claude to narrate (which costs a full
+// 15-20s LLM turn per line — see chat.py system prompt).
+const TOOL_LABELS: Record<string, string> = {
+  list_accounts: 'Listing accounts',
+  get_holdings: 'Pulling portfolio holdings',
+  get_account_balances: 'Reading account balances',
+  get_account_positions: 'Reading account positions',
+  get_activities: 'Pulling recent activity',
+  get_cost_basis: 'Computing cost basis',
+  portfolio_summary: 'Building portfolio summary',
+  macro_indicator: 'Fetching macro data (FRED)',
+  macro_series: 'Pulling macro time series',
+  price_history: 'Pulling price history',
+  ticker_meta: 'Looking up ticker',
+  ticker_quote: 'Getting current quote',
+  ticker_news: 'Reading recent news',
+  ticker_recommendations: 'Checking analyst ratings',
+  ticker_price_target: 'Pulling analyst price target',
+  ticker_earnings_calendar: 'Checking earnings calendar',
+  expense_list: 'Reading expenses',
+  expense_summary: 'Summarizing expenses',
+  expense_top_merchants: 'Ranking merchants',
+  budget_status: 'Checking budget status',
+  budget_burn_rate: 'Computing burn rate',
+  edgar_company_lookup: 'Looking up SEC filings',
+  edgar_recent_filings: 'Pulling SEC filings',
+  edgar_company_facts: 'Reading SEC financials',
+  edgar_insider_transactions: 'Checking insider transactions',
+  web_search: 'Searching the web',
+}
+
+function labelForTool(name: string, input?: Record<string, unknown>): string {
+  const base = TOOL_LABELS[name] ?? name
+  const sym =
+    (input?.symbol as string | undefined) ??
+    (input?.ticker as string | undefined) ??
+    (input?.series_id as string | undefined)
+  return sym ? `${base} (${sym})` : base
 }
 
 // Notion-inspired markdown styles — slate palette, indigo accents
@@ -135,6 +180,8 @@ const markdownStyles = StyleSheet.create({
 })
 
 export default function ChatScreen() {
+  const router = useRouter()
+  const params = useLocalSearchParams<{ conversation_id?: string }>()
   const [messages, setMessages] = useState<UIMessage[]>([])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -142,104 +189,242 @@ export default function ChatScreen() {
   const listRef = useRef<FlatList>(null)
   const streamingIdRef = useRef<string | null>(null)
 
+  // ─── Durable conversation state ───────────────────────────────────────────
+  //
+  // The new chat architecture stores everything server-side in Firestore.
+  // The mobile client just needs to remember the IDs of the current
+  // conversation + the in-flight assistant turn (if any) so it can
+  // re-attach to the SSE stream after the app is backgrounded.
+  const convIdRef = useRef<string | null>(null)
+  const assistantTurnIdRef = useRef<string | null>(null)
+  // Highest event seq we have already rendered. Sent to the resume
+  // endpoint as `from_seq` so the server skips replayed events.
+  const lastSeqRef = useRef<number>(0)
+  // Active SSE cleanup; called on unmount/background/disconnect.
+  const streamCleanupRef = useRef<(() => void) | null>(null)
+
   const scrollToBottom = useCallback(() => {
     setTimeout(() => {
       listRef.current?.scrollToEnd({ animated: true })
     }, 80)
   }, [])
 
+  // ─── Load existing conversation if routed in with ?conversation_id=… ──────
+  useEffect(() => {
+    const convId = params.conversation_id
+    if (!convId || convIdRef.current === convId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const conv = await chatApi.getConversation(convId)
+        if (cancelled) return
+        convIdRef.current = conv.id
+        assistantTurnIdRef.current = null
+        lastSeqRef.current = 0
+        const ui: UIMessage[] = conv.turns.map((t) => ({
+          id: t.id,
+          role: t.role,
+          content: t.text,
+          streaming: t.status === 'streaming',
+          failed: t.status === 'error',
+        }))
+        setMessages(ui)
+        // If the last turn was mid-stream, re-attach.
+        const last = conv.turns[conv.turns.length - 1]
+        if (last && last.role === 'assistant' && last.status === 'streaming') {
+          assistantTurnIdRef.current = last.id
+          openResumeStream(conv.id, last.id, 0)
+        }
+      } catch {
+        // 404 / network → ignore, user can start a new chat
+      }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.conversation_id])
+
   const handleNewChat = useCallback(() => {
     if (isStreaming) return
+    // Tear down any active stream and reset all conversation state.
+    streamCleanupRef.current?.()
+    streamCleanupRef.current = null
+    convIdRef.current = null
+    assistantTurnIdRef.current = null
+    lastSeqRef.current = 0
     setMessages([])
     setInput('')
-  }, [isStreaming])
-
-  const runChat = useCallback(async (text: string, isRetry: boolean) => {
-    if (!text || isStreaming) return
-
-    const assistantId = `assistant-${Date.now()}`
-    streamingIdRef.current = assistantId
-
-    let nextMessages: UIMessage[] = []
-    setMessages((prev) => {
-      // On retry: drop the trailing failed assistant bubble but keep the
-      // original user message. On a fresh send: append both user + new
-      // assistant bubble.
-      let base = prev
-      if (isRetry) {
-        // Drop trailing assistant bubbles that are failed/empty
-        while (base.length > 0) {
-          const last = base[base.length - 1]
-          if (last.role === 'assistant' && (last.failed || !last.content)) {
-            base = base.slice(0, -1)
-          } else {
-            break
-          }
-        }
-      } else {
-        const userMsg: UIMessage = {
-          id: `user-${Date.now()}`,
-          role: 'user',
-          content: text,
-        }
-        base = [...base, userMsg]
-      }
-      const assistantMsg: UIMessage = {
-        id: assistantId,
-        role: 'assistant',
-        content: '',
-        streaming: true,
-      }
-      nextMessages = [...base, assistantMsg]
-      return nextMessages
-    })
-
-    setIsStreaming(true)
-    scrollToBottom()
-
-    // Build history for API from the post-mutation message list — exclude
-    // the new (empty) assistant bubble.
-    const history: ChatMessage[] = nextMessages
-      .filter((m) => !(m.role === 'assistant' && m.id === assistantId))
-      .map((m) => ({ role: m.role, content: m.content }))
-    if (history.length === 0 || history[history.length - 1].content !== text) {
-      history.push({ role: 'user', content: text })
+    if (params.conversation_id) {
+      router.setParams({ conversation_id: undefined })
     }
+  }, [isStreaming, params.conversation_id, router])
 
-    await chatApi.sendMessage(
-      history,
-      user?.family_id ?? undefined,
-      (chunk) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId ? { ...m, content: m.content + chunk } : m
+  /** Open (or re-open) the SSE stream for a streaming assistant turn. */
+  const openResumeStream = useCallback(
+    (convId: string, turnId: string, fromSeq: number) => {
+      streamCleanupRef.current?.()
+      setIsStreaming(true)
+
+      const handlers = {
+        onSeq: (seq: number) => {
+          if (seq > lastSeqRef.current) lastSeqRef.current = seq
+        },
+        onText: (chunk: string) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === turnId
+                ? { ...m, content: m.content + chunk, status: null }
+                : m,
+            ),
           )
-        )
-        scrollToBottom()
-      },
-      () => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId ? { ...m, streaming: false } : m
+          scrollToBottom()
+        },
+        onToolCall: (tool: { id: string; name: string; input: unknown }) => {
+          const label = labelForTool(
+            tool.name,
+            tool.input as Record<string, unknown> | undefined,
           )
-        )
-        setIsStreaming(false)
-        streamingIdRef.current = null
-        scrollToBottom()
-      },
-      (err) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId
-              ? { ...m, content: `Error: ${err}`, streaming: false, failed: true }
-              : m
+          setMessages((prev) =>
+            prev.map((m) => (m.id === turnId ? { ...m, status: label } : m)),
           )
-        )
-        setIsStreaming(false)
-        streamingIdRef.current = null
+          scrollToBottom()
+        },
+        onToolResult: () => {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === turnId ? { ...m, status: null } : m)),
+          )
+        },
+        onDone: () => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === turnId
+                ? { ...m, streaming: false, status: null }
+                : m,
+            ),
+          )
+          setIsStreaming(false)
+          streamingIdRef.current = null
+          streamCleanupRef.current = null
+          scrollToBottom()
+        },
+        onError: (err: string) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === turnId
+                ? {
+                    ...m,
+                    content: m.content || `Error: ${err}`,
+                    streaming: false,
+                    failed: true,
+                    status: null,
+                  }
+                : m,
+            ),
+          )
+          setIsStreaming(false)
+          streamingIdRef.current = null
+          streamCleanupRef.current = null
+        },
       }
-    )
-  }, [isStreaming, user?.family_id, scrollToBottom])
+
+      chatApi
+        .openStream(convId, turnId, fromSeq, handlers)
+        .then((cleanup) => {
+          streamCleanupRef.current = cleanup
+        })
+        .catch((e) => {
+          handlers.onError(String(e?.message ?? e))
+        })
+    },
+    [scrollToBottom],
+  )
+
+  const runChat = useCallback(
+    async (text: string, isRetry: boolean) => {
+      if (!text || isStreaming) return
+
+      // Build the optimistic UI update first; we'll replace ids with the
+      // server-assigned ones once /chat/start responds.
+      const tempUserId = `user-temp-${Date.now()}`
+      const tempAssistantId = `assistant-temp-${Date.now()}`
+
+      setMessages((prev) => {
+        let base = prev
+        if (isRetry) {
+          while (base.length > 0) {
+            const last = base[base.length - 1]
+            if (last.role === 'assistant' && (last.failed || !last.content)) {
+              base = base.slice(0, -1)
+            } else {
+              break
+            }
+          }
+          // On retry we don't add a new user message — the existing one
+          // is reused.
+          return [
+            ...base,
+            {
+              id: tempAssistantId,
+              role: 'assistant',
+              content: '',
+              streaming: true,
+            },
+          ]
+        }
+        return [
+          ...base,
+          { id: tempUserId, role: 'user', content: text },
+          {
+            id: tempAssistantId,
+            role: 'assistant',
+            content: '',
+            streaming: true,
+          },
+        ]
+      })
+
+      setIsStreaming(true)
+      scrollToBottom()
+
+      let started: Awaited<ReturnType<typeof chatApi.start>>
+      try {
+        started = await chatApi.start({
+          conversation_id: convIdRef.current,
+          message: text,
+          family_id: user?.family_id ?? null,
+        })
+      } catch (e) {
+        const errMsg = (e as Error)?.message ?? 'Failed to start chat'
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === tempAssistantId
+              ? { ...m, content: `Error: ${errMsg}`, streaming: false, failed: true }
+              : m,
+          ),
+        )
+        setIsStreaming(false)
+        return
+      }
+
+      convIdRef.current = started.conversation_id
+      assistantTurnIdRef.current = started.assistant_turn_id
+      lastSeqRef.current = 0
+      streamingIdRef.current = started.assistant_turn_id
+
+      // Swap the temp IDs for the server-assigned ones so resume works
+      // even mid-render.
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id === tempUserId) return { ...m, id: started.user_turn_id }
+          if (m.id === tempAssistantId)
+            return { ...m, id: started.assistant_turn_id }
+          return m
+        }),
+      )
+
+      openResumeStream(started.conversation_id, started.assistant_turn_id, 0)
+    },
+    [isStreaming, user?.family_id, scrollToBottom, openResumeStream],
+  )
 
   const sendMessage = useCallback(async () => {
     const text = input.trim()
@@ -249,7 +434,6 @@ export default function ChatScreen() {
   }, [input, runChat])
 
   const retryLast = useCallback(async () => {
-    // Find the most recent user message and re-send it.
     let lastUser: string | null = null
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].role === 'user') {
@@ -260,6 +444,35 @@ export default function ChatScreen() {
     if (!lastUser) return
     await runChat(lastUser, true)
   }, [messages, runChat])
+
+  // ─── App-state: resume the stream when returning from background ──────────
+  //
+  // iOS suspends the JS runtime within ~5-30s of backgrounding, which tears
+  // down our SSE socket. The server-side generation continues regardless
+  // (background asyncio task on Cloud Run min_instances=1). When the user
+  // foregrounds the app, we re-open the stream against the same turn,
+  // sending `from_seq=last_seen` so we only get the events we missed.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return
+      if (!convIdRef.current || !assistantTurnIdRef.current) return
+      if (!isStreaming) return
+      openResumeStream(
+        convIdRef.current,
+        assistantTurnIdRef.current,
+        lastSeqRef.current,
+      )
+    })
+    return () => sub.remove()
+  }, [isStreaming, openResumeStream])
+
+  // Tear down any active SSE on unmount.
+  useEffect(() => {
+    return () => {
+      streamCleanupRef.current?.()
+      streamCleanupRef.current = null
+    }
+  }, [])
 
   const renderMessage = ({ item }: { item: UIMessage }) => {
     const isUser = item.role === 'user'
@@ -282,15 +495,29 @@ export default function ChatScreen() {
           ) : (
             <>
               {item.streaming && !item.content ? (
-                // Initial loading indicator before first chunk arrives
+                // Initial loading indicator before first chunk arrives.
+                // If a tool is currently running, show its label instead
+                // of a generic "Thinking…".
                 <View style={styles.loadingDots}>
                   <ActivityIndicator size="small" color="#6366f1" />
-                  <Text style={styles.loadingText}>Thinking...</Text>
+                  <Text style={styles.loadingText}>
+                    {item.status ?? 'Thinking…'}
+                  </Text>
                 </View>
               ) : (
-                <Markdown style={markdownStyles}>
-                  {item.content || ' '}
-                </Markdown>
+                <>
+                  <Markdown style={markdownStyles}>
+                    {item.content || ' '}
+                  </Markdown>
+                  {item.streaming && item.status ? (
+                    // In-progress tool status (e.g. "Pulling portfolio data")
+                    // shown beneath any text already streamed.
+                    <View style={styles.statusRow}>
+                      <ActivityIndicator size="small" color="#6366f1" />
+                      <Text style={styles.statusText}>{item.status}</Text>
+                    </View>
+                  ) : null}
+                </>
               )}
               {item.streaming && item.content ? (
                 // Streaming indicator while content is arriving
@@ -329,17 +556,27 @@ export default function ChatScreen() {
           <Text style={styles.title}>Chat</Text>
           <Text style={styles.subtitle}>Ask about your finances</Text>
         </View>
-        <TouchableOpacity
-          style={[styles.newChatBtn, isStreaming && styles.newChatBtnDisabled]}
-          onPress={handleNewChat}
-          disabled={isStreaming}
-          testID="new-chat-btn"
-        >
-          <Ionicons name="create-outline" size={16} color={isStreaming ? '#9ca3af' : '#2563eb'} />
-          <Text style={[styles.newChatText, isStreaming && { color: '#9ca3af' }]}>
-            New chat
-          </Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => router.push('/chat-history')}
+            testID="chat-history-btn"
+            hitSlop={8}
+          >
+            <Ionicons name="time-outline" size={20} color="#2563eb" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.newChatBtn, isStreaming && styles.newChatBtnDisabled]}
+            onPress={handleNewChat}
+            disabled={isStreaming}
+            testID="new-chat-btn"
+          >
+            <Ionicons name="create-outline" size={16} color={isStreaming ? '#9ca3af' : '#2563eb'} />
+            <Text style={[styles.newChatText, isStreaming && { color: '#9ca3af' }]}>
+              New chat
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Messages */}
@@ -496,6 +733,26 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: 3,
     backgroundColor: '#c7d2fe',  // indigo-200
+  },
+  iconBtn: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#eef2ff',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    paddingHorizontal: 2,
+  },
+  statusText: {
+    color: '#64748b', // slate-500
+    fontSize: 13,
+    fontStyle: 'italic',
   },
   retryBtn: {
     flexDirection: 'row',

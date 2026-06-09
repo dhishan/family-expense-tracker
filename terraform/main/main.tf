@@ -497,12 +497,33 @@ resource "google_cloud_run_service" "backend" {
 
     metadata {
       annotations = {
-        # Scale to zero when not in use - CRITICAL for staying in free tier
-        "autoscaling.knative.dev/minScale" = "0"
-        "autoscaling.knative.dev/maxScale" = "10"
+        # Chat generation runs as a background asyncio.create_task that
+        # outlives the HTTP request handler. For that task to actually
+        # finish, the container must stay alive after the response
+        # completes. Two settings make that work:
+        #
+        #   minScale = 1
+        #     Keep at least one warm instance so a freshly-spun-up
+        #     instance with an in-flight background task isn't torn
+        #     down for scale-to-zero. Also kills cold-start latency
+        #     on the chat path (~10-30s saved per first message).
+        #
+        #   run.googleapis.com/cpu-throttling = false
+        #     Without this, CPU is throttled to near-zero when the
+        #     container has no in-flight HTTP request — which is
+        #     exactly the situation our background task is in once
+        #     the POST /chat/start response has been sent. Throttled
+        #     CPU stretches chat generation from 30s to several
+        #     minutes and can cause Anthropic stream timeouts.
+        #
+        # Cost trade-off: one always-on instance + always-allocated
+        # CPU is roughly $7-10/month for the smallest tier; this
+        # exits the absolute free tier but is required for the
+        # disconnect-survival behavior the mobile app needs.
+        "autoscaling.knative.dev/minScale"        = "1"
+        "autoscaling.knative.dev/maxScale"        = "10"
+        "run.googleapis.com/cpu-throttling"       = "false"
         # Force a new revision on every TF apply so :latest image is re-pulled.
-        # Without this, TF sees no resource change and Cloud Run keeps serving
-        # the previous revision even when CI has pushed a new image.
         "client.knative.dev/user-image-sha" = "deployed-${formatdate("YYYYMMDDhhmm", timestamp())}"
       }
     }

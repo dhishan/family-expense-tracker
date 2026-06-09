@@ -221,23 +221,99 @@ export const investmentsApi = {
 }
 
 // ─── Chat ─────────────────────────────────────────────────────────────────────
-
-// React Native's built-in fetch is XHR-backed and does not expose a
-// real ReadableStream from `response.body`, so the standard
-// fetch+getReader() pattern (works on web) hangs or fails on iOS with
-// "Network request failed". Use the dedicated `react-native-sse` EventSource
-// polyfill which speaks SSE directly over RN's networking stack.
+//
+// New architecture (durable / resumable):
+//
+//   1. POST /chat/start              → returns { conversation_id, user_turn_id,
+//                                       assistant_turn_id }. Generation begins
+//                                       on the server in a background asyncio
+//                                       task that writes every chunk to
+//                                       Firestore.
+//
+//   2. GET .../turns/{t}/stream      → resumable SSE. Pass `from_seq=N` on
+//                                       reconnect (e.g. after app backgrounding)
+//                                       to skip events already rendered.
+//
+//   3. GET /chat/conversations       → recent chats list (history UI)
+//      GET /chat/conversations/{id}  → full transcript
+//      DELETE                        → remove a conversation
+//
+// React Native's built-in fetch is XHR-backed and does not expose a real
+// ReadableStream, so we use the `react-native-sse` polyfill (which also
+// supports POST + body).
 import EventSource from 'react-native-sse'
 
+export interface StartChatResponse {
+  conversation_id: string
+  user_turn_id: string
+  assistant_turn_id: string
+}
+
+export interface ChatTurn {
+  id: string
+  role: 'user' | 'assistant'
+  status: 'pending' | 'streaming' | 'complete' | 'error'
+  text: string
+  tool_calls: Array<{ id: string; name: string; input: unknown }>
+  error: string | null
+  model: string | null
+  seq: number
+}
+
+export interface ChatConversationSummary {
+  id: string
+  title: string
+  created_at: string | null
+  updated_at: string | null
+  turn_count: number
+  last_turn_id: string | null
+}
+
+export interface ChatConversation {
+  id: string
+  title: string
+  created_at: string | null
+  updated_at: string | null
+  turns: ChatTurn[]
+}
+
+export interface ChatStreamHandlers {
+  onText?: (chunk: string) => void
+  onToolCall?: (tool: { id: string; name: string; input: unknown }) => void
+  onToolResult?: (tool: { id: string; name: string; preview: string }) => void
+  onStatus?: (phase: string) => void
+  onSeq?: (seq: number) => void
+  onDone?: () => void
+  onError?: (err: string) => void
+}
+
 export const chatApi = {
-  sendMessage: async (
-    messages: ChatMessage[],
-    _familyId: string | undefined,
-    onChunk?: (chunk: string) => void,
-    onDone?: () => void,
-    onError?: (err: string) => void,
-    onToolCall?: (tool: { id: string; name: string; input: unknown }) => void,
-    onToolResult?: (tool: { id: string; name: string; preview: string }) => void,
+  /** Start a new chat or continue an existing one. */
+  start: async (params: {
+    conversation_id?: string | null
+    message: string
+    family_id?: string | null
+  }): Promise<StartChatResponse> => {
+    const r = await api.post<StartChatResponse>('/chat/start', {
+      conversation_id: params.conversation_id ?? null,
+      message: params.message,
+      family_id: params.family_id ?? null,
+    })
+    return r.data
+  },
+
+  /**
+   * Open a resumable SSE stream against a streaming assistant turn.
+   * Returns a cleanup function that closes the connection.
+   *
+   * Pass `fromSeq` (>0) on reconnect after the app was backgrounded so the
+   * server skips events already rendered on the client.
+   */
+  openStream: async (
+    convId: string,
+    turnId: string,
+    fromSeq: number,
+    handlers: ChatStreamHandlers,
   ): Promise<() => void> => {
     let token: string | null = null
     try {
@@ -247,17 +323,17 @@ export const chatApi = {
     }
 
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
       Accept: 'text/event-stream',
     }
     if (token) headers['Authorization'] = `Bearer ${token}`
 
-    // EventSource here is using POST + body — react-native-sse supports that
-    // through its `method` / `body` opts (unlike the web standard).
-    const es = new EventSource(`${API_BASE_URL}/api/v1/chat`, {
+    const url =
+      `${API_BASE_URL}/api/v1/chat/conversations/${encodeURIComponent(convId)}` +
+      `/turns/${encodeURIComponent(turnId)}/stream?from_seq=${fromSeq}`
+
+    const es = new EventSource(url, {
       headers,
-      method: 'POST',
-      body: JSON.stringify({ messages }),
+      method: 'GET',
       pollingInterval: 0,
     })
 
@@ -271,18 +347,23 @@ export const chatApi = {
       if (!raw) return
       try {
         const parsed = JSON.parse(raw)
+        if (typeof parsed.seq === 'number') {
+          handlers.onSeq?.(parsed.seq)
+        }
         if (parsed.type === 'text' && typeof parsed.text === 'string') {
-          onChunk?.(parsed.text)
-        } else if (parsed.type === 'tool_call' && onToolCall) {
-          onToolCall({ id: parsed.id, name: parsed.name, input: parsed.input })
-        } else if (parsed.type === 'tool_result' && onToolResult) {
-          onToolResult({ id: parsed.id, name: parsed.name, preview: parsed.content_preview ?? '' })
+          handlers.onText?.(parsed.text)
+        } else if (parsed.type === 'tool_call') {
+          handlers.onToolCall?.({ id: parsed.id, name: parsed.name, input: parsed.input })
+        } else if (parsed.type === 'tool_result') {
+          handlers.onToolResult?.({ id: parsed.id, name: parsed.name, preview: parsed.content_preview ?? '' })
+        } else if (parsed.type === 'status') {
+          handlers.onStatus?.(parsed.phase ?? '')
         } else if (parsed.type === 'done') {
           cleanup()
-          onDone?.()
+          handlers.onDone?.()
         } else if (parsed.type === 'error') {
           cleanup()
-          onError?.(parsed.message ?? 'Server reported error')
+          handlers.onError?.(parsed.message ?? 'Server reported error')
         }
       } catch {
         // ignore non-JSON keepalives
@@ -292,10 +373,29 @@ export const chatApi = {
     es.addEventListener('error', (event) => {
       const msg = (event as unknown as { message?: string }).message ?? 'Connection error'
       cleanup()
-      onError?.(msg)
+      handlers.onError?.(msg)
     })
 
     return cleanup
+  },
+
+  listConversations: async (limit = 50): Promise<ChatConversationSummary[]> => {
+    const r = await api.get<{ conversations: ChatConversationSummary[] }>(
+      '/chat/conversations',
+      { params: { limit } },
+    )
+    return r.data.conversations
+  },
+
+  getConversation: async (convId: string): Promise<ChatConversation> => {
+    const r = await api.get<ChatConversation>(
+      `/chat/conversations/${encodeURIComponent(convId)}`,
+    )
+    return r.data
+  },
+
+  deleteConversation: async (convId: string): Promise<void> => {
+    await api.delete(`/chat/conversations/${encodeURIComponent(convId)}`)
   },
 }
 

@@ -173,6 +173,26 @@ resource "google_firestore_index" "budgets_family" {
   depends_on = [google_firestore_database.database]
 }
 
+# Chat conversation list: filter by owner, order by updated_at desc.
+# Required by ChatStore.list_conversations (history UI).
+resource "google_firestore_index" "chat_conversations_user_updated" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "chat_conversations"
+
+  fields {
+    field_path = "user_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "updated_at"
+    order      = "DESCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
+
 # Index for querying notifications by user and read status
 resource "google_firestore_index" "notifications_user_unread" {
   project    = var.project_id

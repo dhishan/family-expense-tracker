@@ -227,6 +227,10 @@ export default function Chat() {
   const [streaming, setStreaming] = useState(false)
   const [activity, setActivity] = useState<string>('Thinking…')
   const [stickToBottom, setStickToBottom] = useState(true)
+  // Durable conversation tracking. null = next /chat/start creates a new
+  // conversation; once set, subsequent sends continue the same one
+  // server-side. Reset by "New chat".
+  const [conversationId, setConversationId] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -273,7 +277,8 @@ export default function Chat() {
       if (!text.trim() || streaming) return
       setDraft('')
 
-      // Build the messages array for the API (role + content only).
+      // Optimistic UI: append the user message + an empty assistant
+      // bubble that will fill in as the SSE stream arrives.
       const userMessage: Message = { role: 'user', blocks: [{ type: 'text', text: text.trim() }] }
       const assistantMessage: Message = { role: 'assistant', blocks: [] }
 
@@ -283,26 +288,41 @@ export default function Chat() {
 
       const msgIdx = messages.length + 1 // index of the assistant message we just appended
 
-      // Flatten history to [{role, content}] for the API.
-      const history = [
-        ...messages.map((m) => ({
-          role: m.role,
-          content: m.blocks
-            .filter((b) => b.type === 'text')
-            .map((b) => (b as TextBlock).text)
-            .join(''),
-        })),
-        { role: 'user' as const, content: text.trim() },
-      ]
-
       try {
-        const resp = await fetch(`${API_URL}/api/v1/chat`, {
+        // 1) Kick off generation server-side. Returns immediately with
+        //    {conversation_id, user_turn_id, assistant_turn_id}.
+        const startResp = await fetch(`${API_URL}/api/v1/chat/start`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ messages: history }),
+          body: JSON.stringify({
+            conversation_id: conversationId,
+            message: text.trim(),
+          }),
+        })
+        if (!startResp.ok) {
+          const errText = await startResp.text()
+          throw new Error(`HTTP ${startResp.status}: ${errText}`)
+        }
+        const started = (await startResp.json()) as {
+          conversation_id: string
+          user_turn_id: string
+          assistant_turn_id: string
+        }
+        setConversationId(started.conversation_id)
+
+        // 2) Open the resumable SSE stream for the assistant turn.
+        const streamUrl =
+          `${API_URL}/api/v1/chat/conversations/${encodeURIComponent(started.conversation_id)}` +
+          `/turns/${encodeURIComponent(started.assistant_turn_id)}/stream?from_seq=0`
+        const resp = await fetch(streamUrl, {
+          method: 'GET',
+          headers: {
+            Accept: 'text/event-stream',
+            Authorization: `Bearer ${token}`,
+          },
         })
 
         if (!resp.ok) {
@@ -419,7 +439,7 @@ export default function Chat() {
         setStreaming(false)
       }
     },
-    [messages, streaming, token]
+    [messages, streaming, token, conversationId]
   )
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -453,7 +473,10 @@ export default function Chat() {
         {messages.length > 0 && (
           <button
             type="button"
-            onClick={() => setMessages([])}
+            onClick={() => {
+              setMessages([])
+              setConversationId(null)
+            }}
             aria-label="Start a new chat"
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
           >

@@ -18,21 +18,34 @@ jest.mock('react-native-markdown-display', () => {
   return ({ children }: { children: string }) => <Text>{children}</Text>
 })
 
-// Mock chatApi.sendMessage - simulates SSE stream
+// Mock the new chat API: POST /chat/start returns ids, then openStream
+// invokes the handlers as if SSE events were arriving live.
 jest.mock('@/services/api', () => ({
   chatApi: {
-    sendMessage: jest.fn(
+    start: jest.fn(async () => ({
+      conversation_id: 'conv_test',
+      user_turn_id: 'turn_user',
+      assistant_turn_id: 'turn_assistant',
+    })),
+    openStream: jest.fn(
       async (
-        _messages: unknown,
-        _familyId: unknown,
-        onChunk: (c: string) => void,
-        onDone: () => void
+        _convId: string,
+        _turnId: string,
+        _fromSeq: number,
+        handlers: {
+          onText?: (c: string) => void
+          onDone?: () => void
+        }
       ) => {
-        onChunk('Hello from ')
-        onChunk('the AI!')
-        onDone()
+        handlers.onText?.('Hello from ')
+        handlers.onText?.('the AI!')
+        handlers.onDone?.()
+        return () => {}
       }
     ),
+    getConversation: jest.fn(),
+    listConversations: jest.fn(async () => []),
+    deleteConversation: jest.fn(),
   },
 }))
 
@@ -73,7 +86,8 @@ describe('ChatScreen', () => {
     })
 
     await waitFor(() => {
-      expect(chatApi.sendMessage).toHaveBeenCalled()
+      expect(chatApi.start).toHaveBeenCalled()
+      expect(chatApi.openStream).toHaveBeenCalled()
       const bubbles = getAllByTestId(/message-bubble/)
       expect(bubbles.length).toBeGreaterThanOrEqual(2)
     })

@@ -1,6 +1,32 @@
 rules_version = '2';
+
+// Chat conversations are user-owned and never accessed from the client
+// directly — only through the FastAPI backend with JWT auth. These rules
+// are defense-in-depth: if a future refactor exposes Firestore to the
+// client, owners still can't read foreign chats.
+//
+// Everything else stays open-by-default because the backend mediates all
+// access with explicit ownership checks (family_id / user_id filters in
+// every service method).
+
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Chat conversations: owner-only read; backend-only write.
+    match /chat_conversations/{convId} {
+      allow read: if request.auth != null
+                  && resource.data.user_id == request.auth.uid;
+      allow write: if false;
+
+      match /turns/{turnId} {
+        // user_id is denormalized onto each turn doc so this check
+        // doesn't require a parent-doc lookup (which would cost a read).
+        allow read: if request.auth != null
+                    && resource.data.user_id == request.auth.uid;
+        allow write: if false;
+      }
+    }
+
+    // Fallback: backend mediates all other access.
     match /{document=**} {
       allow read, write: if true;
     }
