@@ -1,26 +1,96 @@
 # Family Expense Tracker
 
-A family expense tracking application that allows family members to track daily spending, tag expenses by category and beneficiary, and manage budgets with alerts.
+A family expense tracking application with brokerage portfolio integration and a Claude-powered financial analyst. Web + native iOS app, all sharing the same FastAPI backend.
 
 ## Features
 
-- **Expense Tracking**: Log expenses with amount, date, description, merchant, and payment method
-- **Categories**: Groceries, Dining, Transportation, Utilities, Entertainment
-- **Family Sharing**: Create a family workspace and invite members to share expenses
-- **"Who is it for"**: Tag expenses for individual family members or the entire family
-- **Budget Management**: Set budgets by category, time period (weekly/monthly), and person
-- **Budget Alerts**: In-app notifications when approaching or exceeding budget limits
-- **Dashboard**: Visual summary of spending with charts and analytics
-- **Google Sign-In**: Secure authentication with Google OAuth
+### Expenses & budgets
+- Log expenses with amount, date, description, merchant, payment method, and beneficiary
+- 10 default categories (Groceries, Dining, Transportation, Utilities, Entertainment, Healthcare, Shopping, Travel, Education, Other)
+- Family workspace — invite members to share expenses
+- Budgets by category, time period (weekly/monthly), and beneficiary, with over-budget alerts
+- Dashboard with visual summary, recent activity, budget progress
+
+### Investments
+- Connect brokerage accounts via SnapTrade (Robinhood, E*TRADE, and 30+ others)
+- Live holdings, cost basis, unrealized P&L, recent transactions
+- Eye toggle to hide values for privacy
+
+### AI chat (Claude-powered)
+- In-app `/chat` page and a hosted MCP server that Claude Desktop / Claude mobile can call
+- 25 tools across SnapTrade brokerage, FRED macro, Tiingo price history, Finnhub quotes/news/analyst data, SEC EDGAR filings, and your own expense/budget data
+- Auto-compaction (Anthropic beta) + per-tool result truncation to keep input-token usage bounded
+- Langfuse tracing for observability
+- Hosted MCP gated by Cloudflare Access (Google SSO)
+
+### Mobile (native iOS)
+- React Native + Expo (SDK 53) app sharing the same backend
+- Native Google Sign-In via `@react-native-google-signin/google-signin`
+- Silent re-auth on app launch (session survives reinstall via Google's OS-level account cache)
+- EAS Update — push JS-only changes OTA in ~10 seconds without rebuild
 
 ## Tech Stack
 
-- **Frontend**: React 18, TypeScript, Vite, TailwindCSS
-- **Backend**: Python 3.11, FastAPI
+- **Frontend (web)**: React 18, TypeScript, Vite, Tailwind CSS, React Query
+- **Frontend (mobile)**: React Native 0.79 + Expo SDK 53, NativeWind, expo-router
+- **Backend**: Python 3.12, FastAPI, Anthropic SDK, Langfuse v4 SDK, SnapTrade SDK, MCP SDK
 - **Database**: Google Cloud Firestore
-- **Infrastructure**: GCP Cloud Run, Cloud Storage, Terraform
-- **Authentication**: Google OAuth 2.0
+- **Infrastructure**: GCP Cloud Run, Cloud Storage, Secret Manager, Terraform, Cloudflare (DNS + Access)
+- **Auth**: Google OAuth 2.0 (web + iOS native clients), Cloudflare Access for the MCP endpoint
 - **CI/CD**: GitHub Actions
+- **OTA**: EAS Update (Expo)
+
+## External Accounts & API Keys
+
+This section is the single source of truth for every account and credential the app depends on. **All accounts are free** unless flagged otherwise.
+
+### Required (app won't run without these)
+
+| Account | Used for | Where to sign up | Stored as |
+|---|---|---|---|
+| **Google Cloud Platform** | Firestore, Cloud Run, Secret Manager, Cloud Storage, OAuth | https://console.cloud.google.com | `personal-projects-473219` (this repo's project ID) |
+| **Google OAuth** | Sign-in (web + iOS native) | GCP Console → Credentials | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` |
+| **Anthropic** | Claude API for `/chat` and the analyzer scripts | https://console.anthropic.com | `ANTHROPIC_API_KEY` (Secret Manager in prod, `backend/.env` locally) |
+| **SnapTrade** | Brokerage data aggregator | https://snaptrade.com | `SNAPTRADE_CLIENT_ID`, `SNAPTRADE_CONSUMER_KEY` |
+| **GitHub** | CI/CD via GitHub Actions | https://github.com | OIDC federation to GCP service account (no static key) |
+
+### Required for the hosted MCP
+
+| Account | Used for | Where to sign up |
+|---|---|---|
+| **Cloudflare** | DNS + Access for `mcp.expense-tracker.blueelephants.org` | https://dash.cloudflare.com (free tier) |
+| **Cloudflare Zero Trust** | OAuth-gated access to the MCP endpoint | Enabled inside the Cloudflare dashboard (free up to 50 users) |
+
+The Cloudflare Access app is configured via API — see `docs/HOSTED_MCP_DEPLOY.md`. Required env vars: `CF_ACCESS_TEAM_DOMAIN` (e.g. `blueelephants.cloudflareaccess.com`), `CF_ACCESS_AUD` (Application AUD tag).
+
+### Required for observability
+
+| Account | Used for | Where to sign up |
+|---|---|---|
+| **Langfuse** | LLM tracing for the `/chat` endpoint | https://us.cloud.langfuse.com (free tier; self-hostable) |
+
+Env vars: `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_BASE_URL`.
+
+### Required for financial-data tools (chat + MCP)
+
+All free tiers; sign up only the ones you actually want to use.
+
+| Service | What it adds | Where to sign up | Env var |
+|---|---|---|---|
+| **FRED** (Federal Reserve) | US macro data — Fed funds rate, CPI, unemployment, yield curve | https://fred.stlouisfed.org/docs/api/api_key.html | `FRED_API_KEY` |
+| **Tiingo** | Price history + company metadata | https://www.tiingo.com | `TIINGO_API_KEY` |
+| **Finnhub** | Real-time quotes, news, analyst ratings, earnings | https://finnhub.io | `FINNHUB_API_KEY` |
+| **SEC EDGAR** | 10-K, 10-Q, 8-K, Form 4 filings | No signup — just requires a polite `User-Agent` | _none_ |
+
+### Required for mobile (iOS) install on real devices
+
+| Account | Used for | Cost |
+|---|---|---|
+| **Apple ID** | Free Personal Team dev certificate (7-day expiry, up to 3 devices) | Free |
+| **Expo** | EAS Update OTA pushes, optional EAS Build | Free tier: 1000 updates/month |
+| **Apple Developer Program** | Optional — 1-year cert, TestFlight, App Store | $99/year |
+
+The free Apple ID + Expo combination is enough for installing on 2-3 family phones with weekly cert auto-refresh via [AltStore](https://altstore.io) or [SideStore](https://sidestore.io). The $99/year Apple Developer Program is only needed if you want App Store distribution or 1-year certs without the AltStore dance.
 
 ## Quick Start
 
@@ -28,9 +98,10 @@ A family expense tracking application that allows family members to track daily 
 
 - Docker and Docker Compose
 - Node.js 20+ (for local frontend development)
-- Python 3.11+ (for local backend development)
-- Google Cloud SDK (for deployment)
+- Python 3.12+ (for local backend development; `uv` recommended for venv)
+- Google Cloud SDK
 - A GCP project with billing enabled
+- All API keys from the table above for the features you want to use
 
 ### GCP Setup
 
@@ -336,24 +407,94 @@ npm run dev
 family-expense-tracker/
 ├── backend/                 # FastAPI backend
 │   ├── app/
-│   │   ├── auth/           # Google OAuth authentication
+│   │   ├── auth/           # Google OAuth + Cloudflare Access JWT
 │   │   ├── models/         # Pydantic models
-│   │   ├── routers/        # API endpoints
-│   │   ├── services/       # Business logic
+│   │   ├── routers/        # /api/v1/* endpoints (auth, expenses,
+│   │   │                   #   budgets, investments, chat, families,
+│   │   │                   #   notifications)
+│   │   ├── services/       # snaptrade_service, market_data (FRED/
+│   │   │                   #   Tiingo/Finnhub/EDGAR), expense_service,
+│   │   │                   #   budget_service
+│   │   ├── mcp_server.py   # 25-tool hosted MCP (mounted at /mcp)
 │   │   └── main.py         # FastAPI application
-│   └── tests/              # Backend tests
-├── frontend/               # React frontend
+│   ├── scripts/            # CLI: snaptrade_connect, snaptrade_sync,
+│   │                       #   snaptrade_analyze, snaptrade_mcp (local)
+│   └── tests/
+├── frontend/               # React + Vite web app (ui.expense-tracker.*)
 │   └── src/
-│       ├── components/     # Reusable UI components
-│       ├── pages/          # Page components
-│       ├── services/       # API client
-│       ├── store/          # State management (Zustand)
-│       └── types/          # TypeScript types
-├── terraform/              # Infrastructure as Code
-│   ├── main/              # Main Terraform configuration
-│   └── workspaces/        # Environment-specific variables
-└── .github/workflows/     # CI/CD pipelines
+│       ├── pages/          # Dashboard, Expenses, Budgets,
+│       │                   #   Investments, Chat
+│       ├── components/     # QuickAddStrip etc.
+│       ├── services/api.ts # axios with JWT interceptor
+│       ├── store/          # Zustand auth store
+│       └── types/
+├── mobile/                 # Expo SDK 53 + React Native iOS app
+│   ├── app/                # expo-router screens (tabs: Home, Expenses,
+│   │                       #   Budgets, Stocks, Chat, Settings)
+│   ├── src/
+│   │   ├── hooks/useAuth.ts # native Google sign-in
+│   │   ├── services/api.ts  # shared API client + react-native-sse chat
+│   │   └── store/auth.ts    # 3-tier session restore
+│   ├── plugins/            # Expo config plugins
+│   └── patches/            # patch-package patches (NativeWind fmt fix)
+├── terraform/              # IaC
+│   ├── main/              # Cloud Run, Firestore, Secret Manager,
+│   │                       #   Cloudflare DNS, observability
+│   └── workspaces/        # Per-env tfvars
+├── docs/
+│   └── HOSTED_MCP_DEPLOY.md  # Runbook for the MCP subdomain + secrets
+└── .github/workflows/      # CI/CD
 ```
+
+## Mobile dev workflow
+
+Three speeds, by what changed:
+
+| Change | Command | Time |
+|---|---|---|
+| **JS/TSX/CSS only** (most fixes — UI, validation, copy) | `make mobile-update MSG="what changed"` | ~10 seconds (OTA) |
+| **Native config** (Podfile, Info.plist, app.json icons/name, new native module) | `make mobile-prebuild-ios && cd mobile && npx expo run:ios --device "<Name>" --configuration Release` | ~5 minutes |
+| **Local iteration during dev** | `make mobile-dev` (Metro) + iOS Simulator | Hot reload, no install |
+
+The OTA pipeline points at https://u.expo.dev/<project-id> (configured in `mobile/app.json`). Phones poll on app launch and pick up the latest preview-branch update.
+
+### First-time iPhone install
+
+1. Plug in via USB, unlock, "Trust This Computer"
+2. **Enable Developer Mode**: iPhone Settings → Privacy & Security → bottom → Developer Mode → toggle on → restart
+3. Open Xcode at least once, sign in with your Apple ID (Personal Team, free)
+4. From repo root:
+   ```bash
+   cd mobile
+   npx expo run:ios --device "Your iPhone Name" --configuration Release
+   ```
+5. After install: iPhone Settings → General → VPN & Device Management → Trust your Apple ID developer cert
+6. App appears on home screen as "Expenses"
+
+### Avoiding the weekly cable refresh
+
+Apple's free dev cert expires every 7 days. Options ranked best-to-worst:
+
+- **AltStore** (https://altstore.io) — Mac menu-bar app re-signs over wifi automatically
+- **SideStore** (https://sidestore.io) — newer fork, doesn't need Mac always-on
+- **Feather** (https://getfeather.com) — modern UI, no Mac needed
+- **Sideloadly** — manual weekly re-install via USB (simpler but tedious)
+- **$99/year Apple Developer Program** — official path, 1-year cert + TestFlight
+
+For 2-3 family devices, AltStore or SideStore are the best free path.
+
+### Local mobile testing
+
+```bash
+# Backend running locally on the same wifi as the simulator
+cd backend && .venv/bin/uvicorn app.main:app --port 8000 --host 0.0.0.0 --reload
+
+# In mobile/.env: EXPO_PUBLIC_API_BASE_URL=http://<your-lan-ip>:8000
+# Then:
+cd mobile && npx expo start  # press 'i' for simulator, scan QR for Expo Go
+```
+
+For production-style testing, leave `EXPO_PUBLIC_API_BASE_URL` pointed at https://api.expense-tracker.blueelephants.org — the app works on cellular without your Mac.
 
 ## Deployment
 
@@ -435,7 +576,32 @@ npm run build
 
 ## Environment Variables
 
-See `.env.example` files in `backend/` and `frontend/` directories.
+See `.env.example` files in `backend/`, `frontend/`, and `mobile/`.
+
+Quick summary of where each secret lives in production:
+
+| Variable | Local dev | Production |
+|---|---|---|
+| `GCP_PROJECT_ID`, `FIRESTORE_DATABASE`, `ENVIRONMENT`, `FRONTEND_URL`, `GOOGLE_CLIENT_ID`, `CF_ACCESS_TEAM_DOMAIN`, `LANGFUSE_BASE_URL` | `backend/.env` (plain) | Cloud Run env var (plain) |
+| `JWT_SECRET_KEY`, `GOOGLE_CLIENT_SECRET`, `SNAPTRADE_CLIENT_ID`, `SNAPTRADE_CONSUMER_KEY`, `ANTHROPIC_API_KEY`, `CF_ACCESS_AUD`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `FRED_API_KEY`, `TIINGO_API_KEY`, `FINNHUB_API_KEY` | `backend/.env` (gitignored) | Google Secret Manager → injected into Cloud Run via `secret_key_ref` (Terraform-managed) |
+| `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_GOOGLE_*_CLIENT_ID` | `mobile/.env` | Baked into the JS bundle at build time (via `EXPO_PUBLIC_*` env at build) |
+
+## Hosted MCP
+
+The MCP server is mounted at `/mcp` on the backend and exposed publicly at https://mcp.expense-tracker.blueelephants.org/, gated by Cloudflare Access with Google SSO. Family members add it to Claude Desktop or Claude mobile and chat about their portfolio and expenses.
+
+Configuration runbook (Cloudflare Access app, IdP, policy, DNS, Cloud Run domain mapping, Secret Manager population): see [`docs/HOSTED_MCP_DEPLOY.md`](docs/HOSTED_MCP_DEPLOY.md).
+
+To add a family member's email to the Access allowlist: `docs/HOSTED_MCP_DEPLOY.md` → "Adding more family members".
+
+## Observability
+
+| Layer | Tool | Where |
+|---|---|---|
+| Infrastructure (uptime, 5xx, latency, container CPU/RAM) | GCP Cloud Monitoring | Auto-collected for Cloud Run; alert policies in `terraform/main/observability.tf` |
+| Logs (per-request, MCP tool calls) | GCP Cloud Logging | Structured logs from FastAPI; log-based metric `mcp_tool_calls` captures `user_id` + `tool` |
+| LLM tracing (chat conversations, tool calls, token usage) | Langfuse | https://us.cloud.langfuse.com — observation per chat call with `user_id` + `session_id` in metadata |
+| Auth events (CF Access logins) | Cloudflare Zero Trust dashboard | Free; see https://one.dash.cloudflare.com → Logs → Access |
 
 ## License
 
