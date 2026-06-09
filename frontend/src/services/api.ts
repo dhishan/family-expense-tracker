@@ -224,4 +224,65 @@ export const notificationsApi = {
   },
 }
 
+// Investments API
+export const investmentsApi = {
+  register: async (): Promise<unknown> => {
+    const response = await api.post('/investments/register')
+    return response.data
+  },
+
+  connect: async (broker?: string | null): Promise<{ redirectURI: string }> => {
+    const response = await api.post<{ redirectURI: string }>('/investments/connect', {
+      broker: broker ?? null,
+      connection_type: 'read',
+    })
+    return response.data
+  },
+
+  accounts: async (): Promise<InvestmentAccount[]> => {
+    const response = await api.get<InvestmentAccount[]>('/investments/accounts')
+    return response.data
+  },
+
+  holdings: async (): Promise<HoldingGroup[]> => {
+    const response = await api.get<HoldingGroup[]>('/investments/holdings')
+    return response.data
+  },
+}
+
+export interface InvestmentAccount {
+  id: string
+  name: string
+  number?: string
+  institution_name?: string
+  sync_status?: {
+    holdings?: { last_successful_sync?: string | null; initial_sync_completed?: boolean }
+    transactions?: { last_successful_sync?: string | null; initial_sync_completed?: boolean }
+  }
+  cash_restrictions?: unknown
+  meta?: Record<string, unknown>
+}
+
+export interface HoldingPosition {
+  symbol?: { symbol?: { symbol?: string; description?: string } }
+  units?: number
+  price?: number
+  average_purchase_price?: number
+  open_pnl?: number
+  fractional_units?: number
+}
+
+export interface HoldingBalance {
+  currency?: { code?: string }
+  cash?: number
+  buying_power?: number
+  total_value?: number
+}
+
+export interface HoldingGroup {
+  account?: { id?: string; name?: string; institution_name?: string }
+  positions?: HoldingPosition[]
+  balances?: HoldingBalance[]
+}
+
 export default api

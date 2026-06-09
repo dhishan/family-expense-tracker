@@ -8,6 +8,8 @@ import Dashboard from './pages/Dashboard'
 import Expenses from './pages/Expenses'
 import Budgets from './pages/Budgets'
 import Settings from './pages/Settings'
+import Investments from './pages/Investments'
+import Chat from './pages/Chat'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, user, family, setFamily, setFamilyMembers } = useAuthStore()
@@ -55,6 +57,8 @@ function App() {
         <Route path="expenses" element={<Expenses />} />
         <Route path="budgets" element={<Budgets />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="investments" element={<Investments />} />
+        <Route path="chat" element={<Chat />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -19,6 +19,18 @@ pydantic-settings
 python-dotenv
 pytz
 
+# Brokerage / portfolio data
+snaptrade-python-sdk>=11.0.183
+
+# LLM portfolio analysis
+anthropic>=0.107.0
+
+# Observability
+langfuse>=3.0
+
+# MCP server (expose SnapTrade to Claude Desktop / Code)
+mcp>=1.0.0
+
 # Testing
 pytest
 pytest-asyncio

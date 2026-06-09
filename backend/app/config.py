@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     frontend_url: str = "http://localhost:5173"
     secret_key: str = "change-me-in-production"
+    jwt_secret_key: str = ""
     
     # JWT Settings
     jwt_algorithm: str = "HS256"
@@ -25,11 +26,20 @@ class Settings(BaseSettings):
     
     # API Settings
     api_prefix: str = "/api/v1"
-    
+
+    # SnapTrade (brokerage data aggregator)
+    snaptrade_client_id: str = ""
+    snaptrade_consumer_key: str = ""
+
+    # Cloudflare Access (gates the hosted /mcp endpoint in production)
+    cf_access_team_domain: str = ""  # e.g. blueelephants.cloudflareaccess.com
+    cf_access_aud: str = ""          # Application AUD tag
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
+        extra = "ignore"
 
 
 @lru_cache()

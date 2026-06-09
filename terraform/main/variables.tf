@@ -57,3 +57,64 @@ variable "cloudflare_zone_id" {
   type        = string
   default     = "1eb0ae8907a74b14d5226384b92946b7"
 }
+
+# --- Sensitive secrets (set via TF_VAR_* env or terraform.tfvars; never committed) ---
+variable "snaptrade_client_id" {
+  description = "SnapTrade partner client ID"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "snaptrade_consumer_key" {
+  description = "SnapTrade partner consumer key"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "anthropic_api_key" {
+  description = "Anthropic API key (used by hosted MCP / analyzer / Phase E chat)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "cf_access_aud" {
+  description = "Cloudflare Access Application AUD tag for the MCP app"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "cf_access_team_domain" {
+  description = "Cloudflare Zero Trust team domain (e.g. blueelephants.cloudflareaccess.com)"
+  type        = string
+  default     = "blueelephants.cloudflareaccess.com"
+}
+
+variable "langfuse_secret_key" {
+  description = "Langfuse secret key (LLM observability)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "langfuse_public_key" {
+  description = "Langfuse public key (LLM observability)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "langfuse_base_url" {
+  description = "Langfuse base URL (region-specific)"
+  type        = string
+  default     = "https://us.cloud.langfuse.com"
+}
+
+variable "notification_email" {
+  description = "Email for monitoring alert notifications"
+  type        = string
+  default     = "iamdhishan@gmail.com"
+}

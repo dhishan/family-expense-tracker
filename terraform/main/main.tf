@@ -66,6 +66,7 @@ locals {
   root_domain_fqdn     = trim(var.root_domain, ".")
   frontend_domain_fqdn = "ui.expense-tracker.${trim(var.root_domain, ".")}"
   backend_domain_fqdn  = "api.expense-tracker.${trim(var.root_domain, ".")}"
+  mcp_domain_fqdn      = "mcp.expense-tracker.${trim(var.root_domain, ".")}"
   dns_zone_name        = "${replace(trim(var.root_domain, "."), ".", "-")}-zone"
   backend_image_path   = "us-central1-docker.pkg.dev/${var.project_id}/expense-tracker-backend/expense-tracker-backend:latest"
 }
@@ -137,6 +138,61 @@ resource "google_secret_manager_secret_version" "jwt_secret" {
   secret_data = random_password.jwt_secret.result
 }
 
+# SnapTrade secrets (values populated manually via gcloud - see runbook)
+resource "google_secret_manager_secret" "snaptrade_client_id" {
+  secret_id = "${var.backend_service_name}-snaptrade-client-id"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret" "snaptrade_consumer_key" {
+  secret_id = "${var.backend_service_name}-snaptrade-consumer-key"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+
+  depends_on = [google_project_service.secretmanager]
+}
+
+# Anthropic API key (values populated manually via gcloud - see runbook)
+resource "google_secret_manager_secret" "anthropic_api_key" {
+  secret_id = "${var.backend_service_name}-anthropic-api-key"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+
+  depends_on = [google_project_service.secretmanager]
+}
+
+# Cloudflare Access AUD tag (values populated manually via gcloud - see runbook)
+resource "google_secret_manager_secret" "cf_access_aud" {
+  secret_id = "${var.backend_service_name}-cf-access-aud"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+
+  depends_on = [google_project_service.secretmanager]
+}
+
 # Secret for Google OAuth client secret
 resource "google_secret_manager_secret" "google_client_secret" {
   secret_id = "${var.backend_service_name}-google-client-secret"
@@ -154,6 +210,64 @@ resource "google_secret_manager_secret" "google_client_secret" {
 resource "google_secret_manager_secret_version" "google_client_secret" {
   secret      = google_secret_manager_secret.google_client_secret.id
   secret_data = var.google_client_secret
+}
+
+# --- Secret versions for the previously-manual secrets. Values come from
+# --- sensitive TF vars (TF_VAR_* env or terraform.tfvars). Plaintext lands in
+# --- terraform.tfstate which is GCS-backed + IAM-locked; never in source.
+resource "google_secret_manager_secret_version" "snaptrade_client_id" {
+  secret      = google_secret_manager_secret.snaptrade_client_id.id
+  secret_data = var.snaptrade_client_id
+}
+
+resource "google_secret_manager_secret_version" "snaptrade_consumer_key" {
+  secret      = google_secret_manager_secret.snaptrade_consumer_key.id
+  secret_data = var.snaptrade_consumer_key
+}
+
+resource "google_secret_manager_secret_version" "anthropic_api_key" {
+  secret      = google_secret_manager_secret.anthropic_api_key.id
+  secret_data = var.anthropic_api_key
+}
+
+resource "google_secret_manager_secret_version" "cf_access_aud" {
+  secret      = google_secret_manager_secret.cf_access_aud.id
+  secret_data = var.cf_access_aud
+}
+
+# --- Langfuse (LLM observability) ---
+resource "google_secret_manager_secret" "langfuse_secret_key" {
+  secret_id = "${var.backend_service_name}-langfuse-secret-key"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "langfuse_secret_key" {
+  secret      = google_secret_manager_secret.langfuse_secret_key.id
+  secret_data = var.langfuse_secret_key
+}
+
+resource "google_secret_manager_secret" "langfuse_public_key" {
+  secret_id = "${var.backend_service_name}-langfuse-public-key"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "langfuse_public_key" {
+  secret      = google_secret_manager_secret.langfuse_public_key.id
+  secret_data = var.langfuse_public_key
 }
 
 # Cloud Run service for backend
@@ -213,6 +327,76 @@ resource "google_cloud_run_service" "backend" {
           }
         }
 
+        env {
+          name = "SNAPTRADE_CLIENT_ID"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.snaptrade_client_id.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "SNAPTRADE_CONSUMER_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.snaptrade_consumer_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "ANTHROPIC_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.anthropic_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "CF_ACCESS_AUD"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.cf_access_aud.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name  = "CF_ACCESS_TEAM_DOMAIN"
+          value = var.cf_access_team_domain
+        }
+
+        env {
+          name = "LANGFUSE_SECRET_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.langfuse_secret_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "LANGFUSE_PUBLIC_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.langfuse_public_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name  = "LANGFUSE_BASE_URL"
+          value = var.langfuse_base_url
+        }
+
         resources {
           limits = {
             cpu    = "1000m"
@@ -246,7 +430,11 @@ resource "google_cloud_run_service" "backend" {
   depends_on = [
     google_project_service.run,
     google_secret_manager_secret_version.jwt_secret,
-    google_secret_manager_secret_version.google_client_secret
+    google_secret_manager_secret_version.google_client_secret,
+    google_secret_manager_secret.snaptrade_client_id,
+    google_secret_manager_secret.snaptrade_consumer_key,
+    google_secret_manager_secret.anthropic_api_key,
+    google_secret_manager_secret.cf_access_aud,
   ]
 }
 
@@ -373,4 +561,39 @@ resource "cloudflare_record" "backend_cname" {
   ttl     = 300
 
   depends_on = [google_cloud_run_domain_mapping.backend]
+}
+
+# Cloud Run domain mapping for the hosted MCP server
+# IMPORTANT: Must be created manually first (see runbook) then imported into state.
+# The CI service account (tf-github) is not a verified Google Search Console domain owner,
+# so it cannot create new domain mappings. Workaround: create once locally with user creds,
+# then `terraform import` — after that, CI can manage the resource without re-creating it.
+resource "google_cloud_run_domain_mapping" "mcp" {
+  name     = local.mcp_domain_fqdn
+  location = var.region
+
+  metadata {
+    namespace = var.project_id
+  }
+
+  spec {
+    route_name = google_cloud_run_service.backend.name
+  }
+
+  depends_on = [google_project_service.run]
+}
+
+# Cloudflare DNS - MCP subdomain CNAME
+resource "cloudflare_record" "mcp_cname" {
+  zone_id = var.cloudflare_zone_id
+  name    = "mcp.expense-tracker"
+  type    = "CNAME"
+  content = "ghs.googlehosted.com"
+  # proxied=true is required: Cloudflare Access only injects Cf-Access-Jwt-Assertion
+  # when traffic flows through the CF proxy. DNS-only would bypass CF entirely and
+  # every MCP request would be rejected (no JWT header present).
+  proxied = true
+  ttl     = 1
+
+  depends_on = [google_cloud_run_domain_mapping.mcp]
 }

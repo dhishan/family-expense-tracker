@@ -9,6 +9,8 @@ import {
   Bars3Icon,
   XMarkIcon,
   ArrowRightOnRectangleIcon,
+  PresentationChartLineIcon,
+  ChatBubbleLeftRightIcon,
 } from '@heroicons/react/24/outline'
 import { useAuthStore } from '../../store/auth'
 import { useQuery } from '@tanstack/react-query'
@@ -18,6 +20,8 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: HomeIcon },
   { name: 'Expenses', href: '/expenses', icon: CurrencyDollarIcon },
   { name: 'Budgets', href: '/budgets', icon: ChartBarIcon },
+  { name: 'Investments', href: '/investments', icon: PresentationChartLineIcon },
+  { name: 'Chat', href: '/chat', icon: ChatBubbleLeftRightIcon },
   { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
 ]
 
