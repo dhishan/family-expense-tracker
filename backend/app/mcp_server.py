@@ -29,6 +29,8 @@ from app.auth.cloudflare import CloudflareAuthError, verify_access_jwt
 from app.auth.dependencies import decode_token
 from app.config import get_settings
 from app.services import market_data, snaptrade_service
+from app.services.budget_service import get_budget_service
+from app.services.expense_service import get_expense_service
 from app.services.firestore import get_firestore_client
 
 logger = logging.getLogger(__name__)
@@ -146,6 +148,15 @@ def _user() -> str:
         # Should be impossible: middleware rejects unauth requests before we get here.
         raise RuntimeError("MCP tool called outside authenticated context")
     return uid
+
+
+def _get_family_id(user_id: str) -> str | None:
+    """Look up family_id for a user from Firestore."""
+    db = get_firestore_client()
+    doc = db.collection("users").document(user_id).get()
+    if not doc.exists:
+        return None
+    return doc.to_dict().get("family_id")
 
 
 # ---- MCP server + tools ----------------------------------------------------
@@ -428,6 +439,216 @@ def edgar_insider_transactions(ticker: str, days: int = 90) -> list[dict]:
     Use when assessing management conviction, insider selling pressure, or unusual buying activity.
     """
     return market_data.edgar_insider_transactions(ticker=ticker, days=days)
+
+
+# ---- Expense + budget tools ------------------------------------------------
+
+
+@mcp.tool()
+async def expense_list(
+    start_date: str,
+    end_date: str,
+    category: str | None = None,
+    beneficiary: str | None = None,
+    min_amount: float | None = None,
+    limit: int = 200,
+) -> dict:
+    """List expense transactions for the family within a date range.
+
+    start_date and end_date are YYYY-MM-DD (inclusive). Optional filters:
+    category (groceries, dining, transportation, etc.), beneficiary (user ID or 'family'),
+    min_amount (only return expenses >= this value). limit caps results (max 500).
+    Returns {expenses: [{id, date, amount, category, merchant, beneficiary, description}], total_matching}.
+    """
+    from datetime import date as _date
+    from app.models.expense import ExpenseFilters, ExpenseCategory
+    family_id = _get_family_id(_user())
+    if not family_id:
+        return {"error": "No family configured for this user."}
+    start = _date.fromisoformat(start_date)
+    end = _date.fromisoformat(end_date)
+    filters = ExpenseFilters(
+        start_date=start,
+        end_date=end,
+        category=ExpenseCategory(category) if category else None,
+        beneficiary=beneficiary,
+    )
+    svc = get_expense_service()
+    capped = min(limit, 500)
+    expenses, total, _ = await svc.list(family_id, filters=filters, page=1, page_size=capped)
+    result = []
+    for e in expenses:
+        if min_amount is not None and e.amount < min_amount:
+            continue
+        result.append({
+            "id": e.id,
+            "date": e.date.isoformat(),
+            "amount": e.amount,
+            "category": e.category,
+            "merchant": e.merchant,
+            "beneficiary": e.beneficiary,
+            "description": e.description,
+        })
+    return {"expenses": result, "total_matching": total}
+
+
+@mcp.tool()
+async def expense_summary(
+    start_date: str,
+    end_date: str,
+    group_by: str = "category",
+) -> dict:
+    """Aggregate expense totals grouped by category, beneficiary, month, or merchant.
+
+    Use for questions like 'how much on groceries last month', 'where is our money going',
+    or 'compare month by month'. group_by in [category, beneficiary, month, merchant].
+    Returns {group_by, rows: [{key, count, total}], total_amount}.
+    """
+    from datetime import date as _date
+    from app.models.expense import ExpenseFilters
+    family_id = _get_family_id(_user())
+    if not family_id:
+        return {"error": "No family configured for this user."}
+    start = _date.fromisoformat(start_date)
+    end = _date.fromisoformat(end_date)
+    svc = get_expense_service()
+
+    if group_by in ("category", "beneficiary"):
+        summary = await svc.get_summary(family_id, start, end)
+        data = summary.by_category if group_by == "category" else summary.by_beneficiary
+        expenses, _, _ = await svc.list(family_id, filters=ExpenseFilters(start_date=start, end_date=end), page=1, page_size=1000)
+        counts: dict[str, int] = {}
+        for e in expenses:
+            key = e.category if group_by == "category" else e.beneficiary
+            counts[key] = counts.get(key, 0) + 1
+        rows = [{"key": k, "count": counts.get(k, 0), "total": round(v, 2)}
+                for k, v in sorted(data.items(), key=lambda x: -x[1])]
+        return {"group_by": group_by, "rows": rows, "total_amount": round(summary.total_amount, 2)}
+
+    expenses, _, _ = await svc.list(family_id, filters=ExpenseFilters(start_date=start, end_date=end), page=1, page_size=1000)
+    agg: dict[str, dict] = {}
+    for e in expenses:
+        if group_by == "merchant":
+            key = e.merchant or "(no merchant)"
+        else:  # month
+            key = e.date.strftime("%Y-%m")
+        if key not in agg:
+            agg[key] = {"count": 0, "total": 0.0}
+        agg[key]["count"] += 1
+        agg[key]["total"] += e.amount
+
+    if group_by == "month":
+        rows = [{"key": k, "count": v["count"], "total": round(v["total"], 2)} for k, v in sorted(agg.items())]
+    else:
+        rows = [{"key": k, "count": v["count"], "total": round(v["total"], 2)}
+                for k, v in sorted(agg.items(), key=lambda x: -x[1]["total"])]
+    total_amount = sum(v["total"] for v in agg.values())
+    return {"group_by": group_by, "rows": rows, "total_amount": round(total_amount, 2)}
+
+
+@mcp.tool()
+async def expense_top_merchants(
+    start_date: str,
+    end_date: str,
+    limit: int = 10,
+) -> dict:
+    """Top merchants/vendors ranked by total spend for a date range.
+
+    Use when the user asks 'where do we spend the most' or wants to identify
+    high-frequency or high-value vendors. Returns {top_merchants: [{merchant, count, total}]}.
+    """
+    from datetime import date as _date
+    from app.models.expense import ExpenseFilters
+    family_id = _get_family_id(_user())
+    if not family_id:
+        return {"error": "No family configured for this user."}
+    start = _date.fromisoformat(start_date)
+    end = _date.fromisoformat(end_date)
+    svc = get_expense_service()
+    expenses, _, _ = await svc.list(family_id, filters=ExpenseFilters(start_date=start, end_date=end), page=1, page_size=1000)
+    agg: dict[str, dict] = {}
+    for e in expenses:
+        key = e.merchant or "(no merchant)"
+        if key not in agg:
+            agg[key] = {"count": 0, "total": 0.0}
+        agg[key]["count"] += 1
+        agg[key]["total"] += e.amount
+    rows = sorted(agg.items(), key=lambda x: -x[1]["total"])[:limit]
+    return {"top_merchants": [{"merchant": k, "count": v["count"], "total": round(v["total"], 2)} for k, v in rows]}
+
+
+@mcp.tool()
+async def budget_status(reference_date: str | None = None) -> dict:
+    """Current budget status for all family budgets: limit, spent, remaining, and on-track indicator.
+
+    Use for questions like 'are we on budget', 'how much is left in dining', or 'which budgets are over'.
+    reference_date (YYYY-MM-DD) pins the budget period; defaults to today.
+    Returns {budgets: [{category, period, period_start, period_end, limit, spent, remaining, pct_used, status}]}.
+    status is 'ok' (< 80%), 'warning' (>= 80%), or 'over' (> 100%).
+    """
+    from datetime import date as _date
+    family_id = _get_family_id(_user())
+    if not family_id:
+        return {"error": "No family configured for this user."}
+    ref = _date.fromisoformat(reference_date) if reference_date else _date.today()
+    svc = get_budget_service()
+    statuses = await svc.list_with_status(family_id, reference_date=ref)
+    result = []
+    for s in statuses:
+        pct = s.percentage_used
+        status_label = "over" if s.is_over_budget else ("warning" if pct >= 80 else "ok")
+        result.append({
+            "category": s.budget.category,
+            "period": s.budget.period,
+            "period_start": s.period_start.isoformat(),
+            "period_end": s.period_end.isoformat(),
+            "limit": s.budget.amount,
+            "spent": round(s.spent, 2),
+            "remaining": round(s.remaining, 2),
+            "pct_used": round(pct, 1),
+            "status": status_label,
+        })
+    return {"budgets": result, "count": len(result)}
+
+
+@mcp.tool()
+async def budget_burn_rate(category: str, lookback_months: int = 3) -> dict:
+    """Historical average monthly spend for a category vs the current budget limit.
+
+    Use to answer 'is my dining budget realistic', 'am I under-budgeting for groceries'.
+    category: one of groceries, dining, transportation, utilities, entertainment,
+    healthcare, shopping, travel, education, other.
+    Returns {category, avg_monthly_spend, current_limit, ratio, months_analyzed, monthly_totals}.
+    ratio > 1.0 means you're consistently overspending the budget.
+    """
+    from datetime import date as _date, timedelta as _td
+    from dateutil.relativedelta import relativedelta
+    family_id = _get_family_id(_user())
+    if not family_id:
+        return {"error": "No family configured for this user."}
+    svc_e = get_expense_service()
+    svc_b = get_budget_service()
+    today = _date.today()
+    monthly_totals = []
+    for i in range(lookback_months):
+        month_start = today.replace(day=1) - relativedelta(months=i + 1)
+        next_month = month_start.replace(month=month_start.month + 1, day=1) if month_start.month < 12 \
+            else month_start.replace(year=month_start.year + 1, month=1, day=1)
+        month_end = next_month - _td(days=1)
+        total = await svc_e.get_spending_for_budget(family_id, month_start, month_end, category=category)
+        monthly_totals.append(total)
+    avg = sum(monthly_totals) / len(monthly_totals) if monthly_totals else 0.0
+    budgets = await svc_b.list(family_id)
+    current_limit = next((b.amount for b in budgets if b.category == category), None)
+    ratio = (avg / current_limit) if current_limit else None
+    return {
+        "category": category,
+        "avg_monthly_spend": round(avg, 2),
+        "current_limit": current_limit,
+        "ratio": round(ratio, 2) if ratio is not None else None,
+        "months_analyzed": lookback_months,
+        "monthly_totals": [round(x, 2) for x in monthly_totals],
+    }
 
 
 # ---- FastAPI mount helper --------------------------------------------------

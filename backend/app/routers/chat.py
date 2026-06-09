@@ -33,6 +33,9 @@ load_dotenv()  # ensure ANTHROPIC_API_KEY + LANGFUSE_* land in os.environ for SD
 from app.auth.dependencies import get_current_user
 from app.models.user import User
 from app.services import market_data, snaptrade_service
+from app.services.budget_service import get_budget_service
+from app.services.expense_service import get_expense_service
+from app.services.firestore import get_firestore_client
 
 logger = logging.getLogger(__name__)
 
@@ -343,6 +346,118 @@ TOOLS: list[dict] = [
             "required": ["symbol"],
         },
     },
+    # --- Expense + budget tools ---
+    {
+        "name": "expense_list",
+        "description": (
+            "List individual expense transactions for the user's family within a date range. "
+            "Use when the user asks to see their recent transactions, wants to find a specific purchase, "
+            "or needs a raw list of expenses filtered by category, beneficiary, or minimum amount. "
+            "Returns each expense with id, date, amount, category, merchant, beneficiary, description."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "start_date": {"type": "string", "description": "Start date YYYY-MM-DD (inclusive)"},
+                "end_date": {"type": "string", "description": "End date YYYY-MM-DD (inclusive)"},
+                "category": {
+                    "type": "string",
+                    "description": "Optional category filter",
+                    "enum": ["groceries", "dining", "transportation", "utilities", "entertainment",
+                             "healthcare", "shopping", "travel", "education", "other"],
+                },
+                "beneficiary": {"type": "string", "description": "Optional beneficiary filter (user ID or 'family')"},
+                "min_amount": {"type": "number", "description": "Only return expenses >= this amount"},
+                "limit": {"type": "integer", "description": "Max results to return (default 200)", "default": 200},
+            },
+            "required": ["start_date", "end_date"],
+        },
+    },
+    {
+        "name": "expense_summary",
+        "description": (
+            "Aggregate expense totals grouped by category, beneficiary, month, or merchant for a date range. "
+            "Use when the user asks 'how much did we spend on X', 'where is our money going', "
+            "'show me spending by category', or 'compare this month to last month'. "
+            "Returns [{key, count, total}] sorted by total descending."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "start_date": {"type": "string", "description": "Start date YYYY-MM-DD"},
+                "end_date": {"type": "string", "description": "End date YYYY-MM-DD"},
+                "group_by": {
+                    "type": "string",
+                    "enum": ["category", "beneficiary", "month", "merchant"],
+                    "description": "Dimension to group by (default: category)",
+                    "default": "category",
+                },
+            },
+            "required": ["start_date", "end_date"],
+        },
+    },
+    {
+        "name": "expense_top_merchants",
+        "description": (
+            "Top merchants/vendors ranked by total spend for a date range. "
+            "Use when the user asks 'where do we spend the most', 'what stores cost us most', "
+            "or wants to identify recurring high-spend vendors."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "start_date": {"type": "string", "description": "Start date YYYY-MM-DD"},
+                "end_date": {"type": "string", "description": "End date YYYY-MM-DD"},
+                "limit": {"type": "integer", "description": "Number of top merchants to return (default 10)", "default": 10},
+            },
+            "required": ["start_date", "end_date"],
+        },
+    },
+    {
+        "name": "budget_status",
+        "description": (
+            "Current budget status for all family budgets: limit, spent, remaining, and whether each is on track. "
+            "Use when the user asks 'are we on track with our budgets', 'how much is left in dining', "
+            "'which budgets are over limit', or any question about budget vs actual spending. "
+            "Returns [{category, period_start, period_end, limit, spent, remaining, pct_used, status}]."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reference_date": {
+                    "type": "string",
+                    "description": "Reference date YYYY-MM-DD to determine which budget period to evaluate (default: today)",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "budget_burn_rate",
+        "description": (
+            "Historical average monthly spend for a category vs the current budget limit. "
+            "Use when the user asks 'is my dining budget realistic', 'am I under-budgeting for groceries', "
+            "or wants to see if a budget reflects actual spending patterns. "
+            "Returns {category, avg_monthly_spend, current_limit, ratio, months_analyzed}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "Expense category to analyze",
+                    "enum": ["groceries", "dining", "transportation", "utilities", "entertainment",
+                             "healthcare", "shopping", "travel", "education", "other"],
+                },
+                "lookback_months": {
+                    "type": "integer",
+                    "description": "Number of past months to average over (default 3)",
+                    "default": 3,
+                },
+            },
+            "required": ["category"],
+        },
+    },
     # --- SEC EDGAR ---
     {
         "name": "edgar_company_lookup",
@@ -425,6 +540,199 @@ TOOLS: list[dict] = [
         },
     },
 ]
+
+
+_EXPENSE_TOOLS = {"expense_list", "expense_summary", "expense_top_merchants", "budget_status", "budget_burn_rate"}
+
+
+def _get_family_id(user_id: str) -> str | None:
+    """Look up family_id for a user from Firestore."""
+    db = get_firestore_client()
+    doc = db.collection("users").document(user_id).get()
+    if not doc.exists:
+        return None
+    return doc.to_dict().get("family_id")
+
+
+async def _execute_expense_tool(name: str, tool_input: dict, user_id: str) -> str:
+    """Execute a read-only expense/budget tool. Returns JSON string."""
+    try:
+        family_id = _get_family_id(user_id)
+        if not family_id:
+            return json.dumps({"error": "No family configured for this user."})
+
+        if name == "expense_list":
+            from datetime import date as _date
+            from app.models.expense import ExpenseFilters, ExpenseCategory
+            start = _date.fromisoformat(tool_input["start_date"])
+            end = _date.fromisoformat(tool_input["end_date"])
+            category_str = tool_input.get("category")
+            beneficiary = tool_input.get("beneficiary")
+            min_amount = tool_input.get("min_amount")
+            limit = min(tool_input.get("limit", 200), 500)
+
+            filters = ExpenseFilters(
+                start_date=start,
+                end_date=end,
+                category=ExpenseCategory(category_str) if category_str else None,
+                beneficiary=beneficiary,
+            )
+            svc = get_expense_service()
+            # Fetch up to `limit` expenses (use page_size)
+            expenses, total, _ = await svc.list(family_id, filters=filters, page=1, page_size=limit)
+            result = []
+            for e in expenses:
+                row = {
+                    "id": e.id,
+                    "date": e.date.isoformat(),
+                    "amount": e.amount,
+                    "category": e.category,
+                    "merchant": e.merchant,
+                    "beneficiary": e.beneficiary,
+                    "description": e.description,
+                }
+                if min_amount is not None and e.amount < min_amount:
+                    continue
+                result.append(row)
+            return json.dumps({"expenses": result, "total_matching": total})
+
+        elif name == "expense_summary":
+            from datetime import date as _date
+            start = _date.fromisoformat(tool_input["start_date"])
+            end = _date.fromisoformat(tool_input["end_date"])
+            group_by = tool_input.get("group_by", "category")
+            svc = get_expense_service()
+
+            if group_by in ("category", "beneficiary"):
+                summary = await svc.get_summary(family_id, start, end)
+                if group_by == "category":
+                    data = summary.by_category
+                else:
+                    data = summary.by_beneficiary
+                # Build count by fetching full list
+                from app.models.expense import ExpenseFilters
+                expenses, _, _ = await svc.list(family_id, filters=ExpenseFilters(start_date=start, end_date=end), page=1, page_size=1000)
+                counts: dict[str, int] = {}
+                for e in expenses:
+                    key = e.category if group_by == "category" else e.beneficiary
+                    counts[key] = counts.get(key, 0) + 1
+                rows = [{"key": k, "count": counts.get(k, 0), "total": round(v, 2)}
+                        for k, v in sorted(data.items(), key=lambda x: -x[1])]
+                return json.dumps({"group_by": group_by, "rows": rows, "total_amount": round(summary.total_amount, 2)})
+
+            elif group_by == "merchant":
+                from app.models.expense import ExpenseFilters
+                expenses, _, _ = await svc.list(family_id, filters=ExpenseFilters(start_date=start, end_date=end), page=1, page_size=1000)
+                agg: dict[str, dict] = {}
+                for e in expenses:
+                    key = e.merchant or "(no merchant)"
+                    if key not in agg:
+                        agg[key] = {"count": 0, "total": 0.0}
+                    agg[key]["count"] += 1
+                    agg[key]["total"] += e.amount
+                rows = [{"key": k, "count": v["count"], "total": round(v["total"], 2)}
+                        for k, v in sorted(agg.items(), key=lambda x: -x[1]["total"])]
+                return json.dumps({"group_by": "merchant", "rows": rows})
+
+            elif group_by == "month":
+                from app.models.expense import ExpenseFilters
+                expenses, _, _ = await svc.list(family_id, filters=ExpenseFilters(start_date=start, end_date=end), page=1, page_size=1000)
+                agg: dict[str, dict] = {}
+                for e in expenses:
+                    key = e.date.strftime("%Y-%m")
+                    if key not in agg:
+                        agg[key] = {"count": 0, "total": 0.0}
+                    agg[key]["count"] += 1
+                    agg[key]["total"] += e.amount
+                rows = [{"key": k, "count": v["count"], "total": round(v["total"], 2)}
+                        for k, v in sorted(agg.items())]
+                return json.dumps({"group_by": "month", "rows": rows})
+
+            return json.dumps({"error": f"Unknown group_by: {group_by}"})
+
+        elif name == "expense_top_merchants":
+            from datetime import date as _date
+            from app.models.expense import ExpenseFilters
+            start = _date.fromisoformat(tool_input["start_date"])
+            end = _date.fromisoformat(tool_input["end_date"])
+            limit = tool_input.get("limit", 10)
+            svc = get_expense_service()
+            expenses, _, _ = await svc.list(family_id, filters=ExpenseFilters(start_date=start, end_date=end), page=1, page_size=1000)
+            agg: dict[str, dict] = {}
+            for e in expenses:
+                key = e.merchant or "(no merchant)"
+                if key not in agg:
+                    agg[key] = {"count": 0, "total": 0.0}
+                agg[key]["count"] += 1
+                agg[key]["total"] += e.amount
+            rows = sorted(agg.items(), key=lambda x: -x[1]["total"])[:limit]
+            result = [{"merchant": k, "count": v["count"], "total": round(v["total"], 2)} for k, v in rows]
+            return json.dumps({"top_merchants": result})
+
+        elif name == "budget_status":
+            from datetime import date as _date
+            ref_str = tool_input.get("reference_date")
+            ref_date = _date.fromisoformat(ref_str) if ref_str else _date.today()
+            svc = get_budget_service()
+            statuses = await svc.list_with_status(family_id, reference_date=ref_date)
+            result = []
+            for s in statuses:
+                pct = s.percentage_used
+                status_label = "over" if s.is_over_budget else ("warning" if pct >= 80 else "ok")
+                result.append({
+                    "category": s.budget.category,
+                    "period": s.budget.period,
+                    "period_start": s.period_start.isoformat(),
+                    "period_end": s.period_end.isoformat(),
+                    "limit": s.budget.amount,
+                    "spent": round(s.spent, 2),
+                    "remaining": round(s.remaining, 2),
+                    "pct_used": round(pct, 1),
+                    "status": status_label,
+                })
+            return json.dumps({"budgets": result, "count": len(result)})
+
+        elif name == "budget_burn_rate":
+            from datetime import date as _date
+            from dateutil.relativedelta import relativedelta
+            category = tool_input["category"]
+            lookback = tool_input.get("lookback_months", 3)
+            svc_e = get_expense_service()
+            svc_b = get_budget_service()
+            today = _date.today()
+            monthly_totals = []
+            for i in range(lookback):
+                month_start = (today.replace(day=1) - relativedelta(months=i + 1))
+                if today.month == 12:
+                    month_end = today.replace(year=today.year + 1, month=1, day=1) - timedelta(days=1)
+                else:
+                    next_month = month_start.replace(month=month_start.month + 1, day=1) if month_start.month < 12 \
+                        else month_start.replace(year=month_start.year + 1, month=1, day=1)
+                    month_end = next_month - timedelta(days=1)
+                total = await svc_e.get_spending_for_budget(family_id, month_start, month_end, category=category)
+                monthly_totals.append(total)
+            avg = sum(monthly_totals) / len(monthly_totals) if monthly_totals else 0
+            # Find current budget limit for this category
+            budgets = await svc_b.list(family_id)
+            current_limit = None
+            for b in budgets:
+                if b.category == category:
+                    current_limit = b.amount
+                    break
+            ratio = (avg / current_limit) if current_limit else None
+            return json.dumps({
+                "category": category,
+                "avg_monthly_spend": round(avg, 2),
+                "current_limit": current_limit,
+                "ratio": round(ratio, 2) if ratio is not None else None,
+                "months_analyzed": lookback,
+                "monthly_totals": [round(x, 2) for x in monthly_totals],
+            })
+
+        return json.dumps({"error": f"Unknown expense tool: {name}"})
+    except Exception as exc:
+        logger.exception("Expense tool %s failed", name)
+        return json.dumps({"error": str(exc)})
 
 
 def _execute_snaptrade_tool(name: str, tool_input: dict, user_id: str) -> str:
@@ -757,7 +1065,10 @@ async def _stream_chat(
                     "input": tc["input"],
                 })
 
-                result_content = _execute_snaptrade_tool(tc["name"], tc["input"], user_id)
+                if tc["name"] in _EXPENSE_TOOLS:
+                    result_content = await _execute_expense_tool(tc["name"], tc["input"], user_id)
+                else:
+                    result_content = _execute_snaptrade_tool(tc["name"], tc["input"], user_id)
                 preview = result_content[:500]
                 yield _sse({
                     "type": "tool_result",

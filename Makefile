@@ -1,4 +1,4 @@
-.PHONY: help install dev-native dev-backend dev-frontend local-up local-reset local-down stop build test clean deploy-backend deploy-frontend deploy terraform-init terraform-plan terraform-apply terraform-destroy docker-dev docker-up docker-down
+.PHONY: help install dev-native dev-backend dev-frontend local-up local-reset local-down stop build test clean deploy-backend deploy-frontend deploy terraform-init terraform-plan terraform-apply terraform-destroy docker-dev docker-up docker-down mobile-install mobile-dev mobile-test mobile-build-ios mobile-build-android dev-all
 
 # Variables
 PROJECT_ID ?= $(shell gcloud config get-value project)
@@ -257,6 +257,31 @@ local-reset: ## Wipe emulator data and restart from a clean state
 local-down: ## Stop and remove local dev stack containers
 	docker compose stop firebase backend-dev frontend-dev
 	docker compose rm -f firebase backend-dev frontend-dev
+
+# Mobile
+mobile-install: ## Install mobile (Expo) dependencies
+	cd mobile && npm install
+
+mobile-dev: ## Start Expo development server
+	cd mobile && npx expo start
+
+mobile-test: ## Run mobile Jest tests
+	cd mobile && npm test
+
+mobile-build-ios: ## Build iOS app via EAS (requires Apple Developer account + EAS setup)
+	cd mobile && eas build --platform ios --profile preview
+
+mobile-build-android: ## Build Android APK via EAS
+	cd mobile && eas build --platform android --profile preview
+
+dev-all: ## Start backend + web frontend + mobile concurrently
+	@command -v concurrently >/dev/null 2>&1 || npm install -g concurrently
+	concurrently \
+		--names "backend,frontend,mobile" \
+		--prefix-colors "blue,green,yellow" \
+		"make dev-backend" \
+		"make dev-frontend" \
+		"make mobile-dev"
 
 # Status
 status: ## Show deployment status
