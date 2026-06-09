@@ -351,7 +351,18 @@ export default function Chat() {
       {/* Header */}
       <div className="px-4 sm:px-6 py-3 border-b border-gray-200 bg-white shrink-0 flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-gray-900">Chat with your portfolio</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-semibold text-gray-900">Chat with your portfolio</h1>
+            {streaming && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-xs font-medium text-indigo-700">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75 animate-ping" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500" />
+                </span>
+                Working…
+              </span>
+            )}
+          </div>
           <p className="text-xs text-gray-500">Powered by Claude — pulls live data from your brokers, FRED, Tiingo, Finnhub, and SEC EDGAR</p>
         </div>
         {messages.length > 0 && (
@@ -399,14 +410,15 @@ export default function Chat() {
                 onToolToggle={(bi) => toggleToolBlock(mi, bi)}
               />
             ))}
-            {streaming && messages[messages.length - 1]?.blocks.length === 0 && (
+            {streaming && (
               <div className="flex justify-start mb-4">
-                <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+                <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-2">
                   <span className="flex gap-1">
-                    <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce [animation-delay:0ms]" />
-                    <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce [animation-delay:150ms]" />
-                    <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce [animation-delay:300ms]" />
+                    <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:0ms]" />
+                    <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:150ms]" />
+                    <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:300ms]" />
                   </span>
+                  <span className="text-xs text-slate-500">Thinking…</span>
                 </div>
               </div>
             )}
