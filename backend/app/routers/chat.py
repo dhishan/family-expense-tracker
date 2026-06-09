@@ -1724,6 +1724,148 @@ async def get_conversation(
     }
 
 
+# ─── Backwards-compat shim ──────────────────────────────────────────────────
+#
+# Old mobile bundles (pre-durable-architecture) POST to /api/v1/chat with
+# {messages: [{role, content}, ...]} and expect an SSE stream of
+# text/tool_call/tool_result/done events back. The new clients use
+# /chat/start + GET .../stream.
+#
+# We re-expose POST /api/v1/chat that:
+#   * accepts the old payload shape
+#   * still creates conv + turn docs in Firestore (so chats from old
+#     clients show up in the History UI on new clients too)
+#   * runs the generation INLINE in the response generator (no resume),
+#     yielding events directly to the SSE response just like before
+#
+# Trade-off: clients on the old endpoint don't get the disconnect-survival
+# guarantee. If the iOS app backgrounds mid-chat, the stream dies and
+# generation stops (just like before the architecture refactor). New
+# clients use /chat/start to get the durable path. Once all phones have
+# OTA'd, this shim can be deleted.
+
+
+class LegacyChatRequest(BaseModel):
+    messages: list[dict]
+
+
+@router.post("")
+async def chat_legacy(
+    body: LegacyChatRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Backwards-compat endpoint for old mobile bundles. See note above."""
+    if not body.messages:
+        raise HTTPException(status_code=400, detail="messages must not be empty")
+
+    last_user_msg = next(
+        (m.get("content", "") for m in reversed(body.messages) if m.get("role") == "user"),
+        "",
+    )
+    if not last_user_msg.strip():
+        raise HTTPException(status_code=400, detail="no user message in payload")
+
+    store = get_chat_store()
+    family_id = _family_id_for(current_user)
+    conv_id = store.create_conversation(
+        user_id=current_user.id, family_id=family_id, first_message=last_user_msg
+    )
+    user_turn_id = store.create_user_turn(
+        conv_id=conv_id, user_id=current_user.id, text=last_user_msg, seq=0
+    )
+    assistant_turn_id = store.create_assistant_turn(
+        conv_id=conv_id, user_id=current_user.id, seq=1, model="pending"
+    )
+    store.update_conversation_meta(
+        conv_id, last_turn_id=assistant_turn_id, increment_turn_count=2
+    )
+
+    session_id = hashlib.sha256(
+        f"{current_user.id}:{conv_id}".encode()
+    ).hexdigest()[:16]
+
+    # Build history in the format _generate_turn expects.
+    history = [
+        {"role": m.get("role", "user"), "content": m.get("content", "")}
+        for m in body.messages
+    ]
+
+    # Kick off the durable generation in the background. The events get
+    # written to Firestore by _generate_turn (history + resume work).
+    gen_task = asyncio.create_task(
+        _generate_turn(
+            conv_id=conv_id,
+            assistant_turn_id=assistant_turn_id,
+            user_id=current_user.id,
+            session_id=session_id,
+            history=history,
+        )
+    )
+    _BG_TASKS.add(gen_task)
+    gen_task.add_done_callback(_BG_TASKS.discard)
+
+    async def event_source() -> AsyncGenerator[str, None]:
+        """Poll Firestore for new events on the turn doc and emit them in
+        the OLD SSE format the legacy client expects (no `seq` field
+        required, no init event)."""
+        last_seq = 0
+        POLL_INTERVAL_S = 0.2
+        KEEPALIVE_INTERVAL_S = 10.0
+        MAX_WALL_S = 1800
+        started = asyncio.get_event_loop().time()
+        last_emit = started
+
+        while True:
+            now = asyncio.get_event_loop().time()
+            if now - started > MAX_WALL_S:
+                yield _sse({"type": "error", "message": "Generation timed out"})
+                return
+
+            await asyncio.sleep(POLL_INTERVAL_S)
+
+            try:
+                snap = await asyncio.to_thread(
+                    store._turns(conv_id).document(assistant_turn_id).get
+                )
+            except Exception as e:
+                logger.warning("Legacy poll failed: %s", e)
+                continue
+            if not snap.exists:
+                yield _sse({"type": "error", "message": "Turn disappeared"})
+                return
+            data = snap.to_dict() or {}
+
+            for ev in data.get("events") or []:
+                if ev.get("seq", 0) > last_seq:
+                    # Strip the seq field — old clients ignore it but
+                    # cleaner to keep the payload identical.
+                    ev_clean = {k: v for k, v in ev.items() if k != "seq"}
+                    yield _sse(ev_clean)
+                    last_seq = max(last_seq, ev.get("seq", 0))
+                    last_emit = asyncio.get_event_loop().time()
+                    if ev.get("type") in ("done", "error"):
+                        return
+
+            status = data.get("status")
+            if status in ("complete", "error"):
+                if status == "error":
+                    yield _sse({"type": "error", "message": data.get("error") or "Unknown"})
+                else:
+                    yield _sse({"type": "done"})
+                return
+
+            now = asyncio.get_event_loop().time()
+            if now - last_emit > KEEPALIVE_INTERVAL_S:
+                yield ": keepalive\n\n"
+                last_emit = now
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.delete("/conversations/{conv_id}")
 async def delete_conversation(
     conv_id: str,
