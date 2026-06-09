@@ -222,15 +222,23 @@ export const investmentsApi = {
 
 // ─── Chat ─────────────────────────────────────────────────────────────────────
 
+// React Native's built-in fetch is XHR-backed and does not expose a
+// real ReadableStream from `response.body`, so the standard
+// fetch+getReader() pattern (works on web) hangs or fails on iOS with
+// "Network request failed". Use the dedicated `react-native-sse` EventSource
+// polyfill which speaks SSE directly over RN's networking stack.
+import EventSource from 'react-native-sse'
+
 export const chatApi = {
-  // Returns a ReadableStream for SSE
   sendMessage: async (
     messages: ChatMessage[],
-    familyId?: string,
+    _familyId: string | undefined,
     onChunk?: (chunk: string) => void,
     onDone?: () => void,
-    onError?: (err: string) => void
-  ): Promise<void> => {
+    onError?: (err: string) => void,
+    onToolCall?: (tool: { id: string; name: string; input: unknown }) => void,
+    onToolResult?: (tool: { id: string; name: string; preview: string }) => void,
+  ): Promise<() => void> => {
     let token: string | null = null
     try {
       token = await SecureStore.getItemAsync('jwt_token')
@@ -244,57 +252,50 @@ export const chatApi = {
     }
     if (token) headers['Authorization'] = `Bearer ${token}`
 
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/chat`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ messages, family_id: familyId }),
-      })
+    // EventSource here is using POST + body — react-native-sse supports that
+    // through its `method` / `body` opts (unlike the web standard).
+    const es = new EventSource(`${API_BASE_URL}/api/v1/chat`, {
+      headers,
+      method: 'POST',
+      body: JSON.stringify({ messages }),
+      pollingInterval: 0,
+    })
 
-      if (!response.ok) {
-        onError?.(`Request failed: ${response.status}`)
-        return
-      }
-
-      if (!response.body) {
-        onError?.('No response body')
-        return
-      }
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6).trim()
-            if (data === '[DONE]') {
-              onDone?.()
-              return
-            }
-            try {
-              const parsed = JSON.parse(data)
-              if (parsed.content) {
-                onChunk?.(parsed.content)
-              }
-            } catch {
-              // non-JSON SSE lines are fine (e.g. tool events)
-            }
-          }
-        }
-      }
-      onDone?.()
-    } catch (err) {
-      onError?.(String(err))
+    const cleanup = () => {
+      try { es.removeAllEventListeners() } catch { /* noop */ }
+      try { es.close() } catch { /* noop */ }
     }
+
+    es.addEventListener('message', (event) => {
+      const raw = (event as unknown as { data?: string }).data
+      if (!raw) return
+      try {
+        const parsed = JSON.parse(raw)
+        if (parsed.type === 'text' && typeof parsed.text === 'string') {
+          onChunk?.(parsed.text)
+        } else if (parsed.type === 'tool_call' && onToolCall) {
+          onToolCall({ id: parsed.id, name: parsed.name, input: parsed.input })
+        } else if (parsed.type === 'tool_result' && onToolResult) {
+          onToolResult({ id: parsed.id, name: parsed.name, preview: parsed.content_preview ?? '' })
+        } else if (parsed.type === 'done') {
+          cleanup()
+          onDone?.()
+        } else if (parsed.type === 'error') {
+          cleanup()
+          onError?.(parsed.message ?? 'Server reported error')
+        }
+      } catch {
+        // ignore non-JSON keepalives
+      }
+    })
+
+    es.addEventListener('error', (event) => {
+      const msg = (event as unknown as { message?: string }).message ?? 'Connection error'
+      cleanup()
+      onError?.(msg)
+    })
+
+    return cleanup
   },
 }
 

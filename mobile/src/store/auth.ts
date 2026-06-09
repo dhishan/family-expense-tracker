@@ -69,7 +69,10 @@ export const useAuthStore = create<AuthState>((set) => ({
       let members: FamilyMember[] = []
       if (user.family_id) {
         family = await fetchFamily(token, user.family_id)
-        members = family?.members ?? []
+        // Some backends nest `members` on the family payload, others
+        // expose a sibling list. Tolerate either shape.
+        members =
+          (family as unknown as { members?: FamilyMember[] })?.members ?? []
       }
       set({ token, user, family, familyMembers: members, isLoading: false })
     }
