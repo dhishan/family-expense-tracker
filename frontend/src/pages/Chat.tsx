@@ -133,17 +133,40 @@ function Bubble({ msg, onToolToggle }: {
                   'prose-blockquote:not-italic prose-blockquote:text-slate-700 prose-blockquote:rounded-r',
                   // HR
                   'prose-hr:my-4 prose-hr:border-slate-200',
-                  // Tables — refined, striped, hover
-                  '[&_table]:w-full [&_table]:my-3 [&_table]:text-sm [&_table]:border-collapse',
-                  '[&_thead]:bg-slate-50',
-                  '[&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:text-xs [&_th]:font-semibold',
-                  '[&_th]:uppercase [&_th]:tracking-wide [&_th]:text-slate-600 [&_th]:border-b [&_th]:border-slate-200',
-                  '[&_td]:px-3 [&_td]:py-2 [&_td]:text-slate-700 [&_td]:border-b [&_td]:border-slate-100',
-                  '[&_tbody_tr:hover]:bg-slate-50/60',
-                  '[&_tbody_tr:last-child_td]:border-b-0',
                 ].join(' ')}
               >
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    // Wrap tables so they can scroll horizontally on narrow screens
+                    // without overflowing the chat bubble.
+                    table: ({ children }) => (
+                      <div className="my-3 overflow-x-auto rounded-md border border-slate-200">
+                        <table className="w-full text-sm border-collapse">{children}</table>
+                      </div>
+                    ),
+                    thead: ({ children }) => (
+                      <thead className="bg-slate-50">{children}</thead>
+                    ),
+                    tr: ({ children }) => (
+                      <tr className="border-b border-slate-100 last:border-b-0 even:bg-slate-50/40 hover:bg-slate-50/80">
+                        {children}
+                      </tr>
+                    ),
+                    th: ({ children }) => (
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600 border-b border-slate-200">
+                        {children}
+                      </th>
+                    ),
+                    td: ({ children }) => (
+                      <td className="px-3 py-2 text-slate-700 align-top whitespace-normal">
+                        {children}
+                      </td>
+                    ),
+                  }}
+                >
+                  {block.text}
+                </ReactMarkdown>
               </div>
             )
           }
