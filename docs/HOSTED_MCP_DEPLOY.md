@@ -213,3 +213,52 @@ gcloud run services update expense-tracker-backend \
   --region us-central1 \
   --project personal-projects-473219
 ```
+
+---
+
+## Phase F: Financial data APIs
+
+Three read-only financial data APIs are wired as tools on both the in-app /chat
+and the hosted /mcp server: FRED (macro indicators), Tiingo (price history and
+fundamentals), and Finnhub (news, analyst ratings, earnings).
+
+### Signup
+
+- **FRED**: https://fred.stlouisfed.org/docs/api/api_key.html
+  - Free, instant - no billing required. Key arrives by email within seconds.
+- **Tiingo**: https://www.tiingo.com
+  - Free account, key visible in the dashboard under API section.
+- **Finnhub**: https://finnhub.io
+  - Free account, key visible in the dashboard under API section.
+
+### Set GitHub secrets
+
+Run these once to populate the secrets for CI/CD:
+
+```bash
+gh secret set FRED_API_KEY    --body "<your-fred-key>"
+gh secret set TIINGO_API_KEY  --body "<your-tiingo-key>"
+gh secret set FINNHUB_API_KEY --body "<your-finnhub-key>"
+```
+
+### Set local dev env
+
+Add to `backend/.env` (do not commit):
+
+```
+FRED_API_KEY=<your-fred-key>
+TIINGO_API_KEY=<your-tiingo-key>
+FINNHUB_API_KEY=<your-finnhub-key>
+```
+
+### Verify tools are live
+
+After deploying, connect Claude Desktop or Claude Code to the hosted MCP and run:
+
+```
+macro_indicator(series_id="FEDFUNDS")
+ticker_quote(symbol="SPY")
+```
+
+Both should return live data. If a key is missing the tool returns a RuntimeError
+with a signup link.

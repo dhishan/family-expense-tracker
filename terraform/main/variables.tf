@@ -118,3 +118,25 @@ variable "notification_email" {
   type        = string
   default     = "iamdhishan@gmail.com"
 }
+
+# --- Financial data APIs (Phase F) ---
+variable "fred_api_key" {
+  description = "FRED (Federal Reserve Economic Data) API key"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "tiingo_api_key" {
+  description = "Tiingo API key (price history + fundamentals)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "finnhub_api_key" {
+  description = "Finnhub API key (news + analyst data)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}

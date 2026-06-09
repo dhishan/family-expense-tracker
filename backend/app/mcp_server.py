@@ -28,7 +28,7 @@ from starlette.responses import JSONResponse
 from app.auth.cloudflare import CloudflareAuthError, verify_access_jwt
 from app.auth.dependencies import decode_token
 from app.config import get_settings
-from app.services import snaptrade_service
+from app.services import market_data, snaptrade_service
 from app.services.firestore import get_firestore_client
 
 logger = logging.getLogger(__name__)
@@ -272,6 +272,113 @@ def portfolio_summary() -> dict[str, Any]:
         "by_asset_class": dict(by_asset_class),
         "top_positions": sorted(positions, key=lambda x: -x["market_value"])[:25],
     }
+
+
+# ---- Financial market data tools -------------------------------------------
+
+
+@mcp.tool()
+def macro_indicator(series_id: str, limit: int = 1) -> dict:
+    """Fetch a US macroeconomic indicator from FRED.
+
+    Use when discussing rates, inflation, growth, employment, dollar strength, yield curve.
+    Common series_id values: FEDFUNDS (Fed funds rate), CPIAUCSL (CPI all urban consumers),
+    UNRATE (unemployment rate), DGS10 (10-year treasury yield), DGS2 (2-year treasury yield),
+    T10Y2Y (10-2 spread, recession signal when below 0), DTWEXBGS (broad dollar index),
+    WALCL (Fed balance sheet assets in $M), M2SL (M2 money supply).
+    """
+    return market_data.fred_observation(series_id=series_id, limit=limit)
+
+
+@mcp.tool()
+def macro_series(
+    series_id: str,
+    observation_start: str | None = None,
+    observation_end: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """Fetch a historical time series of a FRED macro indicator.
+
+    Use when you need trend data over a date range (e.g. inflation over the past 2 years,
+    rate path since 2022). Same series_id values as macro_indicator.
+    """
+    return market_data.fred_series(
+        series_id=series_id,
+        observation_start=observation_start,
+        observation_end=observation_end,
+        limit=limit,
+    )
+
+
+@mcp.tool()
+def price_history(
+    ticker: str,
+    start: str | None = None,
+    end: str | None = None,
+) -> list[dict]:
+    """End-of-day OHLCV price history for a stock or ETF ticker.
+
+    Use when analyzing price performance, drawing trend lines, or calculating returns.
+    start and end are YYYY-MM-DD; defaults to the past year up to today.
+    """
+    return market_data.tiingo_eod(ticker=ticker, start=start, end=end)
+
+
+@mcp.tool()
+def ticker_meta(ticker: str) -> dict:
+    """Company metadata: full name, exchange, description, earliest/latest data available.
+
+    Use to confirm a ticker is valid or to retrieve the company name and exchange.
+    """
+    return market_data.tiingo_meta(ticker=ticker)
+
+
+@mcp.tool()
+def ticker_quote(symbol: str) -> dict:
+    """Current real-time price, day high/low, and previous close for a stock.
+
+    Use when the user asks about current price or intraday moves.
+    Returns c (current), h (high), l (low), pc (prev close), t (timestamp).
+    """
+    return market_data.finnhub_quote(symbol=symbol)
+
+
+@mcp.tool()
+def ticker_news(symbol: str, days: int = 14) -> list[dict]:
+    """Recent news articles about a stock.
+
+    Use when analyzing a specific position or considering buy/sell decisions.
+    Returns headlines, summaries, and article URLs.
+    """
+    return market_data.finnhub_company_news(symbol=symbol, days=days)
+
+
+@mcp.tool()
+def ticker_recommendations(symbol: str) -> list[dict]:
+    """Wall Street analyst buy/hold/sell recommendation trends (last ~4 months).
+
+    Use when assessing analyst sentiment or conviction around a position.
+    Returns strongBuy, buy, hold, sell, strongSell counts per period.
+    """
+    return market_data.finnhub_recommendations(symbol=symbol)
+
+
+@mcp.tool()
+def ticker_price_target(symbol: str) -> dict:
+    """Analyst consensus price target: high, low, mean, and median targets.
+
+    Use when assessing upside/downside vs current price or comparing analyst conviction.
+    """
+    return market_data.finnhub_price_target(symbol=symbol)
+
+
+@mcp.tool()
+def ticker_earnings_calendar(symbol: str, days_ahead: int = 90) -> list[dict]:
+    """Upcoming earnings dates and EPS/revenue estimates for a stock.
+
+    Use when identifying near-term catalysts or event risk for a position.
+    """
+    return market_data.finnhub_earnings_calendar(symbol=symbol, days_ahead=days_ahead)
 
 
 # ---- FastAPI mount helper --------------------------------------------------

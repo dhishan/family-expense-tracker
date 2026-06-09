@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     snaptrade_client_id: str = ""
     snaptrade_consumer_key: str = ""
 
+    # Financial data APIs (Phase F)
+    fred_api_key: str = ""
+    tiingo_api_key: str = ""
+    finnhub_api_key: str = ""
+
     # Cloudflare Access (gates the hosted /mcp endpoint in production)
     cf_access_team_domain: str = ""  # e.g. blueelephants.cloudflareaccess.com
     cf_access_aud: str = ""          # Application AUD tag

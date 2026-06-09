@@ -92,6 +92,9 @@ jobs:
           TF_VAR_cf_access_aud: ${{ secrets.CF_ACCESS_AUD }}
           TF_VAR_langfuse_secret_key: ${{ secrets.LANGFUSE_SECRET_KEY }}
           TF_VAR_langfuse_public_key: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          TF_VAR_fred_api_key: ${{ secrets.FRED_API_KEY }}
+          TF_VAR_tiingo_api_key: ${{ secrets.TIINGO_API_KEY }}
+          TF_VAR_finnhub_api_key: ${{ secrets.FINNHUB_API_KEY }}
         run: |
           make terraform-apply TF_ENV=${{ env.TF_ENVIRONMENT }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
 

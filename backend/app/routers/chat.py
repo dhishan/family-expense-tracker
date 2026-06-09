@@ -32,7 +32,7 @@ load_dotenv()  # ensure ANTHROPIC_API_KEY + LANGFUSE_* land in os.environ for SD
 
 from app.auth.dependencies import get_current_user
 from app.models.user import User
-from app.services import snaptrade_service
+from app.services import market_data, snaptrade_service
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,9 @@ Events, prints, levels (price, yield, FX) that should trigger reassessment in th
 ## 7. Gaps & blind spots
 What is missing from this portfolio that a balanced book of this risk profile should have. Be direct.
 
-Style: direct, plain, no filler. No emoji. No "as an AI". Quote dates and numbers. Where you are uncertain, say so. This is for the user's own decision-making, not advice."""
+Style: direct, plain, no filler. No emoji. No "as an AI". Quote dates and numbers. Where you are uncertain, say so. This is for the user's own decision-making, not advice.
+
+You have additional tools for FRED macro data, Tiingo price history + fundamentals, and Finnhub news + analyst targets - use them aggressively to ground claims in current data."""
 
 TOOLS: list[dict] = [
     {"type": "web_search_20260209", "name": "web_search"},
@@ -141,6 +143,205 @@ TOOLS: list[dict] = [
             "with cost basis and P&L inline. Good starting point before a deeper pull."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    # --- FRED macro indicators ---
+    {
+        "name": "macro_indicator",
+        "description": (
+            "Fetch a US macroeconomic indicator from FRED. Use when discussing rates, inflation, "
+            "growth, employment, dollar strength, yield curve. "
+            "Common series_id values: FEDFUNDS (Fed funds rate), CPIAUCSL (CPI all urban consumers), "
+            "UNRATE (unemployment rate), DGS10 (10-year treasury yield), DGS2 (2-year treasury yield), "
+            "T10Y2Y (10-2 spread — recession signal when below 0), "
+            "DTWEXBGS (broad dollar index), WALCL (Fed balance sheet assets in $M), M2SL (M2 money supply)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "series_id": {
+                    "type": "string",
+                    "description": "FRED series ID, e.g. FEDFUNDS",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of recent observations to return",
+                    "default": 1,
+                },
+            },
+            "required": ["series_id"],
+        },
+    },
+    {
+        "name": "macro_series",
+        "description": (
+            "Fetch a historical time series of a FRED macro indicator. Use when you need trend "
+            "data over a date range (e.g. inflation over the past 2 years, rate path since 2022). "
+            "Same series_id values as macro_indicator."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "series_id": {
+                    "type": "string",
+                    "description": "FRED series ID, e.g. CPIAUCSL",
+                },
+                "observation_start": {
+                    "type": "string",
+                    "description": "Start date YYYY-MM-DD (optional)",
+                },
+                "observation_end": {
+                    "type": "string",
+                    "description": "End date YYYY-MM-DD (optional)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max observations to return (default 100)",
+                    "default": 100,
+                },
+            },
+            "required": ["series_id"],
+        },
+    },
+    # --- Tiingo price and fundamentals ---
+    {
+        "name": "price_history",
+        "description": (
+            "End-of-day OHLCV price history for a stock or ETF ticker. Use when analyzing "
+            "price performance, drawing trend lines, or calculating returns over a period."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {
+                    "type": "string",
+                    "description": "Stock or ETF symbol, e.g. AAPL, SPY",
+                },
+                "start": {
+                    "type": "string",
+                    "description": "Start date YYYY-MM-DD (default: 1 year ago)",
+                },
+                "end": {
+                    "type": "string",
+                    "description": "End date YYYY-MM-DD (default: today)",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "ticker_meta",
+        "description": (
+            "Company metadata for a stock ticker: full name, exchange, description, "
+            "earliest and latest data available. Use to confirm a ticker is valid or "
+            "to retrieve the company name and exchange."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {
+                    "type": "string",
+                    "description": "Stock symbol, e.g. MSFT",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
+    # --- Finnhub real-time and analyst data ---
+    {
+        "name": "ticker_quote",
+        "description": (
+            "Current real-time price, day high/low, and previous close for a stock. "
+            "Use when the user asks about current price or intraday moves."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "Stock ticker symbol, e.g. NVDA",
+                },
+            },
+            "required": ["symbol"],
+        },
+    },
+    {
+        "name": "ticker_news",
+        "description": (
+            "Recent news articles about a stock. Use when analyzing a specific position "
+            "or considering buy/sell decisions. Returns headlines, summaries, and URLs."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "Stock ticker symbol",
+                },
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days of news to retrieve (default 14)",
+                    "default": 14,
+                },
+            },
+            "required": ["symbol"],
+        },
+    },
+    {
+        "name": "ticker_recommendations",
+        "description": (
+            "Wall Street analyst buy/hold/sell recommendation trends for a stock, "
+            "typically covering the last 4 months. Use when assessing analyst sentiment "
+            "or conviction around a position."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "Stock ticker symbol",
+                },
+            },
+            "required": ["symbol"],
+        },
+    },
+    {
+        "name": "ticker_price_target",
+        "description": (
+            "Analyst consensus price target for a stock: high, low, mean, and median targets. "
+            "Use when assessing upside/downside vs current price or comparing analyst conviction."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "Stock ticker symbol",
+                },
+            },
+            "required": ["symbol"],
+        },
+    },
+    {
+        "name": "ticker_earnings_calendar",
+        "description": (
+            "Upcoming earnings dates and EPS/revenue estimates for a stock. "
+            "Use when identifying near-term catalysts or event risk for a position."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "Stock ticker symbol",
+                },
+                "days_ahead": {
+                    "type": "integer",
+                    "description": "How many days ahead to look (default 90)",
+                    "default": 90,
+                },
+            },
+            "required": ["symbol"],
+        },
     },
 ]
 
@@ -252,6 +453,45 @@ def _execute_snaptrade_tool(name: str, tool_input: dict, user_id: str) -> str:
                 "by_asset_class": dict(by_asset_class),
                 "top_positions": sorted(positions, key=lambda x: -x["market_value"])[:25],
             }
+        # --- FRED macro tools ---
+        elif name == "macro_indicator":
+            result = market_data.fred_observation(
+                series_id=tool_input["series_id"],
+                limit=tool_input.get("limit", 1),
+            )
+        elif name == "macro_series":
+            result = market_data.fred_series(
+                series_id=tool_input["series_id"],
+                observation_start=tool_input.get("observation_start"),
+                observation_end=tool_input.get("observation_end"),
+                limit=tool_input.get("limit", 100),
+            )
+        # --- Tiingo price / fundamentals tools ---
+        elif name == "price_history":
+            result = market_data.tiingo_eod(
+                ticker=tool_input["ticker"],
+                start=tool_input.get("start"),
+                end=tool_input.get("end"),
+            )
+        elif name == "ticker_meta":
+            result = market_data.tiingo_meta(ticker=tool_input["ticker"])
+        # --- Finnhub tools ---
+        elif name == "ticker_quote":
+            result = market_data.finnhub_quote(symbol=tool_input["symbol"])
+        elif name == "ticker_news":
+            result = market_data.finnhub_company_news(
+                symbol=tool_input["symbol"],
+                days=tool_input.get("days", 14),
+            )
+        elif name == "ticker_recommendations":
+            result = market_data.finnhub_recommendations(symbol=tool_input["symbol"])
+        elif name == "ticker_price_target":
+            result = market_data.finnhub_price_target(symbol=tool_input["symbol"])
+        elif name == "ticker_earnings_calendar":
+            result = market_data.finnhub_earnings_calendar(
+                symbol=tool_input["symbol"],
+                days_ahead=tool_input.get("days_ahead", 90),
+            )
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 

@@ -270,6 +270,58 @@ resource "google_secret_manager_secret_version" "langfuse_public_key" {
   secret_data = var.langfuse_public_key
 }
 
+# --- Financial data API keys (Phase F: FRED, Tiingo, Finnhub) ---
+resource "google_secret_manager_secret" "fred_api_key" {
+  secret_id = "${var.backend_service_name}-fred-api-key"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "fred_api_key" {
+  secret      = google_secret_manager_secret.fred_api_key.id
+  secret_data = var.fred_api_key
+}
+
+resource "google_secret_manager_secret" "tiingo_api_key" {
+  secret_id = "${var.backend_service_name}-tiingo-api-key"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "tiingo_api_key" {
+  secret      = google_secret_manager_secret.tiingo_api_key.id
+  secret_data = var.tiingo_api_key
+}
+
+resource "google_secret_manager_secret" "finnhub_api_key" {
+  secret_id = "${var.backend_service_name}-finnhub-api-key"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "finnhub_api_key" {
+  secret      = google_secret_manager_secret.finnhub_api_key.id
+  secret_data = var.finnhub_api_key
+}
+
 # Cloud Run service for backend
 resource "google_cloud_run_service" "backend" {
   name     = var.backend_service_name
@@ -397,6 +449,36 @@ resource "google_cloud_run_service" "backend" {
           value = var.langfuse_base_url
         }
 
+        env {
+          name = "FRED_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.fred_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "TIINGO_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.tiingo_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "FINNHUB_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.finnhub_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
         resources {
           limits = {
             cpu    = "1000m"
@@ -418,6 +500,10 @@ resource "google_cloud_run_service" "backend" {
         # Scale to zero when not in use - CRITICAL for staying in free tier
         "autoscaling.knative.dev/minScale" = "0"
         "autoscaling.knative.dev/maxScale" = "10"
+        # Force a new revision on every TF apply so :latest image is re-pulled.
+        # Without this, TF sees no resource change and Cloud Run keeps serving
+        # the previous revision even when CI has pushed a new image.
+        "client.knative.dev/user-image-sha" = "deployed-${formatdate("YYYYMMDDhhmm", timestamp())}"
       }
     }
   }
