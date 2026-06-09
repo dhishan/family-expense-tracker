@@ -22,7 +22,12 @@ const WEB_CLIENT_ID =
 export function useGoogleAuth() {
   const { setToken, setUser, setFamily, setFamilyMembers } = useAuthStore()
 
-  const [request, response, promptAsync] = Google.useAuthRequest({
+  // useIdTokenAuthRequest runs the implicit-OIDC flow: Google returns
+  // an id_token directly via the URL scheme redirect — no backend code
+  // exchange required (which won't work on mobile because we don't ship
+  // the client secret). useAuthRequest by contrast does the authorization
+  // code flow which expects a backend exchange we don't have.
+  const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
     clientId: WEB_CLIENT_ID,
     iosClientId: IOS_CLIENT_ID || WEB_CLIENT_ID,
     androidClientId: ANDROID_CLIENT_ID || WEB_CLIENT_ID,
@@ -35,7 +40,13 @@ export function useGoogleAuth() {
       throw new Error(result?.type === 'cancel' ? 'Sign-in cancelled' : 'Sign-in failed')
     }
 
-    const idToken = result.authentication?.idToken
+    // useIdTokenAuthRequest returns the id_token in result.params for
+    // implicit grants. Older auth flows that did code exchange put it on
+    // result.authentication — keep that fallback so this works in either
+    // shape across SDK versions.
+    const idToken =
+      (result.params as Record<string, string> | undefined)?.id_token ??
+      result.authentication?.idToken
     const accessToken = result.authentication?.accessToken
 
     if (!idToken && !accessToken) {
