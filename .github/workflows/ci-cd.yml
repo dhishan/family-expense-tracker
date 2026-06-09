@@ -143,7 +143,11 @@ jobs:
 
   deploy-frontend:
     name: Deploy Frontend
-    needs: [test-backend, test-frontend]
+    # Depends on Deploy Backend so the terraform-managed Firebase Hosting
+    # site exists before `firebase deploy` tries to create a release on
+    # it. (Cloud Storage step doesn't need this, but the dependency keeps
+    # ordering deterministic and the extra wait is fine for this app.)
+    needs: [test-backend, test-frontend, deploy-backend]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
