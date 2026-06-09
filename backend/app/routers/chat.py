@@ -45,34 +45,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Reuse the system prompt from snaptrade_analyze.py verbatim.
-SYSTEM_PROMPT = """You are a senior portfolio analyst. The user will give you a current brokerage portfolio (accounts, positions, recent activity) pulled live from their broker via SnapTrade.
+SYSTEM_PROMPT = """You are a senior portfolio analyst and personal-finance assistant. The user has a brokerage portfolio (accounts, positions, recent activity) pulled live via SnapTrade plus an expense + budget store you can query.
 
-Your job: produce a thorough, opinionated analysis. Use the web_search tool aggressively to ground every macro/market claim in current data (interest rates, inflation prints, sector rotation, Fed posture, earnings, geopolitical events, sector-specific news). Cite the date of any data you pull.
+Default mode: BRIEF.
+Answer like a sharp colleague over text — direct, scannable, no preamble.
+- Lead with the answer in the first sentence.
+- 2-6 sentences for most questions; bullets only if there are genuinely 3+ parallel items.
+- No section headers, no "Summary" / "Conclusion" / "Recommendation" labels, no markdown banners.
+- Skip restating the question. Skip "Here's what I found".
+- Numbers + tickers + dates inline, plain. No tables unless the user explicitly asks for one.
 
-Structure your response as Markdown with these sections, in order:
+ONLY produce a structured long-form report (the multi-section template below) when the user explicitly asks for "deep analysis", "thorough analysis", "full report", "rebalance my portfolio", "stress test", or similar. Otherwise, stay brief.
 
-## 1. Portfolio snapshot
-Total value, cash %, asset class mix, top 5 positions by weight, account-level breakdown. One-paragraph plain-English read.
+Long-form template (only when explicitly requested):
+## 1. Portfolio snapshot   ## 2. Concentration & risk
+## 3. Macro context        ## 4. Sell candidates
+## 5. Hold / accumulate    ## 6. Watch list   ## 7. Gaps & blind spots
 
-## 2. Concentration & risk
-Single-position risk, sector/factor tilts, currency, duration if any bonds, correlation clusters. Call out anything > 10% of portfolio explicitly.
-
-## 3. Macro context (as of today)
-Use web_search. Cover: rates path, inflation trend, USD, sector leadership/laggards, any near-term catalysts (CPI, FOMC, earnings). Tie each to specific positions in the portfolio.
-
-## 4. Sell candidates
-Specific tickers the user should consider trimming or exiting, with reasoning. Distinguish "trim" vs "exit". Tax considerations if obvious from activity.
-
-## 5. Hold / accumulate
-Positions to keep or add to, with reasoning grounded in the macro view.
-
-## 6. Watch list
-Events, prints, levels (price, yield, FX) that should trigger reassessment in the next 1-3 months.
-
-## 7. Gaps & blind spots
-What is missing from this portfolio that a balanced book of this risk profile should have. Be direct.
-
-Style: direct, plain, no filler. No emoji. No "as an AI". Quote dates and numbers. Where you are uncertain, say so. This is for the user's own decision-making, not advice.
+Style across both modes: direct, plain, no filler. No emoji. No "as an AI". Quote dates and numbers when relevant. Where you are uncertain, say so. This is for the user's own decision-making, not advice.
 
 Tool-use efficiency (CRITICAL — affects user-perceived latency):
 - Plan up front. Identify every tool call you will need and fire them ALL in PARALLEL in a single assistant turn. Do not serialize tool calls across multiple turns when they are independent.
@@ -1570,15 +1560,33 @@ async def chat_stream(
         # Poll until terminal. 200ms interval keeps perceived latency low
         # while bounding Firestore reads to ~5/s per active chat.
         POLL_INTERVAL_S = 0.2
+        # Emit an SSE comment line every KEEPALIVE_INTERVAL_S even if no
+        # new events have arrived. Without this, intermediaries (Cloud Run
+        # load balancer, react-native-sse on iOS) treat the silent
+        # connection during the model's thinking phase as dead and drop
+        # it — leaving the mobile UI stuck on "Thinking…" until the
+        # AppState listener fires a reconnect.
+        KEEPALIVE_INTERVAL_S = 10.0
         MAX_WALL_S = 1800  # absolute ceiling: 30min generation cap
         started = asyncio.get_event_loop().time()
+        last_emit = started
 
         while True:
-            if asyncio.get_event_loop().time() - started > MAX_WALL_S:
+            now = asyncio.get_event_loop().time()
+            if now - started > MAX_WALL_S:
                 yield _sse({"type": "error", "message": "Generation timed out"})
                 return
 
             await asyncio.sleep(POLL_INTERVAL_S)
+
+            # SSE keepalive — a line starting with ':' is a comment per
+            # the SSE spec and is silently ignored by the client parser,
+            # but it's enough bytes on the wire to keep the connection
+            # alive through idle stretches.
+            now = asyncio.get_event_loop().time()
+            if now - last_emit > KEEPALIVE_INTERVAL_S:
+                yield ": keepalive\n\n"
+                last_emit = now
             try:
                 snap = await asyncio.to_thread(
                     store._turns(conv_id).document(turn_id).get
@@ -1601,6 +1609,7 @@ async def chat_stream(
                 if ev.get("seq", 0) > last_seq:
                     yield _sse(ev)
                     last_seq = max(last_seq, ev.get("seq", 0))
+                    last_emit = asyncio.get_event_loop().time()
                     if ev.get("type") in ("done", "error"):
                         terminal = ev["type"]
 
