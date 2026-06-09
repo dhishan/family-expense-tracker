@@ -407,13 +407,27 @@ export default function Investments() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Investments</h1>
-        <button
-          onClick={() => setShowConnect(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 transition-colors"
-        >
-          <PlusCircleIcon className="h-4 w-4" />
-          Connect brokerage
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              queryClient.invalidateQueries({ queryKey: ['investments'] })
+              toast.success('Refreshing portfolio…')
+            }}
+            disabled={accountsLoading || holdingsLoading}
+            aria-label="Refresh portfolio"
+            className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            <ArrowPathIcon className={`h-4 w-4 ${holdingsLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+          <button
+            onClick={() => setShowConnect(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 transition-colors"
+          >
+            <PlusCircleIcon className="h-4 w-4" />
+            Connect brokerage
+          </button>
+        </div>
       </div>
 
       {/* ── Accounts ─────────────────────────────────────────────────────── */}

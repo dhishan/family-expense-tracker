@@ -90,11 +90,20 @@ def verify_access_jwt(token: str) -> dict:
     else:
         raise CloudflareAuthError(f"Signing key kid={kid} not found in JWKS")
 
+    # Hard-pin to RS256: Cloudflare Access only signs with RS256, and reading
+    # the alg from the (attacker-controlled) JWT header would expose us to
+    # alg-confusion attacks (e.g. HS256 with the RSA public key as HMAC secret,
+    # or alg=none on older jose versions). Reject anything else explicitly.
+    if unverified_header.get("alg") != "RS256":
+        raise CloudflareAuthError(
+            f"Unexpected JWT alg={unverified_header.get('alg')!r}; only RS256 accepted."
+        )
+
     try:
         claims = jwt.decode(
             token,
             key,
-            algorithms=[unverified_header.get("alg", "RS256")],
+            algorithms=["RS256"],
             audience=settings.cf_access_aud,
             issuer=_issuer(),
         )
