@@ -8,6 +8,11 @@ jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn().mockResolvedValue(undefined),
 }))
 
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  getItem: jest.fn().mockResolvedValue(null),
+  setItem: jest.fn().mockResolvedValue(undefined),
+}))
+
 jest.mock('expo-router', () => ({ router: { replace: jest.fn() } }))
 
 jest.mock('@expo/vector-icons', () => ({
@@ -73,29 +78,33 @@ function makeWrapper(prefill = true) {
 }
 
 describe('InvestmentsScreen', () => {
-  it('renders accounts and holdings', () => {
+  it('renders accounts and holdings', async () => {
     const { getByText, getByTestId } = render(<InvestmentsScreen />, { wrapper: makeWrapper(true) })
 
-    expect(getByText('Robinhood')).toBeTruthy()
+    // Wait for AsyncStorage privacy load + render
+    await waitFor(() => expect(getByText('Robinhood')).toBeTruthy(), { timeout: 2000 })
     expect(getByTestId('holding-row-AAPL')).toBeTruthy()
     expect(getByTestId('holding-row-TSLA')).toBeTruthy()
   })
 
-  it('hides values by default (privacy mode)', () => {
+  it('hides values by default (privacy mode)', async () => {
     const { getAllByText } = render(<InvestmentsScreen />, { wrapper: makeWrapper(true) })
 
-    const masked = getAllByText('••••••')
-    expect(masked.length).toBeGreaterThan(0)
+    await waitFor(() => {
+      const masked = getAllByText('••••••')
+      expect(masked.length).toBeGreaterThan(0)
+    }, { timeout: 2000 })
   })
 
-  it('reveals values when eye toggle is pressed', () => {
+  it('reveals values when eye toggle is pressed', async () => {
     const { getByTestId, queryAllByText } = render(<InvestmentsScreen />, { wrapper: makeWrapper(true) })
 
+    await waitFor(() => expect(getByTestId('eye-toggle')).toBeTruthy(), { timeout: 2000 })
     fireEvent.press(getByTestId('eye-toggle'))
     expect(queryAllByText('••••••').length).toBe(0)
   })
 
-  it('shows empty state when no accounts', () => {
+  it('shows empty state when no accounts', async () => {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: Infinity } },
     })
@@ -106,6 +115,9 @@ describe('InvestmentsScreen', () => {
       <QueryClientProvider client={qc}><InvestmentsScreen /></QueryClientProvider>
     )
 
-    expect(getByText(/No brokerage accounts connected/)).toBeTruthy()
+    await waitFor(
+      () => expect(getByText(/No brokerage accounts connected/)).toBeTruthy(),
+      { timeout: 2000 }
+    )
   })
 })

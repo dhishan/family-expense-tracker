@@ -1,4 +1,4 @@
-.PHONY: help install dev-native dev-backend dev-frontend local-up local-reset local-down stop build test clean deploy-backend deploy-frontend deploy terraform-init terraform-plan terraform-apply terraform-destroy docker-dev docker-up docker-down mobile-install mobile-dev mobile-test mobile-build-ios mobile-build-android dev-all
+.PHONY: help install dev-native dev-backend dev-frontend local-up local-reset local-down stop build test clean deploy-backend deploy-frontend deploy terraform-init terraform-plan terraform-apply terraform-destroy docker-dev docker-up docker-down mobile-install mobile-dev mobile-prebuild mobile-prebuild-ios mobile-prebuild-android mobile-ios-open mobile-android-apk mobile-android-sha1 mobile-test mobile-build-ios mobile-build-android dev-all
 
 # Variables
 PROJECT_ID ?= $(shell gcloud config get-value project)
@@ -262,16 +262,35 @@ local-down: ## Stop and remove local dev stack containers
 mobile-install: ## Install mobile (Expo) dependencies
 	cd mobile && npm install
 
-mobile-dev: ## Start Expo development server
+mobile-dev: ## Start Expo development server (managed workflow, Expo Go / simulator)
 	cd mobile && npx expo start
+
+mobile-prebuild: ## Generate native iOS + Android projects under mobile/{ios,android}/ for Xcode / Android Studio builds
+	cd mobile && npx expo prebuild --clean
+
+mobile-prebuild-ios: ## Generate only the iOS native project
+	cd mobile && npx expo prebuild --platform ios --clean
+
+mobile-prebuild-android: ## Generate only the Android native project
+	cd mobile && npx expo prebuild --platform android --clean
+
+mobile-ios-open: ## Open the prebuilt iOS workspace in Xcode (run after mobile-prebuild-ios)
+	open mobile/ios/*.xcworkspace
+
+mobile-android-apk: ## Build a release APK locally (run after mobile-prebuild-android)
+	cd mobile/android && ./gradlew assembleRelease
+	@echo "APK: mobile/android/app/build/outputs/apk/release/app-release.apk"
+
+mobile-android-sha1: ## Print the debug keystore SHA-1 needed for the Android OAuth client
+	cd mobile/android && ./gradlew signingReport 2>&1 | grep SHA1 | head -1
 
 mobile-test: ## Run mobile Jest tests
 	cd mobile && npm test
 
-mobile-build-ios: ## Build iOS app via EAS (requires Apple Developer account + EAS setup)
+mobile-build-ios: ## Build iOS app via EAS cloud (requires Apple Developer account + EAS setup)
 	cd mobile && eas build --platform ios --profile preview
 
-mobile-build-android: ## Build Android APK via EAS
+mobile-build-android: ## Build Android APK via EAS cloud
 	cd mobile && eas build --platform android --profile preview
 
 dev-all: ## Start backend + web frontend + mobile concurrently

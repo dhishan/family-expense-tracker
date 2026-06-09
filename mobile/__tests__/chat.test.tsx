@@ -9,6 +9,10 @@ jest.mock('expo-secure-store', () => ({
 
 jest.mock('expo-router', () => ({ router: { replace: jest.fn() } }))
 
+jest.mock('@expo/vector-icons', () => ({
+  Ionicons: 'Ionicons',
+}))
+
 jest.mock('react-native-markdown-display', () => {
   const { Text } = require('react-native')
   return ({ children }: { children: string }) => <Text>{children}</Text>
@@ -102,5 +106,24 @@ describe('ChatScreen', () => {
     await waitFor(() => {
       expect(input.props.value).toBe('')
     })
+  })
+
+  it('"New chat" button clears messages', async () => {
+    const { getByTestId, getByText, queryByText } = render(<ChatScreen />)
+
+    // Send a message
+    fireEvent.changeText(getByTestId('chat-input'), 'Hello')
+    await act(async () => {
+      fireEvent.press(getByTestId('send-btn'))
+    })
+
+    await waitFor(() => expect(getByText('Hello')).toBeTruthy())
+
+    // Press "New chat"
+    fireEvent.press(getByTestId('new-chat-btn'))
+
+    // Messages should be gone; empty state should return
+    expect(queryByText('Hello')).toBeNull()
+    expect(getByText('Ask anything about your finances')).toBeTruthy()
   })
 })

@@ -33,7 +33,8 @@
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store"
+      "expo-secure-store",
+      "./plugins/withFmtConstevalFix"
     ],
     "scheme": "family-expense-tracker",
     "experiments": {

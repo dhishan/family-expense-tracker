@@ -6,15 +6,26 @@ import { authApi, familyApi } from '../services/api'
 
 WebBrowser.maybeCompleteAuthSession()
 
-const GOOGLE_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? ''
+// Platform-specific OAuth clients. The Web client is used by expo-auth-session
+// internally for the OpenID discovery + browser; the iOS/Android clients are
+// what Google actually validates against based on the bundle ID / package name.
+// Create separate clients in GCP Console with "iOS" and "Android" types and
+// the app's bundleIdentifier / package (org.blueelephants.familyexpensetracker).
+const IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? ''
+const ANDROID_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? ''
+const WEB_CLIENT_ID =
+  process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ??
+  // Backwards-compat: older configs used a single var.
+  process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ??
+  ''
 
 export function useGoogleAuth() {
   const { setToken, setUser, setFamily, setFamilyMembers } = useAuthStore()
 
   const [request, response, promptAsync] = Google.useAuthRequest({
-    clientId: GOOGLE_CLIENT_ID,
-    iosClientId: GOOGLE_CLIENT_ID,
-    androidClientId: GOOGLE_CLIENT_ID,
+    clientId: WEB_CLIENT_ID,
+    iosClientId: IOS_CLIENT_ID || WEB_CLIENT_ID,
+    androidClientId: ANDROID_CLIENT_ID || WEB_CLIENT_ID,
     scopes: ['openid', 'profile', 'email'],
   })
 
