@@ -293,6 +293,16 @@ mobile-build-ios: ## Build iOS app via EAS cloud (requires Apple Developer accou
 mobile-build-android: ## Build Android APK via EAS cloud
 	cd mobile && eas build --platform android --profile preview
 
+# EAS Update — over-the-air JS pushes (no rebuild, no cable)
+mobile-update: ## Push a JS-only update to the 'preview' branch (phones get it on next launch)
+	cd mobile && eas update --branch preview --message "$${MSG:-quick fix}"
+
+mobile-update-prod: ## Push to 'production' branch (for when you ship to TestFlight / App Store)
+	cd mobile && eas update --branch production --message "$${MSG:-release}"
+
+mobile-update-status: ## Show the latest published OTA updates
+	cd mobile && eas update:list --branch preview --limit 5
+
 dev-all: ## Start backend + web frontend + mobile concurrently
 	@command -v concurrently >/dev/null 2>&1 || npm install -g concurrently
 	concurrently \

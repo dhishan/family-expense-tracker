@@ -28,6 +28,12 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  // 45s timeout — accommodates Cloud Run cold starts (~10-30s) plus the
+  // per-account SnapTrade fetches inside get_all_holdings, while still
+  // failing visibly if something is wedged. Without an explicit timeout
+  // axios will hang the React Query promise forever and the spinners
+  // never resolve.
+  timeout: 45_000,
 })
 
 // Add auth token to every request

@@ -29,8 +29,22 @@
             "CFBundleURLSchemes": [
               "com.googleusercontent.apps.610355955735-ffiuug604t6htcamdstdbvm2km2fvpj0"
             ]
+          },
+          {
+            "CFBundleURLSchemes": [
+              "family-expense-tracker"
+            ]
+          },
+          {
+            "_comment": "Reversed iOS OAuth client ID for Google Sign-In. Required so Safari can redirect back into the app after authentication. If you rotate the GCP iOS OAuth client, update this string AND EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID in .env.",
+            "CFBundleURLSchemes": [
+              "com.googleusercontent.apps.610355955735-ffiuug604t6htcamdstdbvm2km2fvpj0"
+            ]
           }
         ]
+      },
+      "runtimeVersion": {
+        "policy": "appVersion"
       }
     },
     "android": {
@@ -56,8 +70,13 @@
     },
     "extra": {
       "eas": {
-        "projectId": "your-eas-project-id"
-      }
+        "projectId": "f0a01ff7-8619-4945-a824-4243c15c4f5a"
+      },
+      "router": {}
+    },
+    "owner": "dhishan",
+    "updates": {
+      "url": "https://u.expo.dev/f0a01ff7-8619-4945-a824-4243c15c4f5a"
     }
   }
 }
