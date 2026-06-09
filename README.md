@@ -19,8 +19,11 @@ A family expense tracking application with brokerage portfolio integration and a
 ### AI chat (Claude-powered)
 - In-app `/chat` page and a hosted MCP server that Claude Desktop / Claude mobile can call
 - 25 tools across SnapTrade brokerage, FRED macro, Tiingo price history, Finnhub quotes/news/analyst data, SEC EDGAR filings, and your own expense/budget data
+- **Durable conversations** — every chat is stored in Firestore (`chat_conversations` collection, per-user isolated). Generation runs as a background asyncio task that survives client disconnects; the SSE stream is resumable from `?from_seq=N` so backgrounding the iOS app and returning picks up exactly where it left off
+- **History UI** in both mobile and web — recent chats, full transcripts, swipe-to-delete
 - Auto-compaction (Anthropic beta) + per-tool result truncation to keep input-token usage bounded
-- Langfuse tracing for observability
+- Adaptive routing (Sonnet 4.6 by default, Opus 4.7 only on explicit "deep analysis" keywords) + "brief" system prompt by default — typical chat 25-50s instead of 130-190s
+- Langfuse tracing with per-turn LLM generations + per-tool spans for cost analytics
 - Hosted MCP gated by Cloudflare Access (Google SSO)
 
 ### Mobile (native iOS)
@@ -35,7 +38,7 @@ A family expense tracking application with brokerage portfolio integration and a
 - **Frontend (mobile)**: React Native 0.79 + Expo SDK 53, NativeWind, expo-router
 - **Backend**: Python 3.12, FastAPI, Anthropic SDK, Langfuse v4 SDK, SnapTrade SDK, MCP SDK
 - **Database**: Google Cloud Firestore
-- **Infrastructure**: GCP Cloud Run, Cloud Storage, Secret Manager, Terraform, Cloudflare (DNS + Access)
+- **Infrastructure**: GCP Cloud Run (backend), **Firebase Hosting (frontend)**, Firestore, Secret Manager, Terraform, Cloudflare (DNS + Access for MCP)
 - **Auth**: Google OAuth 2.0 (web + iOS native clients), Cloudflare Access for the MCP endpoint
 - **CI/CD**: GitHub Actions
 - **OTA**: EAS Update (Expo)
@@ -48,7 +51,7 @@ This section is the single source of truth for every account and credential the 
 
 | Account | Used for | Where to sign up | Stored as |
 |---|---|---|---|
-| **Google Cloud Platform** | Firestore, Cloud Run, Secret Manager, Cloud Storage, OAuth | https://console.cloud.google.com | `personal-projects-473219` (this repo's project ID) |
+| **Google Cloud Platform** | Firestore, Cloud Run, Secret Manager, Firebase Hosting, OAuth | https://console.cloud.google.com | `personal-projects-473219` (this repo's project ID) |
 | **Google OAuth** | Sign-in (web + iOS native) | GCP Console → Credentials | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` |
 | **Anthropic** | Claude API for `/chat` and the analyzer scripts | https://console.anthropic.com | `ANTHROPIC_API_KEY` (Secret Manager in prod, `backend/.env` locally) |
 | **SnapTrade** | Brokerage data aggregator | https://snaptrade.com | `SNAPTRADE_CLIENT_ID`, `SNAPTRADE_CONSUMER_KEY` |
@@ -518,16 +521,20 @@ For production-style testing, leave `EXPO_PUBLIC_API_BASE_URL` pointed at https:
 
 ### Deploy Application
 
+CI handles deploys on push to `main`. Manual triggers if you need them:
+
 ```bash
-# Deploy backend to Cloud Run
+# Backend → Cloud Run (terraform apply + docker build + push)
 make deploy-backend
 
-# Deploy frontend to Cloud Storage
+# Frontend → Firebase Hosting (npm run build + firebase deploy --only hosting)
 make deploy-frontend
 
-# Deploy both
+# Both
 make deploy
 ```
+
+The frontend used to serve from a Cloud Storage bucket behind a GCP HTTPS Load Balancer (~$20/month idle cost for the forwarding rule + static IP). It now serves from Firebase Hosting on the free tier — same custom domain (`ui.expense-tracker.blueelephants.org`), TLS issued by Firebase, no LB. The migration is documented in [`docs/FIREBASE_HOSTING_MIGRATION.md`](docs/FIREBASE_HOSTING_MIGRATION.md) (or see the terraform `firebase_hosting.tf` file directly).
 
 ## API Endpoints
 
@@ -561,6 +568,14 @@ make deploy
 - `GET /notifications` - List notifications
 - `PUT /notifications/{id}/read` - Mark as read
 - `PUT /notifications/read-all` - Mark all as read
+
+### Chat (durable conversations)
+- `POST /chat/start` — start (or continue) a chat. Body: `{conversation_id?, message, family_id?}`. Returns `{conversation_id, user_turn_id, assistant_turn_id}` immediately. Generation runs as a background asyncio task that writes events into Firestore as it goes
+- `GET /chat/conversations/{conv}/turns/{turn}/stream?from_seq=N` — resumable SSE for an in-flight or completed assistant turn. Pass the highest `seq` you've already rendered as `from_seq` on reconnect so the server only re-emits events you missed
+- `GET /chat/conversations` — list recent conversations for the calling user (history UI)
+- `GET /chat/conversations/{conv}` — full transcript (all turns, all tool calls)
+- `DELETE /chat/conversations/{conv}` — delete a conversation and its turns
+- `POST /chat` — backwards-compat shim for old mobile bundles that still POST the old `{messages: [...]}` shape. Internally creates the same Firestore conv + turn docs and streams SSE in the old event format. Safe to leave permanently or remove once all clients have OTA'd
 
 ## Testing
 
@@ -600,8 +615,28 @@ To add a family member's email to the Access allowlist: `docs/HOSTED_MCP_DEPLOY.
 |---|---|---|
 | Infrastructure (uptime, 5xx, latency, container CPU/RAM) | GCP Cloud Monitoring | Auto-collected for Cloud Run; alert policies in `terraform/main/observability.tf` |
 | Logs (per-request, MCP tool calls) | GCP Cloud Logging | Structured logs from FastAPI; log-based metric `mcp_tool_calls` captures `user_id` + `tool` |
-| LLM tracing (chat conversations, tool calls, token usage) | Langfuse | https://us.cloud.langfuse.com — observation per chat call with `user_id` + `session_id` in metadata |
+| LLM tracing (chat conversations, tool calls, token usage) | Langfuse | https://us.cloud.langfuse.com — parent span per chat + child `generation` per LLM turn (model, in/out/cache tokens) + child `span` per tool call (latency, preview). Filter by `user_id`, `session_id`, `conv_id` in metadata |
 | Auth events (CF Access logins) | Cloudflare Zero Trust dashboard | Free; see https://one.dash.cloudflare.com → Logs → Access |
+
+## Runtime costs (idle, no traffic)
+
+For a single-family deployment with low actual usage, the steady-state bill is approximately:
+
+| Component | Why it costs (or doesn't) | Approx $/month |
+|---|---|---|
+| Cloud Run backend (`min_instances=1`, no CPU throttling) | Required so background chat-generation tasks survive after the POST /chat/start response returns. Without it, the asyncio task gets killed when the container scales to zero | ~$7 |
+| Firestore | Free tier covers all read/write at this volume | $0 |
+| Secret Manager | Free up to 10K access ops/month | $0 |
+| Artifact Registry (Docker images) | ~3 GB stored | <$1 |
+| Firebase Hosting (frontend) | Free tier: 10 GB storage + 360 MB/day egress | $0 |
+| Cloudflare DNS + Access | Free tier (up to 50 users on Zero Trust) | $0 |
+| Langfuse Cloud | Free tier | $0 |
+| Anthropic, SnapTrade, FRED, Tiingo, Finnhub | Pay-per-use; chat is ~$0.01–$0.05 per turn on Sonnet | usage |
+| **Total idle** | | **~$7-10/month** |
+
+The previous setup served the frontend from a Cloud Storage bucket behind a GCP HTTPS Load Balancer — ~$20/month just for the forwarding rule + static IP, regardless of traffic. The Firebase Hosting migration replaced that stack at $0 idle.
+
+If you don't need disconnect-survival for chats (e.g. all users on a desktop browser), you can flip Cloud Run back to `min_instances=0` + `cpu_throttling=true` in `terraform/main/main.tf` and drop the ~$7 too. The trade-off is that mobile chats which background mid-stream may not complete.
 
 ## License
 
