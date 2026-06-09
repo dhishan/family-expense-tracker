@@ -5,16 +5,24 @@ import type { User, Family, FamilyMember } from '../types'
 
 // Lazy require so this module doesn't depend on the api module load order.
 const fetchMe = async (token: string): Promise<User | null> => {
-  const { authApi } = await import('../services/api')
-  // authApi.getCurrentUser uses the axios JWT interceptor which reads the
-  // store. The store hasn't been updated with the new token yet, so pass
-  // it explicitly via a one-off call. Falling back to direct fetch.
   const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
   const r = await fetch(`${base}/api/v1/auth/me`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   if (!r.ok) throw new Error(`/auth/me ${r.status}`)
   return (await r.json()) as User
+}
+
+const fetchFamily = async (
+  token: string,
+  familyId: string,
+): Promise<Family | null> => {
+  const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
+  const r = await fetch(`${base}/api/v1/families/${familyId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!r.ok) return null
+  return (await r.json()) as Family
 }
 
 interface AuthState {
@@ -56,6 +64,16 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   loadToken: async () => {
+    const hydrate = async (token: string, user: User) => {
+      let family: Family | null = null
+      let members: FamilyMember[] = []
+      if (user.family_id) {
+        family = await fetchFamily(token, user.family_id)
+        members = family?.members ?? []
+      }
+      set({ token, user, family, familyMembers: members, isLoading: false })
+    }
+
     try {
       // 1. Try to restore the JWT from the keychain
       const token = await SecureStore.getItemAsync('jwt_token')
@@ -63,7 +81,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         try {
           const user = await fetchMe(token)
           if (user) {
-            set({ token, user, isLoading: false })
+            await hydrate(token, user)
             return token
           }
         } catch {
@@ -90,7 +108,7 @@ export const useAuthStore = create<AuthState>((set) => ({
           if (r.ok) {
             const auth = await r.json() as { access_token: string; user: User }
             await SecureStore.setItemAsync('jwt_token', auth.access_token)
-            set({ token: auth.access_token, user: auth.user, isLoading: false })
+            await hydrate(auth.access_token, auth.user)
             return auth.access_token
           }
         }
