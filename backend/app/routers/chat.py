@@ -909,6 +909,62 @@ def _execute_snaptrade_tool(name: str, tool_input: dict, user_id: str) -> str:
         return json.dumps({"error": str(exc)})
 
 
+# Per-tool size budgets for what gets fed back to Claude in conversation
+# history. Numbers chosen to keep the model fully informed of recent
+# results while preventing 50KB EDGAR / Tiingo dumps from dominating the
+# input-token budget on turn N+1. The frontend still receives the
+# 500-char preview for display purposes.
+_TOOL_CONTEXT_BUDGETS: dict[str, int] = {
+    # Cheap structured data — keep small budget
+    "list_accounts": 4_000,
+    "get_account_balances": 2_000,
+    "get_account_positions": 4_000,
+    "ticker_quote": 1_500,
+    "ticker_price_target": 1_500,
+    "ticker_recommendations": 2_000,
+    "macro_indicator": 1_500,
+    "budget_status": 3_000,
+    "budget_burn_rate": 1_500,
+    "expense_top_merchants": 3_000,
+    # Bigger structured data — keep enough for analysis but cap aggressively
+    "portfolio_summary": 6_000,
+    "get_cost_basis": 6_000,
+    "get_holdings": 8_000,
+    "get_activities": 6_000,
+    "expense_list": 6_000,
+    "expense_summary": 4_000,
+    "macro_series": 4_000,
+    "price_history": 4_000,
+    "ticker_meta": 2_500,
+    "ticker_earnings_calendar": 3_000,
+    # News / EDGAR are verbose — recent results matter more than back catalog
+    "ticker_news": 4_000,
+    "edgar_recent_filings": 4_000,
+    "edgar_company_facts": 6_000,
+    "edgar_insider_transactions": 4_000,
+    "edgar_company_lookup": 1_500,
+    "web_search": 8_000,  # server tool — usually fine
+}
+_DEFAULT_CONTEXT_BUDGET = 4_000  # chars
+
+
+def _truncate_tool_result(name: str, content: str) -> str:
+    """Cap the tool result going back into model context. If the payload is
+    larger than the per-tool budget, keep the head + a trailing summary so
+    the model knows the result was truncated and can request a more
+    targeted call if needed."""
+    budget = _TOOL_CONTEXT_BUDGETS.get(name, _DEFAULT_CONTEXT_BUDGET)
+    if len(content) <= budget:
+        return content
+    head = content[: budget - 200]
+    return (
+        head
+        + f"\n\n…[result truncated for context budget: {len(content)} chars; "
+        f"showing first {budget - 200}. Call the tool with narrower filters "
+        f"(date range, ticker, limit) for the full payload.]"
+    )
+
+
 def _sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"
 
@@ -1098,6 +1154,16 @@ async def _stream_chat(
                     result_content = await _execute_expense_tool(tc["name"], tc["input"], user_id)
                 else:
                     result_content = _execute_snaptrade_tool(tc["name"], tc["input"], user_id)
+
+                # Cap the version that goes back into model context. Large
+                # tool payloads (portfolio_summary, edgar_company_facts,
+                # ticker_news) can be tens of KB; we re-send them every
+                # turn, which dominates input-token usage. Combined with
+                # auto-compaction this keeps the conversation lean.
+                # The FRONTEND still sees the original preview (500 chars)
+                # via the SSE event — the cap only affects what's threaded
+                # back into Claude's history.
+                context_content = _truncate_tool_result(tc["name"], result_content)
                 preview = result_content[:500]
                 yield _sse({
                     "type": "tool_result",
@@ -1108,7 +1174,7 @@ async def _stream_chat(
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tc["id"],
-                    "content": result_content,
+                    "content": context_content,
                 })
 
             # Append tool results as user turn.
