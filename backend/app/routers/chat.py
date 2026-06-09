@@ -999,7 +999,10 @@ async def _stream_chat(
                             current_tool_id = block.id
                             current_tool_name = block.name
                             current_tool_input_chunks = []
-                        # thinking blocks: silently consumed
+                        elif block.type == "thinking":
+                            # Surface a lightweight status so the UI can show
+                            # the model is reasoning between tool calls.
+                            yield _sse({"type": "status", "phase": "thinking"})
 
                     elif etype == "content_block_delta":
                         delta = event.delta

@@ -6,6 +6,39 @@ import { PaperAirplaneIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon } from '
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
+// Human-readable labels for tool names — improves status messages.
+const TOOL_LABELS: Record<string, string> = {
+  list_accounts: 'your brokerage accounts',
+  get_holdings: 'your full holdings',
+  get_account_balances: 'account balances',
+  get_account_positions: 'account positions',
+  get_activities: 'recent transactions',
+  get_cost_basis: 'cost basis',
+  portfolio_summary: 'your portfolio summary',
+  macro_indicator: 'macro indicator (FRED)',
+  macro_series: 'macro time series (FRED)',
+  price_history: 'price history (Tiingo)',
+  ticker_meta: 'ticker info (Tiingo)',
+  ticker_quote: 'live quote (Finnhub)',
+  ticker_news: 'ticker news (Finnhub)',
+  ticker_recommendations: 'analyst ratings (Finnhub)',
+  ticker_price_target: 'price targets (Finnhub)',
+  ticker_earnings_calendar: 'earnings calendar (Finnhub)',
+  edgar_company_lookup: 'SEC EDGAR company lookup',
+  edgar_recent_filings: 'SEC filings',
+  edgar_company_facts: 'SEC financials',
+  edgar_insider_transactions: 'insider transactions (SEC)',
+  expense_list: 'your expenses',
+  expense_summary: 'expense summary',
+  expense_top_merchants: 'top merchants',
+  budget_status: 'budget status',
+  budget_burn_rate: 'budget burn rate',
+  web_search: 'the web',
+}
+function humanizeToolName(name: string): string {
+  return TOOL_LABELS[name] ?? name.replace(/_/g, ' ')
+}
+
 // ---- Types ------------------------------------------------------------------
 
 interface TextBlock {
@@ -192,6 +225,7 @@ export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [streaming, setStreaming] = useState(false)
+  const [activity, setActivity] = useState<string>('Thinking…')
   const [stickToBottom, setStickToBottom] = useState(true)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -245,6 +279,7 @@ export default function Chat() {
 
       setMessages((prev) => [...prev, userMessage, assistantMessage])
       setStreaming(true)
+      setActivity('Thinking…')
 
       const msgIdx = messages.length + 1 // index of the assistant message we just appended
 
@@ -306,6 +341,7 @@ export default function Chat() {
             const evType = event.type as string
 
             if (evType === 'text') {
+              setActivity('Writing response…')
               const chunk = event.text as string
               setMessages((prev) =>
                 prev.map((m, mi) => {
@@ -323,10 +359,12 @@ export default function Chat() {
               )
             } else if (evType === 'tool_call') {
               currentTextBlockIdx = -1 // next text chunk starts a new block
+              const toolName = event.name as string
+              setActivity(`Calling ${humanizeToolName(toolName)}…`)
               const newBlock: ToolCallBlock = {
                 type: 'tool_call',
                 id: event.id as string,
-                name: event.name as string,
+                name: toolName,
                 input: (event.input as Record<string, unknown>) ?? {},
                 expanded: false,
               }
@@ -339,6 +377,8 @@ export default function Chat() {
             } else if (evType === 'tool_result') {
               const toolId = event.id as string
               const preview = event.content_preview as string
+              const toolName = event.name as string
+              setActivity(`Reading ${humanizeToolName(toolName)} results…`)
               setMessages((prev) =>
                 prev.map((m, mi) => {
                   if (mi !== msgIdx) return m
@@ -351,6 +391,9 @@ export default function Chat() {
                   return { ...m, blocks }
                 })
               )
+            } else if (evType === 'status') {
+              const phase = event.phase as string
+              if (phase === 'thinking') setActivity('Thinking through next step…')
             } else if (evType === 'done') {
               break
             } else if (evType === 'error') {
@@ -396,12 +439,12 @@ export default function Chat() {
           <div className="flex items-center gap-2">
             <h1 className="text-lg font-semibold text-gray-900">Chat with your portfolio</h1>
             {streaming && (
-              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-xs font-medium text-indigo-700">
-                <span className="relative flex h-2 w-2">
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-xs font-medium text-indigo-700 max-w-xs truncate">
+                <span className="relative flex h-2 w-2 shrink-0">
                   <span className="absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75 animate-ping" />
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500" />
                 </span>
-                Working…
+                <span className="truncate">{activity}</span>
               </span>
             )}
           </div>
@@ -464,7 +507,7 @@ export default function Chat() {
                     <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:150ms]" />
                     <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:300ms]" />
                   </span>
-                  <span className="text-xs text-slate-500">Thinking…</span>
+                  <span className="text-xs text-slate-600 font-medium">{activity}</span>
                 </div>
               </div>
             )}
