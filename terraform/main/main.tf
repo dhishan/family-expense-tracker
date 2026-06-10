@@ -337,7 +337,7 @@ resource "google_secret_manager_secret" "plaid_client_id" {
 
 resource "google_secret_manager_secret_version" "plaid_client_id" {
   secret      = google_secret_manager_secret.plaid_client_id.id
-  secret_data = var.plaid_client_id
+  secret_data = coalesce(var.plaid_client_id, "not-configured")
 }
 
 resource "google_secret_manager_secret" "plaid_secret" {
@@ -354,7 +354,7 @@ resource "google_secret_manager_secret" "plaid_secret" {
 
 resource "google_secret_manager_secret_version" "plaid_secret" {
   secret      = google_secret_manager_secret.plaid_secret.id
-  secret_data = var.plaid_secret
+  secret_data = coalesce(var.plaid_secret, "not-configured")
 }
 
 resource "google_secret_manager_secret" "plaid_env" {
@@ -624,6 +624,9 @@ resource "google_cloud_run_service" "backend" {
     google_secret_manager_secret.snaptrade_consumer_key,
     google_secret_manager_secret.anthropic_api_key,
     google_secret_manager_secret.cf_access_aud,
+    google_secret_manager_secret_version.plaid_client_id,
+    google_secret_manager_secret_version.plaid_secret,
+    google_secret_manager_secret_version.plaid_env,
   ]
 }
 

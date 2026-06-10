@@ -139,7 +139,7 @@ jobs:
           TF_VAR_finnhub_api_key: ${{ secrets.FINNHUB_API_KEY }}
           TF_VAR_plaid_client_id: ${{ secrets.PLAID_CLIENT_ID }}
           TF_VAR_plaid_secret: ${{ secrets.PLAID_SECRET }}
-          TF_VAR_plaid_env: ${{ secrets.PLAID_ENV }}
+          TF_VAR_plaid_env: ${{ secrets.PLAID_ENV || 'sandbox' }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           make terraform-apply TF_ENV=${{ env.TF_ENV }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
