@@ -196,9 +196,12 @@ test.describe('Plaid integration', () => {
 
     await page.waitForLoadState('networkidle')
 
-    // Pending row count should have decreased by 1
-    const newPendingCount = await page.getByRole('button', { name: 'Approve & edit' }).count()
-    expect(newPendingCount).toBeLessThan(pendingCount)
+    // Pending row count should have decreased by 1.
+    // React Query may take a moment to refetch and re-render after invalidation.
+    await expect(async () => {
+      const newPendingCount = await page.getByRole('button', { name: 'Approve & edit' }).count()
+      expect(newPendingCount).toBeLessThan(pendingCount)
+    }).toPass({ timeout: 10_000 })
   })
 
   // -------------------------------------------------------------------------
