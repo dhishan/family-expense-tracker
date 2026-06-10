@@ -495,9 +495,8 @@ def sync_transactions(plaid_item_id: str, user_id: str) -> dict[str, Any]:
     from google.cloud import firestore  # type: ignore
 
     db = get_firestore_client()
-    client = _client()
 
-    # --- Load item + verify ownership ---
+    # --- Load item + verify ownership (before touching Plaid API) ---
     item_snap = db.collection(PLAID_ITEMS_COLLECTION).document(plaid_item_id).get()
     if not item_snap.exists:
         logger.warning("sync_transactions: item %s not found", plaid_item_id)
@@ -511,6 +510,9 @@ def sync_transactions(plaid_item_id: str, user_id: str) -> dict[str, Any]:
     if item_data.get("status") != "active":
         logger.info("sync_transactions: item %s status=%s, skipping", plaid_item_id, item_data.get("status"))
         return {"added": 0, "modified": 0, "removed": 0, "has_more": False, "error": "item_not_active"}
+
+    # Only build Plaid client after guards pass so tests without credentials can exercise early exits.
+    client = _client()
 
     access_token: str = item_data.get("plaid_access_token", "")
     cursor: str | None = item_data.get("cursor")
