@@ -5,7 +5,7 @@ import { familyApi } from './services/api'
 import Layout from './components/Layout/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
-import Expenses from './pages/Expenses'
+import Transactions from './pages/Transactions'
 import Budgets from './pages/Budgets'
 import Settings from './pages/Settings'
 import Investments from './pages/Investments'
@@ -54,7 +54,8 @@ function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="expenses" element={<Expenses />} />
+        <Route path="expenses" element={<Navigate to="/transactions" replace />} />
+        <Route path="transactions" element={<Transactions />} />
         <Route path="budgets" element={<Budgets />} />
         <Route path="settings" element={<Settings />} />
         <Route path="investments" element={<Investments />} />

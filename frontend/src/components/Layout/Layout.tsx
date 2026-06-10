@@ -2,7 +2,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import {
   HomeIcon,
-  CurrencyDollarIcon,
+  ReceiptPercentIcon,
   ChartBarIcon,
   Cog6ToothIcon,
   BellIcon,
@@ -18,7 +18,7 @@ import { notificationsApi, authApi } from '../../services/api'
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: HomeIcon },
-  { name: 'Expenses', href: '/expenses', icon: CurrencyDollarIcon },
+  { name: 'Transactions', href: '/transactions', icon: ReceiptPercentIcon },
   { name: 'Budgets', href: '/budgets', icon: ChartBarIcon },
   { name: 'Investments', href: '/investments', icon: PresentationChartLineIcon },
   { name: 'Chat', href: '/chat', icon: ChatBubbleLeftRightIcon },
