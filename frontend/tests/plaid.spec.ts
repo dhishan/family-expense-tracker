@@ -170,28 +170,28 @@ test.describe('Plaid integration', () => {
 
     // Wait for pending section
     await expect(page.getByText(/transactions? need review/i)).toBeVisible({ timeout: 15_000 })
-    const pendingCount = (await page.getByRole('button', { name: 'Approve & edit' }).count())
+    const pendingCount = await page.getByRole('button', { name: 'Approve & edit' }).count()
     expect(pendingCount).toBeGreaterThan(0)
 
-    // Click the first "Approve & edit" button
+    // Click the first "Approve & edit" button — this opens the approve modal (a div overlay, not a <dialog>)
     const approveBtn = page.getByRole('button', { name: 'Approve & edit' }).first()
     await approveBtn.click()
 
-    // Modal should open
-    const modal = page.getByRole('dialog').first()
-    await expect(modal).toBeVisible({ timeout: 5_000 })
+    // Modal heading should appear ("Approve Transaction")
+    await expect(page.getByRole('heading', { name: 'Approve Transaction' })).toBeVisible({ timeout: 5_000 })
 
-    // Change amount
-    const amountInput = modal.locator('input[type="number"]').or(modal.getByRole('spinbutton')).first()
+    // Change amount — the modal's amount input is the first number input on screen
+    const amountInput = page.locator('input[type="number"]').last()
+    await amountInput.clear()
     await amountInput.fill('4.20')
 
-    // Submit approve — wait for the approve API call
+    // Submit — wait for the approve API call
     await Promise.all([
       page.waitForResponse(
         (r) => r.url().includes('/plaid/pending/') && r.url().includes('/approve') && r.request().method() === 'POST',
         { timeout: 15_000 }
       ),
-      modal.getByRole('button', { name: /approve/i }).click(),
+      page.getByRole('button', { name: 'Approve' }).last().click(),
     ])
 
     await page.waitForLoadState('networkidle')
@@ -216,22 +216,29 @@ test.describe('Plaid integration', () => {
     await expect(saveUncatBtn).toBeVisible({ timeout: 10_000 })
 
     const pendingCount = await page.getByRole('button', { name: 'Save uncategorized' }).count()
+    expect(pendingCount).toBeGreaterThan(0)
 
     await Promise.all([
       page.waitForResponse(
         (r) =>
           r.url().includes('/plaid/pending/') &&
           r.url().includes('/save-uncategorized') &&
-          r.request().method() === 'POST',
+          r.request().method() === 'POST' &&
+          r.status() === 200,
         { timeout: 15_000 }
       ),
       saveUncatBtn.click(),
     ])
 
+    // After approval, the query cache is invalidated and the pending list re-fetches.
+    // Wait for the network to settle before counting.
     await page.waitForLoadState('networkidle')
 
-    const newPendingCount = await page.getByRole('button', { name: 'Save uncategorized' }).count()
-    expect(newPendingCount).toBeLessThan(pendingCount)
+    // Row should be gone — count must be strictly less than before
+    await expect(async () => {
+      const newPendingCount = await page.getByRole('button', { name: 'Save uncategorized' }).count()
+      expect(newPendingCount).toBeLessThan(pendingCount)
+    }).toPass({ timeout: 10_000 })
   })
 
   // -------------------------------------------------------------------------
@@ -246,29 +253,30 @@ test.describe('Plaid integration', () => {
 
     await expect(page.getByText(/transactions? need review/i)).toBeVisible({ timeout: 15_000 })
 
-    const discardBtn = page.getByRole('button', { name: 'Discard' }).first()
-    await expect(discardBtn).toBeVisible({ timeout: 10_000 })
+    const initialCount = await page.getByRole('button', { name: 'Discard' }).count()
+    expect(initialCount).toBeGreaterThan(0)
 
-    await Promise.all([
-      page.waitForResponse(
-        (r) =>
-          r.url().includes('/plaid/pending/') &&
-          r.url().includes('/discard') &&
-          r.request().method() === 'POST',
-        { timeout: 15_000 }
-      ),
-      discardBtn.click(),
-    ])
+    // Discard is optimistic: row hides immediately and a 5s undo toast appears.
+    // The API call only fires after the 5s timeout, NOT immediately.
+    // So: click Discard, then click Undo BEFORE the 5s timer fires.
+    await page.getByRole('button', { name: 'Discard' }).first().click()
 
-    // Toast with Undo should appear within the 5s window
-    const undoBtn = page.getByRole('button', { name: /undo/i })
+    // Undo button appears immediately in the toast
+    const undoBtn = page.getByRole('button', { name: 'Undo' })
     await expect(undoBtn).toBeVisible({ timeout: 5_000 })
 
-    // Click Undo
+    // Row should now be hidden (optimistic removal)
+    const hiddenCount = await page.getByRole('button', { name: 'Discard' }).count()
+    expect(hiddenCount).toBeLessThan(initialCount)
+
+    // Click Undo — cancels the timer, row reappears (no API call was made)
     await undoBtn.click()
 
     // Row should reappear
-    await expect(page.getByRole('button', { name: 'Discard' }).first()).toBeVisible({ timeout: 10_000 })
+    await expect(async () => {
+      const restoredCount = await page.getByRole('button', { name: 'Discard' }).count()
+      expect(restoredCount).toBe(initialCount)
+    }).toPass({ timeout: 5_000 })
   })
 
   // -------------------------------------------------------------------------
