@@ -710,18 +710,31 @@ async def _execute_expense_tool(name: str, tool_input: dict, user_id: str) -> st
                 total = await svc_e.get_spending_for_budget(family_id, month_start, month_end, category=category)
                 monthly_totals.append(total)
             avg = sum(monthly_totals) / len(monthly_totals) if monthly_totals else 0
-            # Find current budget limit for this category
+            # Find current budget limit for this category. Normalize the
+            # limit to a monthly equivalent so the ratio compares like-for-like
+            # — yearly limits divide by 12, weekly limits multiply by ~4.33.
             budgets = await svc_b.list(family_id)
             current_limit = None
+            current_period = None
             for b in budgets:
                 if b.category == category:
                     current_limit = b.amount
+                    current_period = b.period
                     break
-            ratio = (avg / current_limit) if current_limit else None
+            normalized_monthly_limit = current_limit
+            if current_limit is not None:
+                if current_period == "yearly":
+                    normalized_monthly_limit = current_limit / 12
+                elif current_period == "weekly":
+                    # 30.4375 days/month average ÷ 7 days/week
+                    normalized_monthly_limit = current_limit * (30.4375 / 7)
+            ratio = (avg / normalized_monthly_limit) if normalized_monthly_limit else None
             return json.dumps({
                 "category": category,
                 "avg_monthly_spend": round(avg, 2),
                 "current_limit": current_limit,
+                "current_period": current_period,
+                "normalized_monthly_limit": round(normalized_monthly_limit, 2) if normalized_monthly_limit is not None else None,
                 "ratio": round(ratio, 2) if ratio is not None else None,
                 "months_analyzed": lookback,
                 "monthly_totals": [round(x, 2) for x in monthly_totals],

@@ -9,6 +9,7 @@ class BudgetPeriod(str, Enum):
     """Budget period types."""
     WEEKLY = "weekly"
     MONTHLY = "monthly"
+    YEARLY = "yearly"
 
 
 class BudgetBase(BaseModel):

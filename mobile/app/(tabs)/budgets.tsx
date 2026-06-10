@@ -121,7 +121,7 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving }: BudgetModa
 
               <Text style={modalStyles.label}>Period</Text>
               <View style={modalStyles.segmentRow}>
-                {(['weekly', 'monthly'] as BudgetPeriod[]).map((p) => (
+                {(['weekly', 'monthly', 'yearly'] as BudgetPeriod[]).map((p) => (
                   <TouchableOpacity
                     key={p}
                     style={[

@@ -322,6 +322,7 @@ export default function Budgets() {
                 >
                   <option value="weekly">Weekly</option>
                   <option value="monthly">Monthly</option>
+                  <option value="yearly">Yearly</option>
                 </select>
               </div>
 

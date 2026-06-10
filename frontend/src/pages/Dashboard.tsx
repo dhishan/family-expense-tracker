@@ -228,10 +228,16 @@ export default function Dashboard() {
           ) : budgetsData?.budgets && budgetsData.budgets.length > 0 ? (
             <div className="space-y-4 max-h-64 overflow-y-auto">
               {budgetsData.budgets.map((status) => {
+                // Normalize each budget's amount to a per-month figure so the
+                // "Monthly" view can show comparable numbers across weekly,
+                // monthly, and yearly budgets. Weekly scales up by weeks/month,
+                // yearly scales down by 12.
                 const daysInMonth = getDaysInMonth(selectedMonth)
                 const monthlyLimit =
                   status.budget.period === 'weekly'
                     ? status.budget.amount * (daysInMonth / 7)
+                    : status.budget.period === 'yearly'
+                    ? status.budget.amount / 12
                     : status.budget.amount
 
                 const monthlySpent = budgetView === 'monthly'

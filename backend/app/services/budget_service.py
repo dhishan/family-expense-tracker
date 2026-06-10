@@ -34,6 +34,14 @@ class BudgetService:
             # Week starts on Monday
             start = ref - timedelta(days=ref.weekday())
             end = start + timedelta(days=6)
+        elif period == BudgetPeriod.YEARLY:
+            # Calendar year — Jan 1 through Dec 31 of the reference year.
+            # This is the simplest model and matches how most personal-finance
+            # tools think about "annual" budgets (e.g. travel, gifts, charity).
+            # If we ever want fiscal-year or rolling-12-month, add a separate
+            # period type rather than overloading this one.
+            start = ref.replace(month=1, day=1)
+            end = ref.replace(month=12, day=31)
         else:  # Monthly
             start = ref.replace(day=1)
             # Get last day of month
@@ -41,7 +49,7 @@ class BudgetService:
                 end = ref.replace(year=ref.year + 1, month=1, day=1) - timedelta(days=1)
             else:
                 end = ref.replace(month=ref.month + 1, day=1) - timedelta(days=1)
-        
+
         return start, end
     
     async def create(self, budget: BudgetCreate, user: User) -> BudgetResponse:

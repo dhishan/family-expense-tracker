@@ -154,7 +154,17 @@ resource "google_firestore_index" "expenses_category_family_date" {
   depends_on = [google_firestore_database.database]
 }
 
-# Index for querying budgets by family
+# Index for querying budgets by family.
+#
+# This index serves all `budgets` queries regardless of the `period` value
+# (weekly / monthly / yearly). Period is stored as a doc field and used by
+# the application to compute date ranges — it isn't a query filter, so
+# adding yearly budgets did NOT require a new composite index.
+#
+# Spending lookups for budgets go through `expenses` queries with
+# (family_id + date range + category) filters, served by the
+# `expenses_family_date` and `expenses_category_family_date` indexes
+# defined above. Those work for any date range — week, month, or year.
 resource "google_firestore_index" "budgets_family" {
   project    = var.project_id
   database   = google_firestore_database.database.name

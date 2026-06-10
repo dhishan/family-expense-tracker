@@ -113,7 +113,7 @@ export interface ExpenseSummary {
 }
 
 // Budget types
-export type BudgetPeriod = 'weekly' | 'monthly'
+export type BudgetPeriod = 'weekly' | 'monthly' | 'yearly'
 
 export interface Budget {
   id: string

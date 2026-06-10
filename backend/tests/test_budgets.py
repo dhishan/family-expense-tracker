@@ -35,18 +35,49 @@ class TestBudgetService:
     def test_get_monthly_period_december(self):
         """Test getting monthly period dates for December."""
         service = BudgetService.__new__(BudgetService)
-        
+
         test_date = date(2025, 12, 15)
         start, end = service._get_period_dates(BudgetPeriod.MONTHLY, test_date)
-        
+
         assert start == date(2025, 12, 1)
+        assert end == date(2025, 12, 31)
+
+    def test_get_yearly_period_dates(self):
+        """Yearly budgets span the full calendar year of the reference date."""
+        service = BudgetService.__new__(BudgetService)
+
+        test_date = date(2025, 7, 15)
+        start, end = service._get_period_dates(BudgetPeriod.YEARLY, test_date)
+
+        assert start == date(2025, 1, 1)
+        assert end == date(2025, 12, 31)
+
+    def test_get_yearly_period_first_day(self):
+        """Reference date on Jan 1 still yields the full year."""
+        service = BudgetService.__new__(BudgetService)
+
+        test_date = date(2025, 1, 1)
+        start, end = service._get_period_dates(BudgetPeriod.YEARLY, test_date)
+
+        assert start == date(2025, 1, 1)
+        assert end == date(2025, 12, 31)
+
+    def test_get_yearly_period_last_day(self):
+        """Reference date on Dec 31 still yields the same year (no rollover)."""
+        service = BudgetService.__new__(BudgetService)
+
+        test_date = date(2025, 12, 31)
+        start, end = service._get_period_dates(BudgetPeriod.YEARLY, test_date)
+
+        assert start == date(2025, 1, 1)
         assert end == date(2025, 12, 31)
 
 
 class TestBudgetModels:
     """Test budget models."""
-    
+
     def test_budget_period_enum(self):
         """Test budget period enum values."""
         assert BudgetPeriod.WEEKLY.value == "weekly"
         assert BudgetPeriod.MONTHLY.value == "monthly"
+        assert BudgetPeriod.YEARLY.value == "yearly"
