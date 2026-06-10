@@ -658,34 +658,38 @@ async def budget_burn_rate(category: str, lookback_months: int = 3) -> dict:
 def bank_accounts(refresh: bool = False) -> dict:
     """Current balances across all bank/credit accounts connected via Plaid.
 
+    Returns accounts from ALL family members' connected banks, not just the caller's.
     Use when the user asks about account balances or wants to see all linked accounts.
     Pass refresh=True to re-fetch live balances from Plaid instead of cached values.
     Returns {accounts: [{institution_name, name, mask, type, subtype, current_balance,
-    available_balance, currency}]}.
+    available_balance, currency, connected_by}]}.
     """
     from app.services import plaid_service
     from google.cloud import firestore  # type: ignore
 
     user_id = _user()
+    family_id = _get_family_id(user_id)
+    if not family_id:
+        return {"accounts": [], "count": 0, "error": "User is not in a family"}
     db = get_firestore_client()
 
     if refresh:
-        items = plaid_service.list_items(user_id)
+        items = plaid_service.list_items(family_id)
         for item in items:
-            access_token = plaid_service.get_access_token(item["id"], user_id)
+            access_token = plaid_service.get_access_token(item["id"], family_id)
             if not access_token:
                 continue
             try:
                 from plaid.model.accounts_get_request import AccountsGetRequest  # type: ignore
                 resp = plaid_service._client().accounts_get(AccountsGetRequest(access_token=access_token))
                 accts_data = resp.to_dict() if hasattr(resp, "to_dict") else resp
-                plaid_service.upsert_accounts(item["id"], user_id, accts_data.get("accounts") or [])
+                plaid_service.upsert_accounts(item["id"], family_id, accts_data.get("accounts") or [])
             except Exception:
                 pass
 
     acct_snaps = list(
         db.collection(plaid_service.PLAID_ACCOUNTS_COLLECTION)
-        .where(filter=firestore.FieldFilter("user_id", "==", user_id))
+        .where(filter=firestore.FieldFilter("family_id", "==", family_id))
         .stream()
     )
     accounts = []
@@ -694,7 +698,12 @@ def bank_accounts(refresh: bool = False) -> dict:
         item_snap = db.collection(plaid_service.PLAID_ITEMS_COLLECTION).document(
             a.get("plaid_item_id", "")
         ).get()
-        inst_name = (item_snap.to_dict() or {}).get("institution_name", "") if item_snap.exists else ""
+        inst_name = ""
+        connected_by = ""
+        if item_snap.exists:
+            item_d = item_snap.to_dict() or {}
+            inst_name = item_d.get("institution_name", "")
+            connected_by = item_d.get("connected_by_user_id", "")
         accounts.append({
             "institution_name": inst_name,
             "name": a.get("name", ""),
@@ -704,6 +713,7 @@ def bank_accounts(refresh: bool = False) -> dict:
             "current_balance": a.get("current_balance"),
             "available_balance": a.get("available_balance"),
             "currency": a.get("iso_currency_code", "USD"),
+            "connected_by": connected_by,
         })
     return {"accounts": accounts, "count": len(accounts)}
 
@@ -729,37 +739,39 @@ async def bank_transactions(
     from app.services import plaid_service
 
     user_id = _user()
+    family_id = _get_family_id(user_id)
+    if not family_id:
+        return {"approved_expenses": [], "pending_transactions": [], "total_approved": 0, "total_pending": 0, "error": "User is not in a family"}
     today = _date.today()
     start = _date.fromisoformat(start_date) if start_date else (today - _td(days=30))
     end = _date.fromisoformat(end_date) if end_date else today
-    family_id = _get_family_id(user_id)
 
     approved_txns = []
-    if family_id:
-        svc = get_expense_service()
-        filters = ExpenseFilters(
-            start_date=start,
-            end_date=end,
-            category=ExpenseCategory(category) if category else None,
-        )
-        capped = min(limit, 500)
-        expenses, _, _ = await svc.list(family_id, filters=filters, page=1, page_size=capped)
-        for e in expenses:
-            if min_amount is not None and e.amount < min_amount:
-                continue
-            approved_txns.append({
-                "id": e.id,
-                "date": e.date.isoformat(),
-                "amount": e.amount,
-                "category": e.category,
-                "merchant": e.merchant,
-                "description": e.description,
-                "source": "approved",
-            })
+    svc = get_expense_service()
+    filters = ExpenseFilters(
+        start_date=start,
+        end_date=end,
+        category=ExpenseCategory(category) if category else None,
+    )
+    capped = min(limit, 500)
+    expenses, _, _ = await svc.list(family_id, filters=filters, page=1, page_size=capped)
+    for e in expenses:
+        if min_amount is not None and e.amount < min_amount:
+            continue
+        approved_txns.append({
+            "id": e.id,
+            "date": e.date.isoformat(),
+            "amount": e.amount,
+            "category": e.category,
+            "merchant": e.merchant,
+            "description": e.description,
+            "source": "approved",
+        })
 
     pending_txns = []
     if include_pending:
-        pending_items, _ = plaid_service.list_pending_transactions(user_id, page=1, page_size=limit)
+        # Family-scoped: all pending from all family members' connected banks
+        pending_items, _ = plaid_service.list_pending_transactions(family_id, page=1, page_size=limit)
         for p in pending_items:
             if account_id and p.get("account_id") != account_id:
                 continue
@@ -776,6 +788,7 @@ async def bank_transactions(
                 "source": "pending_review",
                 "account_name": p.get("account_name"),
                 "institution_name": p.get("institution_name"),
+                "connected_by": p.get("connected_by_user_id", ""),
             })
 
     return {
@@ -799,12 +812,16 @@ def bank_recurring(account_id: str | None = None) -> dict:
     from plaid.model.transactions_recurring_get_request import TransactionsRecurringGetRequest  # type: ignore
 
     user_id = _user()
-    items = plaid_service.list_items(user_id)
+    family_id = _get_family_id(user_id)
+    if not family_id:
+        return {"inflow_streams": [], "outflow_streams": [], "inflow_count": 0, "outflow_count": 0, "error": "User is not in a family"}
+    # Iterate all active items in the family
+    items = plaid_service.list_items(family_id)
     all_inflow: list[dict] = []
     all_outflow: list[dict] = []
 
     for item in items:
-        access_token = plaid_service.get_access_token(item["id"], user_id)
+        access_token = plaid_service.get_access_token(item["id"], family_id)
         if not access_token:
             continue
         try:

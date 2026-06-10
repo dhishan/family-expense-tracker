@@ -203,15 +203,15 @@ resource "google_firestore_index" "chat_conversations_user_updated" {
   depends_on = [google_firestore_database.database]
 }
 
-# plaid_items list: filter by owner, order by updated_at desc.
-# Required by plaid_service.list_items.
-resource "google_firestore_index" "plaid_items_user_updated" {
+# plaid_items list: filter by family, order by updated_at desc.
+# Required by plaid_service.list_items (family-scoped since Phase 3).
+resource "google_firestore_index" "plaid_items_family_updated" {
   project    = var.project_id
   database   = google_firestore_database.database.name
   collection = "plaid_items"
 
   fields {
-    field_path = "user_id"
+    field_path = "family_id"
     order      = "ASCENDING"
   }
 
@@ -223,15 +223,15 @@ resource "google_firestore_index" "plaid_items_user_updated" {
   depends_on = [google_firestore_database.database]
 }
 
-# plaid_accounts: filter by owner + item for per-item account fetches.
-# Required by plaid_service.upsert_accounts / delete_item cascade.
-resource "google_firestore_index" "plaid_accounts_user_item" {
+# plaid_accounts: filter by family + item for per-item account fetches.
+# Required by plaid_service.upsert_accounts / delete_item cascade / bank_accounts tool.
+resource "google_firestore_index" "plaid_accounts_family_item" {
   project    = var.project_id
   database   = google_firestore_database.database.name
   collection = "plaid_accounts"
 
   fields {
-    field_path = "user_id"
+    field_path = "family_id"
     order      = "ASCENDING"
   }
 
@@ -243,15 +243,15 @@ resource "google_firestore_index" "plaid_accounts_user_item" {
   depends_on = [google_firestore_database.database]
 }
 
-# plaid_pending_transactions: filter by user_id + status, order by created_at DESC.
-# Required by plaid_service.list_pending_transactions.
-resource "google_firestore_index" "plaid_pending_user_status_created" {
+# plaid_pending_transactions: filter by family_id + status, order by created_at DESC.
+# Required by plaid_service.list_pending_transactions (family-scoped since Phase 3).
+resource "google_firestore_index" "plaid_pending_family_status_created" {
   project    = var.project_id
   database   = google_firestore_database.database.name
   collection = "plaid_pending_transactions"
 
   fields {
-    field_path = "user_id"
+    field_path = "family_id"
     order      = "ASCENDING"
   }
 
@@ -268,15 +268,17 @@ resource "google_firestore_index" "plaid_pending_user_status_created" {
   depends_on = [google_firestore_database.database]
 }
 
-# plaid_pending_transactions: dedupe lookup by user_id + plaid_transaction_id.
+# plaid_pending_transactions: dedupe lookup by family_id + plaid_transaction_id.
 # Required by sync_transactions._find_pending_by_plaid_txn_id.
-resource "google_firestore_index" "plaid_pending_user_txn_id" {
+# Deduplication is family-scoped: the same bank transaction should not appear twice
+# regardless of which family member connected the account.
+resource "google_firestore_index" "plaid_pending_family_txn_id" {
   project    = var.project_id
   database   = google_firestore_database.database.name
   collection = "plaid_pending_transactions"
 
   fields {
-    field_path = "user_id"
+    field_path = "family_id"
     order      = "ASCENDING"
   }
 

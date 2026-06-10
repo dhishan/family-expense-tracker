@@ -1,11 +1,15 @@
-"""Phase 2 Plaid tests.
+"""Phase 3 Plaid tests (family-scoped ownership).
 
 Covers:
 1. map_plaid_category — known and unknown inputs
 2. Approve / discard / save-uncategorized happy paths (mocked Plaid + Firestore)
-3. Cross-user pending-row access returns 404
+3. Cross-family pending-row access returns 404
 4. Webhook signature verification rejects unsigned requests
 5. sync_transactions: added / modified / removed paths
+6. Family-scoping behavior:
+   - Family member B can view pending from member A's connected bank
+   - Cross-family access returns 404 (no existence leak)
+   - User without family gets 400 on protected endpoints
 """
 from __future__ import annotations
 
@@ -104,14 +108,16 @@ def _make_user(user_id="user-alice", family_id="fam-001"):
 
 
 def _make_pending_doc(
-    user_id="user-alice",
+    family_id="fam-001",
+    connected_by_user_id="user-alice",
     plaid_item_id="item-1",
     status="pending",
     amount=42.50,
 ):
     return {
         "id": "pend-001",
-        "user_id": user_id,
+        "family_id": family_id,
+        "connected_by_user_id": connected_by_user_id,
         "plaid_item_id": plaid_item_id,
         "plaid_transaction_id": "txn-abc",
         "account_id": "acct-1",
@@ -314,16 +320,17 @@ class TestSaveUncategorizedHappyPath:
 
 
 # ---------------------------------------------------------------------------
-# 3. Cross-user access returns 404
+# 3. Cross-family access returns 404
 # ---------------------------------------------------------------------------
 
 
-class TestCrossUserAccess:
-    def test_approve_cross_user_returns_404(self):
+class TestCrossFamilyAccess:
+    def test_approve_cross_family_returns_404(self):
+        """User in family-Y cannot approve a pending row from family-X."""
         from fastapi import HTTPException
 
-        user_bob = _make_user(user_id="user-bob")
-        # Simulate get_pending_transaction returning None (cross-user check failed)
+        user_bob = _make_user(user_id="user-bob", family_id="fam-002")
+        # get_pending_transaction returns None because family check fails
         with patch("app.services.plaid_service.get_pending_transaction", return_value=None):
             import asyncio
             from app.routers.plaid import _approve_pending
@@ -334,10 +341,10 @@ class TestCrossUserAccess:
                 )
             assert exc_info.value.status_code == 404
 
-    def test_discard_cross_user_returns_404(self):
+    def test_discard_cross_family_returns_404(self):
         from fastapi import HTTPException
 
-        user_bob = _make_user(user_id="user-bob")
+        user_bob = _make_user(user_id="user-bob", family_id="fam-002")
         with patch("app.services.plaid_service.get_pending_transaction", return_value=None):
             import asyncio
             from app.routers.plaid import discard_pending
@@ -348,9 +355,9 @@ class TestCrossUserAccess:
                 )
             assert exc_info.value.status_code == 404
 
-    def test_get_pending_transaction_cross_user_returns_none(self):
-        """plaid_service.get_pending_transaction returns None for cross-user docs."""
-        alice_doc = _make_pending_doc(user_id="user-alice")
+    def test_get_pending_transaction_cross_family_returns_none(self):
+        """plaid_service.get_pending_transaction returns None for cross-family docs."""
+        alice_doc = _make_pending_doc(family_id="fam-001")
 
         snap = MagicMock()
         snap.exists = True
@@ -361,9 +368,93 @@ class TestCrossUserAccess:
 
         with patch("app.services.plaid_service.get_firestore_client", return_value=mock_db):
             from app.services.plaid_service import get_pending_transaction
-            result = get_pending_transaction("pend-001", user_id="user-bob")
+            result = get_pending_transaction("pend-001", family_id="fam-002")
 
         assert result is None
+
+    def test_get_item_cross_family_returns_none(self):
+        """plaid_service.get_item returns None when family_id doesn't match."""
+        item_doc = {
+            "family_id": "fam-001",
+            "connected_by_user_id": "user-alice",
+            "plaid_item_id": "item-1",
+            "institution_name": "Chase",
+            "status": "active",
+        }
+
+        snap = MagicMock()
+        snap.exists = True
+        snap.to_dict.return_value = dict(item_doc)
+
+        mock_db = MagicMock()
+        mock_db.collection.return_value.document.return_value.get.return_value = snap
+
+        with patch("app.services.plaid_service.get_firestore_client", return_value=mock_db):
+            from app.services.plaid_service import get_item
+            result = get_item("item-1", family_id="fam-999")
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# 3b. User without family gets 400
+# ---------------------------------------------------------------------------
+
+
+class TestUserWithoutFamily:
+    def test_list_items_user_without_family_gets_400(self):
+        """GET /plaid/items for a user with no family_id returns HTTP 400."""
+        from fastapi import HTTPException
+        from app.routers.plaid import _require_family_id
+
+        user_no_family = _make_user(family_id=None)
+        with pytest.raises(HTTPException) as exc_info:
+            _require_family_id(user_no_family)
+        assert exc_info.value.status_code == 400
+
+    def test_discard_user_without_family_gets_400(self):
+        """Discard endpoint for a user with no family_id returns HTTP 400."""
+        from fastapi import HTTPException
+
+        user_no_family = _make_user(family_id=None)
+        # get_pending_transaction won't be called because _require_family_id raises first
+        import asyncio
+        from app.routers.plaid import discard_pending
+
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.get_event_loop().run_until_complete(
+                discard_pending("pend-001", current_user=user_no_family)
+            )
+        assert exc_info.value.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# 3c. Family member B sees pending from member A's bank
+# ---------------------------------------------------------------------------
+
+
+class TestFamilyMemberCrossVisibility:
+    def test_family_member_can_view_pending_from_other_member(self):
+        """User B (same family) can see a pending doc connected by User A."""
+        # pending doc was created by user-alice (connected_by_user_id=user-alice)
+        alice_pending = _make_pending_doc(family_id="fam-001", connected_by_user_id="user-alice")
+
+        snap = MagicMock()
+        snap.exists = True
+        snap.to_dict.return_value = dict(alice_pending)
+
+        mock_db = MagicMock()
+        mock_db.collection.return_value.document.return_value.get.return_value = snap
+
+        with patch("app.services.plaid_service.get_firestore_client", return_value=mock_db):
+            from app.services.plaid_service import get_pending_transaction
+            # User B queries with same family_id
+            result = get_pending_transaction("pend-001", family_id="fam-001")
+
+        # Should succeed — same family
+        assert result is not None
+        assert result["family_id"] == "fam-001"
+        assert result["connected_by_user_id"] == "user-alice"
 
 
 # ---------------------------------------------------------------------------
@@ -405,11 +496,12 @@ class TestWebhookSignatureVerification:
 # ---------------------------------------------------------------------------
 
 
-def _make_item_snap(user_id="user-alice", status="active", cursor=None):
+def _make_item_snap(family_id="fam-001", connected_by_user_id="user-alice", status="active", cursor=None):
     snap = MagicMock()
     snap.exists = True
     snap.to_dict.return_value = {
-        "user_id": user_id,
+        "family_id": family_id,
+        "connected_by_user_id": connected_by_user_id,
         "plaid_item_id": "item-1",
         "institution_name": "Chase",
         "plaid_access_token": "access-sandbox-xxx",
@@ -508,12 +600,15 @@ class TestSyncTransactions:
         ):
             mock_plaid_client.return_value.transactions_sync.return_value = sync_resp
             from app.services.plaid_service import sync_transactions
-            result = sync_transactions("item-1", "user-alice")
+            result = sync_transactions("item-1")
 
         assert result["added"] == 1
         assert result["removed"] == 0
         assert len(set_calls) == 1
         assert set_calls[0]["plaid_transaction_id"] == "txn-new"
+        # Verify the pending doc carries family_id, not user_id
+        assert set_calls[0]["family_id"] == "fam-001"
+        assert set_calls[0]["connected_by_user_id"] == "user-alice"
 
     def test_removed_pending_transaction_deleted(self):
         item_snap = _make_item_snap()
@@ -536,7 +631,7 @@ class TestSyncTransactions:
         existing_snap.id = "pend-gone"
         existing_snap.to_dict.return_value = {
             "id": "pend-gone",
-            "user_id": "user-alice",
+            "family_id": "fam-001",
             "status": "pending",
             "plaid_transaction_id": "txn-gone",
         }
@@ -571,7 +666,7 @@ class TestSyncTransactions:
         ):
             mock_plaid_client.return_value.transactions_sync.return_value = sync_resp
             from app.services.plaid_service import sync_transactions
-            result = sync_transactions("item-1", "user-alice")
+            result = sync_transactions("item-1")
 
         assert result["removed"] == 1
         assert len(delete_calls) == 1
@@ -583,18 +678,20 @@ class TestSyncTransactions:
 
         with patch("app.services.plaid_service.get_firestore_client", return_value=mock_db):
             from app.services.plaid_service import sync_transactions
-            result = sync_transactions("item-1", "user-alice")
+            result = sync_transactions("item-1")
 
         assert result.get("error") == "item_not_active"
         assert result["added"] == 0
 
-    def test_cross_user_sync_returns_error(self):
-        item_snap = _make_item_snap(user_id="user-alice")
+    def test_item_not_found_returns_error(self):
+        """sync_transactions returns error when item does not exist."""
+        snap = MagicMock()
+        snap.exists = False
         mock_db = MagicMock()
-        mock_db.collection.return_value.document.return_value.get.return_value = item_snap
+        mock_db.collection.return_value.document.return_value.get.return_value = snap
 
         with patch("app.services.plaid_service.get_firestore_client", return_value=mock_db):
             from app.services.plaid_service import sync_transactions
-            result = sync_transactions("item-1", user_id="user-mallory")
+            result = sync_transactions("item-nonexistent")
 
-        assert result.get("error") == "not_found"
+        assert result.get("error") == "item_not_found"

@@ -6,35 +6,40 @@ Phase 2 additions on top of Phase 1 foundation:
 - sync_transactions cursor-based loop helper
 - get_access_token helper (internal use only)
 
-
+Phase 3 change: all ownership checks are now family-scoped, not user-scoped.
+- Every plaid_item / plaid_account / plaid_pending_transactions doc carries family_id.
+- connected_by_user_id is retained for audit trail (who connected this bank).
+- Cross-family access is logged as a warning and returns None / 404.
 
 This module owns all Plaid-related Firestore persistence and the configured
-PlaidApi client. Phase 2 will build the HTTP endpoints on top of these helpers.
+PlaidApi client.
 
 Firestore schema
 ----------------
 /plaid_items/{plaid_item_id}
-  user_id: str               (denormalized for ownership checks on every read)
-  plaid_access_token: str    (SENSITIVE -- encrypted at rest by Firestore;
+  family_id: str              (ownership — all family members see this item)
+  connected_by_user_id: str   (audit — who connected this bank)
+  plaid_access_token: str     (SENSITIVE -- encrypted at rest by Firestore;
                               NEVER log, NEVER return to clients)
-  plaid_item_id: str         (Plaid's own item ID, same as doc ID)
-  institution_id: str        (Plaid's institution_id, e.g. "ins_109508")
-  institution_name: str      (human-readable, e.g. "Chase")
-  cursor: str | None         (transactions/sync cursor; null until first sync)
+  plaid_item_id: str          (Plaid's own item ID, same as doc ID)
+  institution_id: str         (Plaid's institution_id, e.g. "ins_109508")
+  institution_name: str       (human-readable, e.g. "Chase")
+  cursor: str | None          (transactions/sync cursor; null until first sync)
   last_synced_at: timestamp | None
   status: "active" | "needs_reauth" | "removed"
   created_at: timestamp
   updated_at: timestamp
 
 /plaid_accounts/{plaid_account_id}
-  user_id: str               (denormalized for ownership checks)
-  plaid_item_id: str         (link back to the item; used for filtered queries)
-  account_id: str            (Plaid's own account ID, same as doc ID)
-  name: str                  (account name from Plaid)
+  family_id: str              (denormalized for ownership / query)
+  connected_by_user_id: str   (audit trail)
+  plaid_item_id: str          (link back to the item; used for filtered queries)
+  account_id: str             (Plaid's own account ID, same as doc ID)
+  name: str                   (account name from Plaid)
   official_name: str | None
-  type: str                  ("depository" | "credit" | "loan" | "investment")
-  subtype: str | None        ("checking" | "savings" | "credit card" | ...)
-  mask: str | None           (last 4 of account number)
+  type: str                   ("depository" | "credit" | "loan" | "investment")
+  subtype: str | None         ("checking" | "savings" | "credit card" | ...)
+  mask: str | None            (last 4 of account number)
   current_balance: float | None
   available_balance: float | None
   iso_currency_code: str | None
@@ -42,10 +47,11 @@ Firestore schema
 
 Security model
 --------------
-- user_id is denormalized onto every doc (mirrors chat_store.py pattern).
-- Every read function verifies ownership and returns None for foreign docs
+- family_id is denormalized onto every doc (mirrors expenses/budgets pattern).
+- Every read function verifies family ownership and returns None for foreign docs
   rather than raising, so routers can 404 without leaking existence.
-- Cross-user access attempts are logged as warnings.
+- Cross-family access attempts are logged as warnings.
+- connected_by_user_id is kept for audit trail only.
 - plaid_access_token is NEVER included in return values from any helper.
 """
 from __future__ import annotations
@@ -142,16 +148,30 @@ def _now() -> datetime:
 
 
 # ---------------------------------------------------------------------------
+# Family ID helper
+# ---------------------------------------------------------------------------
+
+
+def get_user_family_id(user_id: str) -> str | None:
+    """Look up the family_id for a user from Firestore. Returns None if not in a family."""
+    db = get_firestore_client()
+    doc = db.collection("users").document(user_id).get()
+    if not doc.exists:
+        return None
+    return (doc.to_dict() or {}).get("family_id")
+
+
+# ---------------------------------------------------------------------------
 # plaid_items helpers
 # ---------------------------------------------------------------------------
 
 
-def get_item(plaid_item_id: str, user_id: str) -> dict | None:
-    """Fetch a plaid_item doc, verifying ownership.
+def get_item(plaid_item_id: str, family_id: str) -> dict | None:
+    """Fetch a plaid_item doc, verifying family ownership.
 
     Returns None when:
     - The doc does not exist.
-    - The doc belongs to a different user (cross-user attempt is logged).
+    - The doc belongs to a different family (cross-family attempt is logged).
 
     The returned dict never contains plaid_access_token.
     """
@@ -160,11 +180,11 @@ def get_item(plaid_item_id: str, user_id: str) -> dict | None:
     if not snap.exists:
         return None
     data: dict[str, Any] = snap.to_dict() or {}
-    if data.get("user_id") != user_id:
+    if data.get("family_id") != family_id:
         logger.warning(
-            "Cross-user plaid_item access attempted: requester=%s owner=%s item=%s",
-            user_id,
-            data.get("user_id"),
+            "Cross-family plaid_item access attempted: requester_family=%s owner_family=%s item=%s",
+            family_id,
+            data.get("family_id"),
             plaid_item_id,
         )
         return None
@@ -173,18 +193,18 @@ def get_item(plaid_item_id: str, user_id: str) -> dict | None:
     return data
 
 
-def list_items(user_id: str) -> list[dict]:
-    """Return all plaid_items owned by user_id, newest first.
+def list_items(family_id: str) -> list[dict]:
+    """Return all plaid_items belonging to family_id, newest first.
 
-    Serves the index page that shows connected banks. Never includes
-    plaid_access_token in any returned doc.
+    Returns every item connected by any member of the family.
+    Never includes plaid_access_token in any returned doc.
     """
     db = get_firestore_client()
     from google.cloud import firestore  # type: ignore
 
     query = (
         db.collection(PLAID_ITEMS_COLLECTION)
-        .where(filter=firestore.FieldFilter("user_id", "==", user_id))
+        .where(filter=firestore.FieldFilter("family_id", "==", family_id))
         .order_by("updated_at", direction=firestore.Query.DESCENDING)
     )
     out: list[dict] = []
@@ -199,7 +219,8 @@ def list_items(user_id: str) -> list[dict]:
 def upsert_item(
     *,
     plaid_item_id: str,
-    user_id: str,
+    family_id: str,
+    connected_by_user_id: str,
     plaid_access_token: str,
     institution_id: str,
     institution_name: str,
@@ -216,7 +237,8 @@ def upsert_item(
     db = get_firestore_client()
     now = _now()
     doc: dict[str, Any] = {
-        "user_id": user_id,
+        "family_id": family_id,
+        "connected_by_user_id": connected_by_user_id,
         "plaid_access_token": plaid_access_token,
         "plaid_item_id": plaid_item_id,
         "institution_id": institution_id,
@@ -237,8 +259,9 @@ def upsert_item(
 
 def upsert_accounts(
     plaid_item_id: str,
-    user_id: str,
+    family_id: str,
     accounts: list[dict[str, Any]],
+    connected_by_user_id: str = "",
 ) -> None:
     """Batch-write Plaid account objects into the plaid_accounts collection.
 
@@ -256,7 +279,8 @@ def upsert_accounts(
             continue
         balances = acct.get("balances") or {}
         doc: dict[str, Any] = {
-            "user_id": user_id,
+            "family_id": family_id,
+            "connected_by_user_id": connected_by_user_id,
             "plaid_item_id": plaid_item_id,
             "account_id": account_id,
             "name": acct.get("name", ""),
@@ -274,14 +298,14 @@ def upsert_accounts(
     batch.commit()
 
 
-def delete_item(plaid_item_id: str, user_id: str) -> bool:
+def delete_item(plaid_item_id: str, family_id: str) -> bool:
     """Cascade-delete a plaid_item and all its accounts.
 
-    Verifies ownership before deleting. Returns True when the item was
-    found and deleted, False when not found or owned by a different user.
+    Verifies family ownership before deleting. Returns True when the item was
+    found and deleted, False when not found or owned by a different family.
     """
     db = get_firestore_client()
-    item = get_item(plaid_item_id, user_id)
+    item = get_item(plaid_item_id, family_id)
     if not item:
         return False
 
@@ -305,10 +329,10 @@ def delete_item(plaid_item_id: str, user_id: str) -> bool:
     return True
 
 
-def get_access_token(plaid_item_id: str, user_id: str) -> str | None:
-    """Return plaid_access_token for the given item after ownership check.
+def get_access_token(plaid_item_id: str, family_id: str) -> str | None:
+    """Return plaid_access_token for the given item after family ownership check.
 
-    Returns None if the item doesn't exist or belongs to a different user.
+    Returns None if the item doesn't exist or belongs to a different family.
     The token is intentionally NOT included in get_item() return values —
     this function exists so sync_transactions (and similar internal callers)
     can fetch it explicitly with a clear audit trail.
@@ -318,15 +342,28 @@ def get_access_token(plaid_item_id: str, user_id: str) -> str | None:
     if not snap.exists:
         return None
     data: dict[str, Any] = snap.to_dict() or {}
-    if data.get("user_id") != user_id:
+    if data.get("family_id") != family_id:
         logger.warning(
-            "Cross-user plaid_item token access attempted: requester=%s owner=%s item=%s",
-            user_id,
-            data.get("user_id"),
+            "Cross-family plaid_item token access attempted: requester_family=%s owner_family=%s item=%s",
+            family_id,
+            data.get("family_id"),
             plaid_item_id,
         )
         return None
     return data.get("plaid_access_token")
+
+
+def get_access_token_internal(plaid_item_id: str) -> str | None:
+    """Return plaid_access_token without ownership check.
+
+    For internal use only (webhook handlers, sync initiated by Plaid signals).
+    Never expose this via HTTP endpoints.
+    """
+    db = get_firestore_client()
+    snap = db.collection(PLAID_ITEMS_COLLECTION).document(plaid_item_id).get()
+    if not snap.exists:
+        return None
+    return (snap.to_dict() or {}).get("plaid_access_token")
 
 
 def update_item_status(plaid_item_id: str, status: str) -> None:
@@ -350,7 +387,7 @@ def update_item_cursor(plaid_item_id: str, cursor: str | None, last_synced_at: d
 # ---------------------------------------------------------------------------
 
 
-def _txn_to_doc(txn: Any, user_id: str, plaid_item_id: str, account_name: str, institution_name: str) -> dict[str, Any]:
+def _txn_to_doc(txn: Any, family_id: str, connected_by_user_id: str, plaid_item_id: str, account_name: str, institution_name: str) -> dict[str, Any]:
     """Convert a Plaid transaction object (or dict) to a pending_transaction doc."""
     # Plaid SDK returns objects with attribute access; dicts work too.
     def _get(obj: Any, key: str) -> Any:
@@ -376,7 +413,8 @@ def _txn_to_doc(txn: Any, user_id: str, plaid_item_id: str, account_name: str, i
         auth_date = str(auth_date)
 
     return {
-        "user_id": user_id,
+        "family_id": family_id,
+        "connected_by_user_id": connected_by_user_id,
         "plaid_item_id": plaid_item_id,
         "plaid_transaction_id": _get(txn, "transaction_id"),
         "account_id": _get(txn, "account_id"),
@@ -399,18 +437,18 @@ def _txn_to_doc(txn: Any, user_id: str, plaid_item_id: str, account_name: str, i
     }
 
 
-def get_pending_transaction(pending_id: str, user_id: str) -> dict | None:
-    """Fetch a plaid_pending_transaction, verifying ownership. Returns None on miss / cross-user."""
+def get_pending_transaction(pending_id: str, family_id: str) -> dict | None:
+    """Fetch a plaid_pending_transaction, verifying family ownership. Returns None on miss / cross-family."""
     db = get_firestore_client()
     snap = db.collection(PLAID_PENDING_COLLECTION).document(pending_id).get()
     if not snap.exists:
         return None
     data: dict[str, Any] = snap.to_dict() or {}
-    if data.get("user_id") != user_id:
+    if data.get("family_id") != family_id:
         logger.warning(
-            "Cross-user pending_transaction access: requester=%s owner=%s doc=%s",
-            user_id,
-            data.get("user_id"),
+            "Cross-family pending_transaction access: requester_family=%s owner_family=%s doc=%s",
+            family_id,
+            data.get("family_id"),
             pending_id,
         )
         return None
@@ -418,9 +456,10 @@ def get_pending_transaction(pending_id: str, user_id: str) -> dict | None:
     return data
 
 
-def list_pending_transactions(user_id: str, page: int = 1, page_size: int = 50) -> tuple[list[dict], int]:
-    """Paginated list of pending transactions for a user, newest first.
+def list_pending_transactions(family_id: str, page: int = 1, page_size: int = 50) -> tuple[list[dict], int]:
+    """Paginated list of pending transactions for a family, newest first.
 
+    Returns all pending transactions from any connected bank of any family member.
     Returns (items, total_count).
     """
     from google.cloud import firestore  # type: ignore
@@ -428,7 +467,7 @@ def list_pending_transactions(user_id: str, page: int = 1, page_size: int = 50) 
     db = get_firestore_client()
     base_query = (
         db.collection(PLAID_PENDING_COLLECTION)
-        .where(filter=firestore.FieldFilter("user_id", "==", user_id))
+        .where(filter=firestore.FieldFilter("family_id", "==", family_id))
         .where(filter=firestore.FieldFilter("status", "==", "pending"))
         .order_by("created_at", direction=firestore.Query.DESCENDING)
     )
@@ -476,13 +515,14 @@ def update_pending_status(
 _SYNC_LOOP_CAP = 10  # safety cap on cursor pagination
 
 
-def sync_transactions(plaid_item_id: str, user_id: str) -> dict[str, Any]:
+def sync_transactions(plaid_item_id: str) -> dict[str, Any]:
     """Cursor-based transaction sync from Plaid into plaid_pending_transactions.
 
     Returns {added, modified, removed, has_more}.
 
     Behavior:
-    - Fetches the item and verifies ownership. Bails if status != 'active'.
+    - Fetches the item (no user/family check — called by trusted webhook path).
+    - Bails if status != 'active'.
     - Loops calling /transactions/sync until has_more=False (capped at _SYNC_LOOP_CAP).
     - For each 'added' transaction: upsert a pending doc (dedupe by plaid_transaction_id).
     - For each 'modified': if pending row is still 'pending', update in place.
@@ -496,16 +536,15 @@ def sync_transactions(plaid_item_id: str, user_id: str) -> dict[str, Any]:
 
     db = get_firestore_client()
 
-    # --- Load item + verify ownership (before touching Plaid API) ---
+    # --- Load item (no ownership check — this is called from webhook path) ---
     item_snap = db.collection(PLAID_ITEMS_COLLECTION).document(plaid_item_id).get()
     if not item_snap.exists:
         logger.warning("sync_transactions: item %s not found", plaid_item_id)
         return {"added": 0, "modified": 0, "removed": 0, "has_more": False, "error": "item_not_found"}
 
     item_data: dict[str, Any] = item_snap.to_dict() or {}
-    if item_data.get("user_id") != user_id:
-        logger.warning("sync_transactions: cross-user attempt item=%s requester=%s", plaid_item_id, user_id)
-        return {"added": 0, "modified": 0, "removed": 0, "has_more": False, "error": "not_found"}
+    family_id: str = item_data.get("family_id", "")
+    connected_by_user_id: str = item_data.get("connected_by_user_id", "")
 
     if item_data.get("status") != "active":
         logger.info("sync_transactions: item %s status=%s, skipping", plaid_item_id, item_data.get("status"))
@@ -562,9 +601,9 @@ def sync_transactions(plaid_item_id: str, user_id: str) -> dict[str, Any]:
                 continue
             acct_id = _get_attr(txn, "account_id") or ""
             acct_name = account_map.get(acct_id, "")
-            doc = _txn_to_doc(txn, user_id, plaid_item_id, acct_name, institution_name)
+            doc = _txn_to_doc(txn, family_id, connected_by_user_id, plaid_item_id, acct_name, institution_name)
             # Dedupe by plaid_transaction_id: check if a doc already exists.
-            existing = _find_pending_by_plaid_txn_id(db, user_id, txn_id)
+            existing = _find_pending_by_plaid_txn_id(db, family_id, txn_id)
             if existing:
                 # Already in our system — skip to avoid duplicates.
                 continue
@@ -576,14 +615,14 @@ def sync_transactions(plaid_item_id: str, user_id: str) -> dict[str, Any]:
             txn_id = _plaid_txn_id(txn)
             if not txn_id:
                 continue
-            existing = _find_pending_by_plaid_txn_id(db, user_id, txn_id)
+            existing = _find_pending_by_plaid_txn_id(db, family_id, txn_id)
             if not existing:
                 continue
             existing_status = existing.get("status", "pending")
             if existing_status == "pending":
                 acct_id = _get_attr(txn, "account_id") or ""
                 acct_name = account_map.get(acct_id, "")
-                updated_doc = _txn_to_doc(txn, user_id, plaid_item_id, acct_name, institution_name)
+                updated_doc = _txn_to_doc(txn, family_id, connected_by_user_id, plaid_item_id, acct_name, institution_name)
                 updated_doc["status"] = "pending"  # keep status
                 updated_doc.pop("created_at", None)  # don't overwrite created_at
                 db.collection(PLAID_PENDING_COLLECTION).document(existing["id"]).update(updated_doc)
@@ -598,7 +637,7 @@ def sync_transactions(plaid_item_id: str, user_id: str) -> dict[str, Any]:
             txn_id = _plaid_txn_id(txn)
             if not txn_id:
                 continue
-            existing = _find_pending_by_plaid_txn_id(db, user_id, txn_id)
+            existing = _find_pending_by_plaid_txn_id(db, family_id, txn_id)
             if not existing:
                 continue
             if existing.get("status") == "pending":
@@ -631,13 +670,13 @@ def _get_attr(obj: Any, key: str) -> Any:
     return getattr(obj, key, None) if not isinstance(obj, dict) else obj.get(key)
 
 
-def _find_pending_by_plaid_txn_id(db: Any, user_id: str, plaid_transaction_id: str) -> dict | None:
-    """Return the pending_transaction doc matching a plaid_transaction_id for this user, or None."""
+def _find_pending_by_plaid_txn_id(db: Any, family_id: str, plaid_transaction_id: str) -> dict | None:
+    """Return the pending_transaction doc matching a plaid_transaction_id for this family, or None."""
     from google.cloud import firestore  # type: ignore
 
     results = list(
         db.collection(PLAID_PENDING_COLLECTION)
-        .where(filter=firestore.FieldFilter("user_id", "==", user_id))
+        .where(filter=firestore.FieldFilter("family_id", "==", family_id))
         .where(filter=firestore.FieldFilter("plaid_transaction_id", "==", plaid_transaction_id))
         .limit(1)
         .stream()

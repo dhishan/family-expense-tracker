@@ -16,6 +16,10 @@ Endpoints:
   POST   /plaid/pending/{id}/approve        Approve -> creates expense
   POST   /plaid/pending/{id}/discard        Discard (no expense created)
   POST   /plaid/pending/{id}/save-uncategorized  Approve with category=other
+
+Phase 3: All endpoints are family-scoped. The calling user must belong to a family
+(HTTP 400 if not). Ownership checks use family_id — any family member can view/act on
+items, accounts, and pending transactions connected by any other family member.
 """
 from __future__ import annotations
 
@@ -94,15 +98,25 @@ def _payment_method_from_account_type(account_type: str | None) -> str:
     return PaymentMethod.BANK_TRANSFER.value
 
 
-def _get_account_info(user_id: str, account_id: str) -> dict:
-    """Fetch account name + type from plaid_accounts collection."""
+def _get_account_info(family_id: str, account_id: str) -> dict:
+    """Fetch account name + type from plaid_accounts collection, scoped to family."""
     db = get_firestore_client()
     snap = db.collection(plaid_service.PLAID_ACCOUNTS_COLLECTION).document(account_id).get()
     if snap.exists:
         d = snap.to_dict() or {}
-        if d.get("user_id") == user_id:
+        if d.get("family_id") == family_id:
             return d
     return {}
+
+
+def _require_family_id(user: User) -> str:
+    """Return user's family_id, raising HTTP 400 if the user is not in a family."""
+    if not user.family_id:
+        raise HTTPException(
+            status_code=400,
+            detail="User must belong to a family to use bank account features",
+        )
+    return user.family_id
 
 
 # ---------------------------------------------------------------------------
@@ -115,12 +129,17 @@ async def create_link_token(
     body: LinkTokenRequest = LinkTokenRequest(),
     current_user: User = Depends(get_current_user),
 ):
-    """Create a Plaid Link token for the current user."""
+    """Create a Plaid Link token for the current user.
+
+    The client_user_id is the individual user (Plaid identifies the connector),
+    but the resulting access_token will be stored under the family.
+    """
     from plaid.model.link_token_create_request import LinkTokenCreateRequest  # type: ignore
     from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser  # type: ignore
     from plaid.model.products import Products  # type: ignore
     from plaid.model.country_code import CountryCode  # type: ignore
 
+    _require_family_id(current_user)
     client = _plaid_client()
 
     product_map = {"transactions": Products("transactions")}
@@ -159,6 +178,7 @@ async def exchange_public_token(
     from plaid.model.accounts_get_request import AccountsGetRequest  # type: ignore
     from plaid.model.country_code import CountryCode  # type: ignore
 
+    family_id = _require_family_id(current_user)
     client = _plaid_client()
 
     # 1. Exchange public token
@@ -208,12 +228,18 @@ async def exchange_public_token(
         logger.warning("Could not fetch accounts for item %s", plaid_item_id)
         raw_accounts = []
 
-    plaid_service.upsert_accounts(plaid_item_id, current_user.id, raw_accounts)
+    plaid_service.upsert_accounts(
+        plaid_item_id,
+        family_id,
+        raw_accounts,
+        connected_by_user_id=current_user.id,
+    )
 
-    # 4. Persist item
+    # 4. Persist item (family-scoped, with audit trail of who connected it)
     plaid_service.upsert_item(
         plaid_item_id=plaid_item_id,
-        user_id=current_user.id,
+        family_id=family_id,
+        connected_by_user_id=current_user.id,
         plaid_access_token=access_token,
         institution_id=institution_id,
         institution_name=institution_name,
@@ -223,7 +249,7 @@ async def exchange_public_token(
 
     # 5. Trigger initial sync (best-effort)
     try:
-        plaid_service.sync_transactions(plaid_item_id, current_user.id)
+        plaid_service.sync_transactions(plaid_item_id)
     except Exception:
         logger.warning("Initial sync failed for item %s — will retry via webhook", plaid_item_id)
 
@@ -252,11 +278,12 @@ async def exchange_public_token(
 
 @router.get("/items")
 async def list_items(current_user: User = Depends(get_current_user)):
-    """List connected institutions + accounts for the current user."""
+    """List connected institutions + accounts for the current family."""
     from google.cloud import firestore  # type: ignore
 
+    family_id = _require_family_id(current_user)
     db = get_firestore_client()
-    items = plaid_service.list_items(current_user.id)
+    items = plaid_service.list_items(family_id)
 
     # Attach accounts to each item
     out = []
@@ -287,6 +314,7 @@ async def list_items(current_user: User = Depends(get_current_user)):
             "institution_name": item.get("institution_name", ""),
             "status": item.get("status", "active"),
             "last_synced_at": item.get("last_synced_at"),
+            "connected_by_user_id": item.get("connected_by_user_id"),
             "accounts": accounts,
         })
     return {"items": out}
@@ -298,8 +326,9 @@ async def patch_item(
     body: PatchItemRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """Rename a connected institution."""
-    item = plaid_service.get_item(plaid_item_id, current_user.id)
+    """Rename a connected institution. Any family member may rename."""
+    family_id = _require_family_id(current_user)
+    item = plaid_service.get_item(plaid_item_id, family_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
 
@@ -317,15 +346,19 @@ async def delete_item(
     plaid_item_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    """Disconnect a bank: calls Plaid /item/remove then cascade-deletes local data."""
+    """Disconnect a bank: calls Plaid /item/remove then cascade-deletes local data.
+
+    Any family member may disconnect a bank, not just the original connector.
+    """
     from plaid.model.item_remove_request import ItemRemoveRequest  # type: ignore
 
-    item = plaid_service.get_item(plaid_item_id, current_user.id)
+    family_id = _require_family_id(current_user)
+    item = plaid_service.get_item(plaid_item_id, family_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    # Fetch access token before deleting
-    access_token = plaid_service.get_access_token(plaid_item_id, current_user.id)
+    # Fetch access token before deleting (internal — no family check needed here)
+    access_token = plaid_service.get_access_token_internal(plaid_item_id)
 
     # Call Plaid to remove item (best-effort)
     if access_token:
@@ -338,8 +371,12 @@ async def delete_item(
     plaid_service.delete_pending_transactions_for_item(plaid_item_id)
 
     # Cascade-delete item + accounts
-    plaid_service.delete_item(plaid_item_id, current_user.id)
+    plaid_service.delete_item(plaid_item_id, family_id)
 
+    logger.info(
+        "plaid item disconnected item=%s disconnected_by_user_id=%s family=%s",
+        plaid_item_id, current_user.id, family_id,
+    )
     return {"ok": True, "deleted": plaid_item_id}
 
 
@@ -348,15 +385,19 @@ async def reconnect_item(
     plaid_item_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    """Create an update-mode link token for a needs_reauth item."""
+    """Create an update-mode link token for a needs_reauth item.
+
+    Any family member may initiate reconnect, not just the original connector.
+    """
     from plaid.model.link_token_create_request import LinkTokenCreateRequest  # type: ignore
     from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser  # type: ignore
 
-    item = plaid_service.get_item(plaid_item_id, current_user.id)
+    family_id = _require_family_id(current_user)
+    item = plaid_service.get_item(plaid_item_id, family_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    access_token = plaid_service.get_access_token(plaid_item_id, current_user.id)
+    access_token = plaid_service.get_access_token_internal(plaid_item_id)
     if not access_token:
         raise HTTPException(status_code=404, detail="Item not found")
 
@@ -509,19 +550,11 @@ async def plaid_webhook(
 
 
 def _handle_sync_updates(item_id: str) -> None:
-    """Look up the item owner and kick off a sync."""
+    """Kick off a sync for the given item. Family_id is derived from the stored item doc."""
     if not item_id:
         return
-    db = get_firestore_client()
-    snap = db.collection(plaid_service.PLAID_ITEMS_COLLECTION).document(item_id).get()
-    if not snap.exists:
-        logger.warning("_handle_sync_updates: item %s not found", item_id)
-        return
-    user_id = (snap.to_dict() or {}).get("user_id", "")
-    if not user_id:
-        return
     try:
-        result = plaid_service.sync_transactions(item_id, user_id)
+        result = plaid_service.sync_transactions(item_id)
         logger.info("webhook sync completed item=%s result=%s", item_id, result)
     except Exception:
         logger.exception("webhook sync failed for item %s", item_id)
@@ -536,7 +569,8 @@ def _handle_item_login_required(item_id: str) -> None:
     if not snap.exists:
         return
     item_data = snap.to_dict() or {}
-    user_id = item_data.get("user_id", "")
+    family_id = item_data.get("family_id", "")
+    connected_by_user_id = item_data.get("connected_by_user_id", "")
     institution_name = item_data.get("institution_name", "your bank")
 
     plaid_service.update_item_status(item_id, "needs_reauth")
@@ -547,18 +581,13 @@ def _handle_item_login_required(item_id: str) -> None:
         from app.models.notification import NotificationType
         from app.services.notification_service import get_notification_service
 
-        family_id = ""
-        user_snap = db.collection("users").document(user_id).get()
-        if user_snap.exists:
-            family_id = (user_snap.to_dict() or {}).get("family_id", "")
-
-        if user_id and family_id:
+        if connected_by_user_id and family_id:
             import asyncio
             svc = get_notification_service()
             asyncio.get_event_loop().run_until_complete(
                 svc.create(
                     family_id=family_id,
-                    user_id=user_id,
+                    user_id=connected_by_user_id,
                     notification_type=NotificationType.SYSTEM,
                     title=f"Reconnect {institution_name}",
                     message=(
@@ -580,25 +609,21 @@ def _handle_pending_expiration(item_id: str) -> None:
     if not snap.exists:
         return
     item_data = snap.to_dict() or {}
-    user_id = item_data.get("user_id", "")
+    family_id = item_data.get("family_id", "")
+    connected_by_user_id = item_data.get("connected_by_user_id", "")
     institution_name = item_data.get("institution_name", "your bank")
 
     try:
         from app.models.notification import NotificationType
         from app.services.notification_service import get_notification_service
 
-        family_id = ""
-        user_snap = db.collection("users").document(user_id).get()
-        if user_snap.exists:
-            family_id = (user_snap.to_dict() or {}).get("family_id", "")
-
-        if user_id and family_id:
+        if connected_by_user_id and family_id:
             import asyncio
             svc = get_notification_service()
             asyncio.get_event_loop().run_until_complete(
                 svc.create(
                     family_id=family_id,
-                    user_id=user_id,
+                    user_id=connected_by_user_id,
                     notification_type=NotificationType.SYSTEM,
                     title=f"Reconnect {institution_name} soon",
                     message=(
@@ -622,9 +647,13 @@ async def list_pending(
     page_size: int = Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
 ):
-    """Paginated list of pending transactions for the current user."""
+    """Paginated list of pending transactions for the current family.
+
+    Returns transactions from any family member's connected accounts.
+    """
+    family_id = _require_family_id(current_user)
     items, total = plaid_service.list_pending_transactions(
-        current_user.id, page=page, page_size=page_size
+        family_id, page=page, page_size=page_size
     )
     return {
         "pending": items,
@@ -643,7 +672,10 @@ async def _approve_pending(
     override_beneficiary: str | None,
 ) -> dict:
     """Shared logic for approve and save-uncategorized."""
-    pending = plaid_service.get_pending_transaction(pending_id, current_user.id)
+    if not current_user.family_id:
+        raise HTTPException(status_code=422, detail="User must belong to a family to approve expenses")
+
+    pending = plaid_service.get_pending_transaction(pending_id, current_user.family_id)
     if not pending:
         raise HTTPException(status_code=404, detail="Pending transaction not found")
 
@@ -651,9 +683,6 @@ async def _approve_pending(
         raise HTTPException(
             status_code=409, detail=f"Transaction already {pending['status']}"
         )
-
-    if not current_user.family_id:
-        raise HTTPException(status_code=422, detail="User must belong to a family to approve expenses")
 
     amount = override_amount if override_amount is not None else pending.get("amount", 0.0)
     # Plaid amounts: positive = debit (money out). Negative = credit (money in).
@@ -678,8 +707,8 @@ async def _approve_pending(
 
     beneficiary = override_beneficiary or current_user.id
 
-    # Derive payment method from account type
-    acct_info = _get_account_info(current_user.id, pending.get("account_id", ""))
+    # Derive payment method from account type (family-scoped lookup)
+    acct_info = _get_account_info(current_user.family_id, pending.get("account_id", ""))
     payment_method_str = _payment_method_from_account_type(acct_info.get("type"))
     try:
         payment_method = PaymentMethod(payment_method_str)
@@ -718,7 +747,7 @@ async def _approve_pending(
     except Exception:
         logger.warning("Could not write plaid metadata onto expense %s", expense.id)
 
-    # Mark pending as approved
+    # Mark pending as approved (record who approved it for audit)
     plaid_service.update_pending_status(
         pending_id,
         status="approved",
@@ -752,7 +781,10 @@ async def discard_pending(
     current_user: User = Depends(get_current_user),
 ):
     """Discard a pending transaction (no expense created)."""
-    pending = plaid_service.get_pending_transaction(pending_id, current_user.id)
+    if not current_user.family_id:
+        raise HTTPException(status_code=400, detail="User must belong to a family to use bank features")
+
+    pending = plaid_service.get_pending_transaction(pending_id, current_user.family_id)
     if not pending:
         raise HTTPException(status_code=404, detail="Pending transaction not found")
 
