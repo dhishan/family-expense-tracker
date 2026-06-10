@@ -537,10 +537,75 @@ TOOLS: list[dict] = [
             "required": ["ticker"],
         },
     },
-]
+    # --- Plaid bank tools ---
+    {
+        "name": "bank_accounts",
+        "description": (
+            "Current balances across all bank/credit accounts connected via Plaid. "
+            "Use when the user asks 'what are my account balances', 'how much do I have in checking', "
+            "or wants to see all linked financial accounts. Pass refresh=true to re-fetch live balances."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "refresh": {
+                    "type": "boolean",
+                    "description": "If true, fetch live balances from Plaid instead of cached values",
+                    "default": False,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "bank_transactions",
+        "description": (
+            "Recent bank transactions pulled from Plaid-linked accounts. "
+            "Approved transactions are returned as expenses; pass include_pending=true to also include "
+            "transactions still awaiting review. Default date range is last 30 days."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "start_date": {"type": "string", "description": "Start date YYYY-MM-DD (default: 30 days ago)"},
+                "end_date": {"type": "string", "description": "End date YYYY-MM-DD (default: today)"},
+                "category": {
+                    "type": "string",
+                    "description": "Optional category filter",
+                    "enum": ["groceries", "dining", "transportation", "utilities", "entertainment",
+                             "healthcare", "shopping", "travel", "education", "other"],
+                },
+                "min_amount": {"type": "number", "description": "Only return transactions >= this amount"},
+                "limit": {"type": "integer", "description": "Max results (default 100)", "default": 100},
+                "include_pending": {"type": "boolean", "description": "Include pending (unreviewed) transactions", "default": False},
+                "account_id": {"type": "string", "description": "Optional Plaid account_id filter"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "bank_recurring",
+        "description": (
+            "Recurring inflows and outflows detected by Plaid (subscriptions, bills, paychecks). "
+            "Use when the user asks 'what subscriptions am I paying for', 'what are my recurring charges', "
+            "or 'show me my regular bills'. Returns streams with merchant, average amount, frequency, last date."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account_id": {
+                    "type": "string",
+                    "description": "Optional account_id to filter recurring streams for a specific account",
+                },
+            },
+            "required": [],
+        },
+    },
+]  # END TOOLS — closing bracket moved here
 
 
 _EXPENSE_TOOLS = {"expense_list", "expense_summary", "expense_top_merchants", "budget_status", "budget_burn_rate"}
+_PLAID_TOOLS = {"bank_accounts", "bank_transactions", "bank_recurring"}
 
 
 def _get_family_id(user_id: str) -> str | None:
@@ -920,6 +985,181 @@ def _execute_snaptrade_tool(name: str, tool_input: dict, user_id: str) -> str:
         return json.dumps({"error": str(exc)})
 
 
+async def _execute_plaid_tool(name: str, tool_input: dict, user_id: str) -> str:
+    """Execute a Plaid bank data tool. Returns JSON string."""
+    try:
+        from app.services import plaid_service
+        from google.cloud import firestore  # type: ignore
+
+        db = get_firestore_client()
+
+        if name == "bank_accounts":
+            refresh = tool_input.get("refresh", False)
+            if refresh:
+                # Re-fetch live balances from Plaid for each item
+                items = plaid_service.list_items(user_id)
+                for item in items:
+                    access_token = plaid_service.get_access_token(item["id"], user_id)
+                    if not access_token:
+                        continue
+                    try:
+                        from plaid.model.accounts_get_request import AccountsGetRequest  # type: ignore
+                        resp = plaid_service._client().accounts_get(AccountsGetRequest(access_token=access_token))
+                        accts_data = resp.to_dict() if hasattr(resp, "to_dict") else resp
+                        plaid_service.upsert_accounts(item["id"], user_id, accts_data.get("accounts") or [])
+                    except Exception:
+                        pass
+
+            # Read from cache
+            acct_snaps = list(
+                db.collection(plaid_service.PLAID_ACCOUNTS_COLLECTION)
+                .where(filter=firestore.FieldFilter("user_id", "==", user_id))
+                .stream()
+            )
+            accounts = []
+            for snap in acct_snaps:
+                a = snap.to_dict() or {}
+                # Get institution name from item
+                item_snap = db.collection(plaid_service.PLAID_ITEMS_COLLECTION).document(
+                    a.get("plaid_item_id", "")
+                ).get()
+                inst_name = ""
+                if item_snap.exists:
+                    inst_name = (item_snap.to_dict() or {}).get("institution_name", "")
+                accounts.append({
+                    "institution_name": inst_name,
+                    "name": a.get("name", ""),
+                    "mask": a.get("mask"),
+                    "type": a.get("type", ""),
+                    "subtype": a.get("subtype"),
+                    "current_balance": a.get("current_balance"),
+                    "available_balance": a.get("available_balance"),
+                    "currency": a.get("iso_currency_code", "USD"),
+                })
+            return json.dumps({"accounts": accounts, "count": len(accounts)})
+
+        elif name == "bank_transactions":
+            from datetime import date as _date
+            from app.models.expense import ExpenseFilters, ExpenseCategory
+
+            today = _date.today()
+            start_str = tool_input.get("start_date")
+            end_str = tool_input.get("end_date")
+            start = _date.fromisoformat(start_str) if start_str else (today - __import__("datetime").timedelta(days=30))
+            end = _date.fromisoformat(end_str) if end_str else today
+            category_str = tool_input.get("category")
+            min_amount = tool_input.get("min_amount")
+            limit = min(tool_input.get("limit", 100), 500)
+            include_pending = tool_input.get("include_pending", False)
+            account_id_filter = tool_input.get("account_id")
+
+            # Get family_id for expense query
+            family_id = _get_family_id(user_id)
+            approved_txns = []
+            if family_id:
+                svc = get_expense_service()
+                filters = ExpenseFilters(
+                    start_date=start,
+                    end_date=end,
+                    category=ExpenseCategory(category_str) if category_str else None,
+                )
+                expenses, _, _ = await svc.list(family_id, filters=filters, page=1, page_size=limit)
+                for e in expenses:
+                    row = {
+                        "id": e.id,
+                        "date": e.date.isoformat(),
+                        "amount": e.amount,
+                        "category": e.category,
+                        "merchant": e.merchant,
+                        "description": e.description,
+                        "source": "approved",
+                    }
+                    if min_amount is not None and e.amount < min_amount:
+                        continue
+                    approved_txns.append(row)
+
+            pending_txns = []
+            if include_pending:
+                pending_items, _ = plaid_service.list_pending_transactions(user_id, page=1, page_size=limit)
+                for p in pending_items:
+                    if account_id_filter and p.get("account_id") != account_id_filter:
+                        continue
+                    amt = abs(float(p.get("amount", 0)))
+                    if min_amount is not None and amt < min_amount:
+                        continue
+                    pending_txns.append({
+                        "id": p.get("id"),
+                        "date": p.get("date"),
+                        "amount": amt,
+                        "category": p.get("suggested_category", "other"),
+                        "merchant": p.get("merchant_name"),
+                        "description": p.get("name"),
+                        "source": "pending_review",
+                        "account_name": p.get("account_name"),
+                        "institution_name": p.get("institution_name"),
+                    })
+
+            return json.dumps({
+                "approved_expenses": approved_txns,
+                "pending_transactions": pending_txns,
+                "total_approved": len(approved_txns),
+                "total_pending": len(pending_txns),
+            })
+
+        elif name == "bank_recurring":
+            from plaid.model.transactions_recurring_get_request import TransactionsRecurringGetRequest  # type: ignore
+
+            items = plaid_service.list_items(user_id)
+            all_inflow: list[dict] = []
+            all_outflow: list[dict] = []
+            account_id_filter = tool_input.get("account_id")
+
+            for item in items:
+                access_token = plaid_service.get_access_token(item["id"], user_id)
+                if not access_token:
+                    continue
+                try:
+                    req_args: dict = {"access_token": access_token}
+                    if account_id_filter:
+                        req_args["account_ids"] = [account_id_filter]
+                    resp = plaid_service._client().transactions_recurring_get(
+                        TransactionsRecurringGetRequest(**req_args)
+                    )
+                    resp_data = resp.to_dict() if hasattr(resp, "to_dict") else resp
+
+                    def _stream_summary(streams: list) -> list[dict]:
+                        out = []
+                        for s in (streams or []):
+                            sd = s if isinstance(s, dict) else (s.to_dict() if hasattr(s, "to_dict") else {})
+                            out.append({
+                                "merchant_name": sd.get("merchant_name"),
+                                "description": sd.get("description"),
+                                "average_amount": sd.get("average_amount"),
+                                "frequency": sd.get("frequency"),
+                                "last_amount": sd.get("last_amount"),
+                                "last_date": str(sd.get("last_date")) if sd.get("last_date") else None,
+                                "account_id": sd.get("account_id"),
+                            })
+                        return out
+
+                    all_inflow.extend(_stream_summary(resp_data.get("inflow_streams") or []))
+                    all_outflow.extend(_stream_summary(resp_data.get("outflow_streams") or []))
+                except Exception as exc:
+                    logger.warning("bank_recurring: Plaid error for item %s: %s", item["id"], exc)
+
+            return json.dumps({
+                "inflow_streams": all_inflow,
+                "outflow_streams": all_outflow,
+                "inflow_count": len(all_inflow),
+                "outflow_count": len(all_outflow),
+            })
+
+        return json.dumps({"error": f"Unknown Plaid tool: {name}"})
+    except Exception as exc:
+        logger.exception("Plaid tool %s failed", name)
+        return json.dumps({"error": str(exc)})
+
+
 # Per-tool size budgets for what gets fed back to Claude in conversation
 # history. Numbers chosen to keep the model fully informed of recent
 # results while preventing 50KB EDGAR / Tiingo dumps from dominating the
@@ -955,6 +1195,10 @@ _TOOL_CONTEXT_BUDGETS: dict[str, int] = {
     "edgar_insider_transactions": 4_000,
     "edgar_company_lookup": 1_500,
     "web_search": 8_000,  # server tool — usually fine
+    # Plaid bank tools
+    "bank_accounts": 3_000,
+    "bank_transactions": 6_000,
+    "bank_recurring": 4_000,
 }
 _DEFAULT_CONTEXT_BUDGET = 4_000  # chars
 
@@ -1376,6 +1620,8 @@ async def _generate_turn(
                 )
                 if tc["name"] in _EXPENSE_TOOLS:
                     result_content = await _execute_expense_tool(tc["name"], tc["input"], user_id)
+                elif tc["name"] in _PLAID_TOOLS:
+                    result_content = await _execute_plaid_tool(tc["name"], tc["input"], user_id)
                 else:
                     result_content = _execute_snaptrade_tool(tc["name"], tc["input"], user_id)
                 _safe_end(

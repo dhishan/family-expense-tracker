@@ -651,6 +651,199 @@ async def budget_burn_rate(category: str, lookback_months: int = 3) -> dict:
     }
 
 
+# ---- Plaid bank tools -------------------------------------------------------
+
+
+@mcp.tool()
+def bank_accounts(refresh: bool = False) -> dict:
+    """Current balances across all bank/credit accounts connected via Plaid.
+
+    Use when the user asks about account balances or wants to see all linked accounts.
+    Pass refresh=True to re-fetch live balances from Plaid instead of cached values.
+    Returns {accounts: [{institution_name, name, mask, type, subtype, current_balance,
+    available_balance, currency}]}.
+    """
+    from app.services import plaid_service
+    from google.cloud import firestore  # type: ignore
+
+    user_id = _user()
+    db = get_firestore_client()
+
+    if refresh:
+        items = plaid_service.list_items(user_id)
+        for item in items:
+            access_token = plaid_service.get_access_token(item["id"], user_id)
+            if not access_token:
+                continue
+            try:
+                from plaid.model.accounts_get_request import AccountsGetRequest  # type: ignore
+                resp = plaid_service._client().accounts_get(AccountsGetRequest(access_token=access_token))
+                accts_data = resp.to_dict() if hasattr(resp, "to_dict") else resp
+                plaid_service.upsert_accounts(item["id"], user_id, accts_data.get("accounts") or [])
+            except Exception:
+                pass
+
+    acct_snaps = list(
+        db.collection(plaid_service.PLAID_ACCOUNTS_COLLECTION)
+        .where(filter=firestore.FieldFilter("user_id", "==", user_id))
+        .stream()
+    )
+    accounts = []
+    for snap in acct_snaps:
+        a = snap.to_dict() or {}
+        item_snap = db.collection(plaid_service.PLAID_ITEMS_COLLECTION).document(
+            a.get("plaid_item_id", "")
+        ).get()
+        inst_name = (item_snap.to_dict() or {}).get("institution_name", "") if item_snap.exists else ""
+        accounts.append({
+            "institution_name": inst_name,
+            "name": a.get("name", ""),
+            "mask": a.get("mask"),
+            "type": a.get("type", ""),
+            "subtype": a.get("subtype"),
+            "current_balance": a.get("current_balance"),
+            "available_balance": a.get("available_balance"),
+            "currency": a.get("iso_currency_code", "USD"),
+        })
+    return {"accounts": accounts, "count": len(accounts)}
+
+
+@mcp.tool()
+async def bank_transactions(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    category: str | None = None,
+    min_amount: float | None = None,
+    limit: int = 100,
+    include_pending: bool = False,
+    account_id: str | None = None,
+) -> dict:
+    """Recent bank transactions from Plaid-linked accounts.
+
+    Approved transactions are returned as expenses. Pass include_pending=True to also include
+    transactions awaiting review. Default date range is last 30 days.
+    Returns {approved_expenses: [...], pending_transactions: [...], total_approved, total_pending}.
+    """
+    from datetime import date as _date, timedelta as _td
+    from app.models.expense import ExpenseFilters, ExpenseCategory
+    from app.services import plaid_service
+
+    user_id = _user()
+    today = _date.today()
+    start = _date.fromisoformat(start_date) if start_date else (today - _td(days=30))
+    end = _date.fromisoformat(end_date) if end_date else today
+    family_id = _get_family_id(user_id)
+
+    approved_txns = []
+    if family_id:
+        svc = get_expense_service()
+        filters = ExpenseFilters(
+            start_date=start,
+            end_date=end,
+            category=ExpenseCategory(category) if category else None,
+        )
+        capped = min(limit, 500)
+        expenses, _, _ = await svc.list(family_id, filters=filters, page=1, page_size=capped)
+        for e in expenses:
+            if min_amount is not None and e.amount < min_amount:
+                continue
+            approved_txns.append({
+                "id": e.id,
+                "date": e.date.isoformat(),
+                "amount": e.amount,
+                "category": e.category,
+                "merchant": e.merchant,
+                "description": e.description,
+                "source": "approved",
+            })
+
+    pending_txns = []
+    if include_pending:
+        pending_items, _ = plaid_service.list_pending_transactions(user_id, page=1, page_size=limit)
+        for p in pending_items:
+            if account_id and p.get("account_id") != account_id:
+                continue
+            amt = abs(float(p.get("amount", 0)))
+            if min_amount is not None and amt < min_amount:
+                continue
+            pending_txns.append({
+                "id": p.get("id"),
+                "date": p.get("date"),
+                "amount": amt,
+                "category": p.get("suggested_category", "other"),
+                "merchant": p.get("merchant_name"),
+                "description": p.get("name"),
+                "source": "pending_review",
+                "account_name": p.get("account_name"),
+                "institution_name": p.get("institution_name"),
+            })
+
+    return {
+        "approved_expenses": approved_txns,
+        "pending_transactions": pending_txns,
+        "total_approved": len(approved_txns),
+        "total_pending": len(pending_txns),
+    }
+
+
+@mcp.tool()
+def bank_recurring(account_id: str | None = None) -> dict:
+    """Recurring inflows and outflows detected by Plaid (subscriptions, bills, paychecks).
+
+    Use when the user asks 'what subscriptions am I paying for', 'show my recurring charges',
+    or 'what regular bills do I have'. Calls Plaid's Recurring Transactions API.
+    Returns {inflow_streams: [...], outflow_streams: [...]} with merchant, average_amount,
+    frequency, and last_date for each stream.
+    """
+    from app.services import plaid_service
+    from plaid.model.transactions_recurring_get_request import TransactionsRecurringGetRequest  # type: ignore
+
+    user_id = _user()
+    items = plaid_service.list_items(user_id)
+    all_inflow: list[dict] = []
+    all_outflow: list[dict] = []
+
+    for item in items:
+        access_token = plaid_service.get_access_token(item["id"], user_id)
+        if not access_token:
+            continue
+        try:
+            req_args: dict[str, Any] = {"access_token": access_token}
+            if account_id:
+                req_args["account_ids"] = [account_id]
+            resp = plaid_service._client().transactions_recurring_get(
+                TransactionsRecurringGetRequest(**req_args)
+            )
+            resp_data = resp.to_dict() if hasattr(resp, "to_dict") else resp
+
+            def _stream_summary(streams: list) -> list[dict]:
+                out = []
+                for s in (streams or []):
+                    sd = s if isinstance(s, dict) else (s.to_dict() if hasattr(s, "to_dict") else {})
+                    out.append({
+                        "merchant_name": sd.get("merchant_name"),
+                        "description": sd.get("description"),
+                        "average_amount": sd.get("average_amount"),
+                        "frequency": sd.get("frequency"),
+                        "last_amount": sd.get("last_amount"),
+                        "last_date": str(sd.get("last_date")) if sd.get("last_date") else None,
+                        "account_id": sd.get("account_id"),
+                    })
+                return out
+
+            all_inflow.extend(_stream_summary(resp_data.get("inflow_streams") or []))
+            all_outflow.extend(_stream_summary(resp_data.get("outflow_streams") or []))
+        except Exception as exc:
+            logger.warning("bank_recurring: Plaid error for item %s: %s", item["id"], exc)
+
+    return {
+        "inflow_streams": all_inflow,
+        "outflow_streams": all_outflow,
+        "inflow_count": len(all_inflow),
+        "outflow_count": len(all_outflow),
+    }
+
+
 # ---- FastAPI mount helper --------------------------------------------------
 
 def build_mcp_app():

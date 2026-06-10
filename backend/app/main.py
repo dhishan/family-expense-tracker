@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.mcp_server import build_mcp_app, mcp
-from app.routers import auth, families, expenses, budgets, notifications, investments, chat
+from app.routers import auth, families, expenses, budgets, notifications, investments, chat, plaid
 
 settings = get_settings()
 
@@ -56,6 +56,7 @@ app.include_router(budgets.router, prefix=f"{settings.api_prefix}/budgets", tags
 app.include_router(notifications.router, prefix=f"{settings.api_prefix}/notifications", tags=["Notifications"])
 app.include_router(investments.router, prefix=f"{settings.api_prefix}/investments", tags=["Investments"])
 app.include_router(chat.router, prefix=f"{settings.api_prefix}/chat", tags=["Chat"])
+app.include_router(plaid.router, prefix=f"{settings.api_prefix}/plaid", tags=["Plaid"])
 
 # Mount hosted MCP server at /mcp (Streamable HTTP transport).
 # Auth: Cloudflare Access JWT (prod) | Bearer JWT (fallback) | X-Mcp-User-Id (dev only).

@@ -243,6 +243,51 @@ resource "google_firestore_index" "plaid_accounts_user_item" {
   depends_on = [google_firestore_database.database]
 }
 
+# plaid_pending_transactions: filter by user_id + status, order by created_at DESC.
+# Required by plaid_service.list_pending_transactions.
+resource "google_firestore_index" "plaid_pending_user_status_created" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "plaid_pending_transactions"
+
+  fields {
+    field_path = "user_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "status"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "created_at"
+    order      = "DESCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
+
+# plaid_pending_transactions: dedupe lookup by user_id + plaid_transaction_id.
+# Required by sync_transactions._find_pending_by_plaid_txn_id.
+resource "google_firestore_index" "plaid_pending_user_txn_id" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "plaid_pending_transactions"
+
+  fields {
+    field_path = "user_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "plaid_transaction_id"
+    order      = "ASCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
+
 # Index for querying notifications by user and read status
 resource "google_firestore_index" "notifications_user_unread" {
   project    = var.project_id
