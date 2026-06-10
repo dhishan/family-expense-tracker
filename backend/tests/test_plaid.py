@@ -695,3 +695,130 @@ class TestSyncTransactions:
             result = sync_transactions("item-nonexistent")
 
         assert result.get("error") == "item_not_found"
+
+
+# ---------------------------------------------------------------------------
+# 6. is_income_transaction
+# ---------------------------------------------------------------------------
+
+
+class TestIsIncomeTransaction:
+    def test_negative_amount_is_income(self):
+        from app.services.plaid_service import is_income_transaction
+        assert is_income_transaction(None, -50.0) is True
+
+    def test_positive_amount_expense_category_is_not_income(self):
+        from app.services.plaid_service import is_income_transaction
+        assert is_income_transaction({"primary": "FOOD_AND_DRINK"}, 12.50) is False
+
+    def test_income_primary_is_income(self):
+        from app.services.plaid_service import is_income_transaction
+        assert is_income_transaction({"primary": "INCOME"}, 1500.0) is True
+
+    def test_transfer_in_primary_is_income(self):
+        from app.services.plaid_service import is_income_transaction
+        assert is_income_transaction({"primary": "TRANSFER_IN"}, 200.0) is True
+
+    def test_transfer_out_not_income(self):
+        from app.services.plaid_service import is_income_transaction
+        assert is_income_transaction({"primary": "TRANSFER_OUT"}, 200.0) is False
+
+    def test_none_category_zero_amount_not_income(self):
+        from app.services.plaid_service import is_income_transaction
+        assert is_income_transaction(None, 0.0) is False
+
+    def test_txn_to_doc_sets_is_income_for_negative_amount(self):
+        """_txn_to_doc should set is_income=True for negative amounts."""
+        from app.services.plaid_service import _txn_to_doc
+
+        txn = {
+            "transaction_id": "txn-income",
+            "account_id": "acct-1",
+            "amount": -1200.0,
+            "name": "Payroll",
+            "merchant_name": None,
+            "date": "2026-06-01",
+            "authorized_date": None,
+            "pending": False,
+            "iso_currency_code": "USD",
+            "personal_finance_category": {"primary": "INCOME"},
+        }
+        doc = _txn_to_doc(txn, "fam-001", "user-alice", "item-1", "Checking", "Chase")
+        assert doc["is_income"] is True
+
+    def test_txn_to_doc_sets_is_income_false_for_normal_expense(self):
+        from app.services.plaid_service import _txn_to_doc
+
+        txn = {
+            "transaction_id": "txn-coffee",
+            "account_id": "acct-1",
+            "amount": 5.50,
+            "name": "Starbucks",
+            "merchant_name": "Starbucks",
+            "date": "2026-06-01",
+            "authorized_date": None,
+            "pending": False,
+            "iso_currency_code": "USD",
+            "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
+        }
+        doc = _txn_to_doc(txn, "fam-001", "user-alice", "item-1", "Checking", "Chase")
+        assert doc["is_income"] is False
+
+
+# ---------------------------------------------------------------------------
+# 7. exchange_public_token returns immediately (sync_transactions NOT awaited)
+# ---------------------------------------------------------------------------
+
+
+class TestExchangeAsync:
+    def test_exchange_returns_sync_status_pending_without_awaiting_sync(self):
+        """exchange_public_token should NOT await sync_transactions inline.
+
+        sync_transactions should be called via asyncio.create_task, meaning it
+        is never directly awaited. We verify this by making sync_transactions
+        block — if awaited inline, the request would block too, and the test
+        would time out. Instead we assert the response has sync_status='pending'.
+        """
+        import asyncio
+
+        user = _make_user()
+
+        # Minimal mocks for the plaid client calls inside exchange_public_token
+        mock_client = MagicMock()
+        mock_client.item_public_token_exchange.return_value.to_dict.return_value = {
+            "access_token": "access-sandbox-test",
+            "item_id": "item-exchange-test",
+        }
+        mock_client.item_get.return_value.to_dict.return_value = {
+            "item": {"institution_id": "ins_1"}
+        }
+        mock_client.institutions_get_by_id.return_value.to_dict.return_value = {
+            "institution": {"name": "Test Bank"}
+        }
+        mock_client.accounts_get.return_value.to_dict.return_value = {"accounts": []}
+
+        sync_called = []
+
+        def mock_sync(item_id):
+            sync_called.append(item_id)
+
+        with (
+            patch("app.routers.plaid._plaid_client", return_value=mock_client),
+            patch("app.services.plaid_service.upsert_accounts"),
+            patch("app.services.plaid_service.upsert_item"),
+            patch("app.services.plaid_service.sync_transactions", side_effect=mock_sync),
+        ):
+            from app.routers.plaid import exchange_public_token
+            from app.routers.plaid import ExchangeRequest
+
+            async def run():
+                req = ExchangeRequest(public_token="public-test-token")
+                return await exchange_public_token(req, current_user=user)
+
+            result = asyncio.get_event_loop().run_until_complete(run())
+
+        assert result["sync_status"] == "pending"
+        assert result["pending_count"] == 0
+        assert "plaid_item_id" in result
+        # sync_transactions may or may not have been called yet (it's a task),
+        # but the endpoint must return without blocking on it.

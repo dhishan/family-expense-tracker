@@ -294,8 +294,20 @@ export const plaidApi = {
     return response.data
   },
 
-  exchangePublicToken: async (public_token: string): Promise<{ plaid_item_id: string; institution_name: string }> => {
-    const response = await api.post<{ plaid_item_id: string; institution_name: string }>('/plaid/exchange', { public_token })
+  exchangePublicToken: async (public_token: string): Promise<{
+    plaid_item_id: string
+    institution_name: string
+    accounts_count: number
+    pending_count: number
+    sync_status: 'pending' | 'complete'
+  }> => {
+    const response = await api.post<{
+      plaid_item_id: string
+      institution_name: string
+      accounts_count: number
+      pending_count: number
+      sync_status: 'pending' | 'complete'
+    }>('/plaid/exchange', { public_token })
     return response.data
   },
 
@@ -325,7 +337,17 @@ export const plaidApi = {
 
   approve: async (
     id: string,
-    edits?: { amount?: number; category?: string; description?: string; beneficiary?: string }
+    edits?: {
+      amount?: number
+      category?: string
+      description?: string
+      beneficiary?: string
+      date?: string
+      merchant?: string
+      payment_method?: string
+      tags?: string[]
+      is_income_override?: boolean
+    }
   ): Promise<{ expense: Expense }> => {
     const response = await api.post<{ expense: Expense }>(`/plaid/pending/${id}/approve`, edits || {})
     return response.data

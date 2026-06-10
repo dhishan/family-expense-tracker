@@ -232,6 +232,7 @@ export interface PendingTransaction {
   suggested_category: ExpenseCategory
   plaid_category: string | null
   pending_until_posted: boolean
+  is_income: boolean
   status: 'pending' | 'approved' | 'discarded'
   expense_id: string | null
   created_at: string

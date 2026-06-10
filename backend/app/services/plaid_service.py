@@ -111,6 +111,31 @@ def map_plaid_category(personal_finance_category: dict | None) -> str:
     primary = (personal_finance_category.get("primary") or "").upper()
     return PLAID_CATEGORY_MAP.get(primary, "other")
 
+
+# Income primaries per Plaid docs. TRANSFER_IN covers inbound ACH / wire.
+_INCOME_PRIMARIES = frozenset({"INCOME", "TRANSFER_IN"})
+
+
+def is_income_transaction(
+    plaid_personal_finance_category: dict | None,
+    amount: float,
+) -> bool:
+    """Return True when a Plaid transaction looks like income / inbound money.
+
+    Two signals:
+    1. Plaid's personal_finance_category.primary is INCOME or TRANSFER_IN.
+    2. Amount is negative — Plaid uses positive amounts for debits (money leaving
+       a depository account) and negative for credits (money arriving), so a
+       negative amount always means money came IN.
+    """
+    if amount < 0:
+        return True
+    if plaid_personal_finance_category:
+        primary = (plaid_personal_finance_category.get("primary") or "").upper()
+        if primary in _INCOME_PRIMARIES:
+            return True
+    return False
+
 _ENV_MAP = {
     "sandbox": plaid.Environment.Sandbox,
     "development": plaid.Environment.Sandbox,  # plaid-python v29+ removed Development; map to Sandbox for local dev
@@ -430,6 +455,7 @@ def _txn_to_doc(txn: Any, family_id: str, connected_by_user_id: str, plaid_item_
         "plaid_category": pfc,
         "pending_until_posted": bool(_get(txn, "pending")),
         "raw_personal_finance_category": pfc,
+        "is_income": is_income_transaction(pfc, float(amount)),
         "status": "pending",
         "expense_id": None,
         "created_at": _now(),

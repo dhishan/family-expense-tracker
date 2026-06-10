@@ -14,8 +14,8 @@ import {
 } from '@heroicons/react/24/outline'
 import { expensesApi, plaidApi } from '../services/api'
 import { useAuthStore } from '../store/auth'
-import { CATEGORY_INFO } from '../types'
-import type { ExpenseCreate, ExpenseCategory, Expense, PendingTransaction } from '../types'
+import { CATEGORY_INFO, PAYMENT_METHOD_LABELS } from '../types'
+import type { ExpenseCreate, ExpenseCategory, PaymentMethod, Expense, PendingTransaction } from '../types'
 import QuickAddStrip from '../components/QuickAddStrip'
 
 interface EditFormData {
@@ -29,9 +29,13 @@ interface EditFormData {
 
 interface ApproveFormData {
   amount: number
+  date: string
   category: ExpenseCategory
   description: string
+  merchant: string
+  payment_method: string
   beneficiary: string
+  tags: string
 }
 
 // ---------------------------------------------------------------------------
@@ -53,6 +57,47 @@ function PendingRow({ tx, onApproveClick, onSaveUncategorized, onDiscardClick }:
   const accountSuffix = tx.account_name
     ? `${tx.institution_name} ${tx.account_name}`
     : tx.institution_name
+
+  const isIncome = tx.is_income === true
+
+  if (isIncome) {
+    return (
+      <div className="p-4 border border-green-200 rounded-lg bg-green-50">
+        <div className="flex items-start justify-between">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="font-medium text-gray-900 truncate">
+                {tx.merchant_name || tx.name || 'Unknown source'}
+              </p>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded-full">
+                💰 Income
+              </span>
+            </div>
+            <p className="text-sm text-gray-500 mt-0.5">
+              {formattedDate && `${formattedDate} · `}{accountSuffix}
+            </p>
+          </div>
+          <span className="ml-4 text-base font-semibold text-green-700 whitespace-nowrap">
+            +${Math.abs(tx.amount).toFixed(2)}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-2 mt-3">
+          <button
+            onClick={() => onDiscardClick(tx)}
+            className="px-3 py-1.5 text-sm bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition-colors"
+          >
+            Discard
+          </button>
+          <button
+            onClick={() => onApproveClick(tx)}
+            className="px-3 py-1.5 text-sm border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            Record as expense anyway
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="p-4 border border-amber-200 rounded-lg bg-white">
@@ -103,6 +148,8 @@ function PendingRow({ tx, onApproveClick, onSaveUncategorized, onDiscardClick }:
 export default function Transactions() {
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
   const [approvingTx, setApprovingTx] = useState<PendingTransaction | null>(null)
+  const [approvingIsIncome, setApprovingIsIncome] = useState(false)
+  const [incomeConfirmed, setIncomeConfirmed] = useState(false)
   const [filters, setFilters] = useState<{
     category?: ExpenseCategory
     start_date?: string
@@ -187,8 +234,20 @@ export default function Transactions() {
     onError: () => toast.error('Failed to delete expense'),
   })
 
+  type ApproveEdits = {
+    amount?: number
+    date?: string
+    category?: string
+    description?: string
+    merchant?: string
+    payment_method?: string
+    beneficiary?: string
+    tags?: string[]
+    is_income_override?: boolean
+  }
+
   const approveMutation = useMutation({
-    mutationFn: ({ id, edits }: { id: string; edits: Partial<ApproveFormData> }) =>
+    mutationFn: ({ id, edits }: { id: string; edits: ApproveEdits }) =>
       plaidApi.approve(id, edits),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
@@ -247,17 +306,45 @@ export default function Transactions() {
 
   const openApproveModal = (tx: PendingTransaction) => {
     setApprovingTx(tx)
+    setApprovingIsIncome(tx.is_income === true)
+    setIncomeConfirmed(false)
+    const dateStr = tx.date || tx.authorized_date || ''
     resetApprove({
       amount: Math.abs(tx.amount),
+      date: dateStr,
       category: tx.suggested_category,
       description: tx.merchant_name || tx.name || '',
+      merchant: tx.merchant_name || '',
+      payment_method: 'credit',
       beneficiary: user?.id || '',
+      tags: '',
     })
   }
 
   const onApproveSubmit = (data: ApproveFormData) => {
     if (!approvingTx) return
-    approveMutation.mutate({ id: approvingTx.id, edits: data })
+    // For income rows: require the confirmation banner to be acked
+    if (approvingIsIncome && !incomeConfirmed) {
+      setIncomeConfirmed(true)
+      return
+    }
+    const tagsArr = data.tags
+      ? data.tags.split(',').map((t) => t.trim()).filter(Boolean)
+      : []
+    approveMutation.mutate({
+      id: approvingTx.id,
+      edits: {
+        amount: data.amount,
+        date: data.date || undefined,
+        category: data.category,
+        description: data.description,
+        merchant: data.merchant || undefined,
+        payment_method: data.payment_method || undefined,
+        beneficiary: data.beneficiary,
+        tags: tagsArr,
+        is_income_override: approvingIsIncome,
+      },
+    })
   }
 
   const handleDiscard = (tx: PendingTransaction) => {
@@ -678,6 +765,52 @@ export default function Transactions() {
               </button>
             </div>
 
+            {/* Income confirmation banner — shown after first "Approve" click on an income row */}
+            {approvingIsIncome && incomeConfirmed && (
+              <div className="mx-4 mt-4 p-3 bg-yellow-50 border border-yellow-300 rounded-lg text-sm text-yellow-800">
+                <p className="font-medium mb-2">
+                  This transaction looks like income. Recording it as an expense will count ${Math.abs(approvingTx.amount).toFixed(2)} toward your budgets. Continue?
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // User confirmed — now actually submit
+                      handleApproveSubmit((data) => {
+                        const tagsArr = data.tags
+                          ? data.tags.split(',').map((t) => t.trim()).filter(Boolean)
+                          : []
+                        approveMutation.mutate({
+                          id: approvingTx.id,
+                          edits: {
+                            amount: data.amount,
+                            date: data.date || undefined,
+                            category: data.category,
+                            description: data.description,
+                            merchant: data.merchant || undefined,
+                            payment_method: data.payment_method || undefined,
+                            beneficiary: data.beneficiary,
+                            tags: tagsArr,
+                            is_income_override: true,
+                          },
+                        })
+                      })()
+                    }}
+                    className="px-3 py-1 bg-yellow-700 text-white rounded text-xs font-medium hover:bg-yellow-800"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIncomeConfirmed(false)}
+                    className="px-3 py-1 border border-yellow-400 text-yellow-800 rounded text-xs hover:bg-yellow-100"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
             <form onSubmit={handleApproveSubmit(onApproveSubmit)} className="p-4 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
@@ -688,6 +821,56 @@ export default function Transactions() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2"
                   placeholder="0.00"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+                <input
+                  type="date"
+                  {...registerApprove('date', { required: true })}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Note</label>
+                <input
+                  type="text"
+                  {...registerApprove('description')}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  placeholder="Note..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Merchant</label>
+                <input
+                  type="text"
+                  {...registerApprove('merchant')}
+                  list="approve-merchants-datalist"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  placeholder="Store or vendor name"
+                  autoComplete="off"
+                />
+                <datalist id="approve-merchants-datalist">
+                  {pastMerchants.map((m) => (
+                    <option key={m} value={m} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Payment method</label>
+                <select
+                  {...registerApprove('payment_method')}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                >
+                  {(Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[]).map((pm) => (
+                    <option key={pm} value={pm}>
+                      {PAYMENT_METHOD_LABELS[pm]}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -705,16 +888,6 @@ export default function Transactions() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                <input
-                  type="text"
-                  {...registerApprove('description')}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                  placeholder="Description..."
-                />
-              </div>
-
-              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">For</label>
                 <select
                   {...registerApprove('beneficiary')}
@@ -727,6 +900,16 @@ export default function Transactions() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tags</label>
+                <input
+                  type="text"
+                  {...registerApprove('tags')}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  placeholder="Comma-separated tags..."
+                />
               </div>
 
               <div className="flex gap-3 pt-4">

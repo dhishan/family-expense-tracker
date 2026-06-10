@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import toast from 'react-hot-toast'
@@ -30,12 +30,32 @@ function ConnectedAccounts() {
   const [renameValue, setRenameValue] = useState('')
   const [reconnectToken, setReconnectToken] = useState<string | null>(null)
   const [disconnectConfirmId, setDisconnectConfirmId] = useState<string | null>(null)
+  // IDs of newly connected items whose initial sync is still running
+  const [syncingItemIds, setSyncingItemIds] = useState<Set<string>>(new Set())
 
   const { data } = useQuery({
     queryKey: ['plaid', 'items'],
     queryFn: plaidApi.listItems,
     enabled: !!user?.family_id,
+    // Poll while any item is still syncing (cap: ~60s of 3s intervals = 20 rounds)
+    refetchInterval: syncingItemIds.size > 0 ? 3000 : false,
   })
+
+  // Remove items from syncing set once last_synced_at becomes non-null
+  useEffect(() => {
+    if (!data || syncingItemIds.size === 0) return
+    const stillSyncing = new Set<string>()
+    for (const id of syncingItemIds) {
+      const item = data.items.find((i: PlaidItem) => i.id === id)
+      if (item && !item.last_synced_at) {
+        stillSyncing.add(id)
+      }
+    }
+    if (stillSyncing.size !== syncingItemIds.size) {
+      setSyncingItemIds(stillSyncing)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data])
 
   const items = data?.items ?? []
 
@@ -44,10 +64,22 @@ function ConnectedAccounts() {
     token: linkToken || '',
     onSuccess: async (public_token) => {
       try {
-        await plaidApi.exchangePublicToken(public_token)
+        const result = await plaidApi.exchangePublicToken(public_token)
         queryClient.invalidateQueries({ queryKey: ['plaid', 'items'] })
         queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
         toast.success('Bank connected!')
+        // If sync is still running server-side, mark this item for polling
+        if (result.sync_status === 'pending') {
+          setSyncingItemIds((prev) => new Set([...prev, result.plaid_item_id]))
+          // Safety cap: stop polling after 60s regardless
+          setTimeout(() => {
+            setSyncingItemIds((prev) => {
+              const next = new Set(prev)
+              next.delete(result.plaid_item_id)
+              return next
+            })
+          }, 60_000)
+        }
       } catch {
         toast.error('Failed to connect bank')
       }
@@ -188,6 +220,12 @@ function ConnectedAccounts() {
                       <div className="flex items-center gap-1 mt-1 text-xs text-red-600">
                         <ExclamationTriangleIcon className="h-3.5 w-3.5" />
                         Needs reconnection
+                      </div>
+                    )}
+                    {syncingItemIds.has(item.id) && (
+                      <div className="flex items-center gap-1 mt-1 text-xs text-blue-600">
+                        <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+                        Syncing transactions...
                       </div>
                     )}
                   </div>

@@ -82,6 +82,7 @@ const baseTx: PendingTransaction = {
   suggested_category: 'dining',
   plaid_category: 'FOOD_AND_DRINK',
   pending_until_posted: false,
+  is_income: false,
   status: 'pending',
   expense_id: null,
   created_at: '2026-03-14T10:00:00Z',

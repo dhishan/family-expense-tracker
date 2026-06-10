@@ -23,6 +23,7 @@ items, accounts, and pending transactions connected by any other family member.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -32,6 +33,9 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel
+
+# Background task set — keeps references alive so GC doesn't cancel in-flight tasks.
+_BG_TASKS: set[asyncio.Task] = set()
 
 from app.auth.dependencies import get_current_user
 from app.config import get_settings
@@ -70,6 +74,12 @@ class ApproveRequest(BaseModel):
     category: Optional[str] = None
     description: Optional[str] = None
     beneficiary: Optional[str] = None
+    # Extended fields — mirroring the manual Add Transaction form
+    date: Optional[str] = None          # ISO date string e.g. "2026-06-10"
+    merchant: Optional[str] = None
+    payment_method: Optional[str] = None
+    tags: Optional[list[str]] = None
+    is_income_override: bool = False     # True when user explicitly approves an income row
 
 
 # ---------------------------------------------------------------------------
@@ -247,11 +257,19 @@ async def exchange_public_token(
         status="active",
     )
 
-    # 5. Trigger initial sync (best-effort)
-    try:
-        plaid_service.sync_transactions(plaid_item_id)
-    except Exception:
-        logger.warning("Initial sync failed for item %s — will retry via webhook", plaid_item_id)
+    # 5. Kick off initial sync as a background task — do NOT await it inline.
+    # Plaid Sandbox can take 10-30s for the initial sync; blocking here would freeze
+    # the UI. Plaid also fires INITIAL_UPDATE / HISTORICAL_UPDATE webhooks that will
+    # re-trigger the sync, so the synchronous call is redundant anyway.
+    async def _bg_sync():
+        try:
+            plaid_service.sync_transactions(plaid_item_id)
+        except Exception:
+            logger.warning("Background initial sync failed for item %s — will retry via webhook", plaid_item_id)
+
+    task = asyncio.create_task(_bg_sync())
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
 
     accounts_out = [
         {
@@ -268,6 +286,9 @@ async def exchange_public_token(
         "plaid_item_id": plaid_item_id,
         "institution_name": institution_name,
         "accounts": accounts_out,
+        "accounts_count": len(raw_accounts),
+        "pending_count": 0,
+        "sync_status": "pending",
     }
 
 
@@ -670,6 +691,11 @@ async def _approve_pending(
     override_category: str | None,
     override_description: str | None,
     override_beneficiary: str | None,
+    override_date: str | None = None,
+    override_merchant: str | None = None,
+    override_payment_method: str | None = None,
+    override_tags: list[str] | None = None,
+    is_income_override: bool = False,
 ) -> dict:
     """Shared logic for approve and save-uncategorized."""
     if not current_user.family_id:
@@ -707,31 +733,48 @@ async def _approve_pending(
 
     beneficiary = override_beneficiary or current_user.id
 
-    # Derive payment method from account type (family-scoped lookup)
-    acct_info = _get_account_info(current_user.family_id, pending.get("account_id", ""))
-    payment_method_str = _payment_method_from_account_type(acct_info.get("type"))
-    try:
-        payment_method = PaymentMethod(payment_method_str)
-    except ValueError:
-        payment_method = PaymentMethod.CREDIT
+    # Derive payment method — user override wins; else derive from account type
+    if override_payment_method:
+        try:
+            payment_method = PaymentMethod(override_payment_method)
+        except ValueError:
+            payment_method = PaymentMethod.CREDIT
+    else:
+        acct_info = _get_account_info(current_user.family_id, pending.get("account_id", ""))
+        payment_method_str = _payment_method_from_account_type(acct_info.get("type"))
+        try:
+            payment_method = PaymentMethod(payment_method_str)
+        except ValueError:
+            payment_method = PaymentMethod.CREDIT
 
-    # Parse date
-    date_str = pending.get("date") or pending.get("authorized_date")
-    try:
-        txn_date = date.fromisoformat(str(date_str)) if date_str else date.today()
-    except (ValueError, TypeError):
-        txn_date = date.today()
+    # Parse date — user override wins; else use Plaid-supplied date
+    if override_date:
+        try:
+            txn_date = date.fromisoformat(override_date)
+        except (ValueError, TypeError):
+            txn_date = date.today()
+    else:
+        date_str = pending.get("date") or pending.get("authorized_date")
+        try:
+            txn_date = date.fromisoformat(str(date_str)) if date_str else date.today()
+        except (ValueError, TypeError):
+            txn_date = date.today()
+
+    # Merchant — user override wins; else use Plaid-supplied merchant_name
+    merchant = override_merchant if override_merchant is not None else pending.get("merchant_name")
+
+    tags = override_tags if override_tags is not None else []
 
     expense_create = ExpenseCreate(
         amount=amount,
         currency=pending.get("iso_currency_code") or "USD",
         date=txn_date,
         description=description,
-        merchant=pending.get("merchant_name"),
+        merchant=merchant,
         payment_method=payment_method,
         category=category,
         beneficiary=beneficiary,
-        tags=[],
+        tags=tags,
     )
 
     svc = get_expense_service()
@@ -740,10 +783,14 @@ async def _approve_pending(
     # Store extra Plaid metadata on the expense doc (non-model fields, set directly)
     try:
         db = get_firestore_client()
-        db.collection("expenses").document(expense.id).update({
+        extra: dict[str, Any] = {
             "source": "plaid",
             "plaid_transaction_id": pending.get("plaid_transaction_id"),
-        })
+        }
+        # Forward-looking: tag income approvals so future income tab work is correct.
+        if is_income_override:
+            extra["is_income"] = True
+        db.collection("expenses").document(expense.id).update(extra)
     except Exception:
         logger.warning("Could not write plaid metadata onto expense %s", expense.id)
 
@@ -772,6 +819,11 @@ async def approve_pending(
         override_category=body.category,
         override_description=body.description,
         override_beneficiary=body.beneficiary,
+        override_date=body.date,
+        override_merchant=body.merchant,
+        override_payment_method=body.payment_method,
+        override_tags=body.tags,
+        is_income_override=body.is_income_override,
     )
 
 
