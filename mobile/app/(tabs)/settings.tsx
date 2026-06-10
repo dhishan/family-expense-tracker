@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   View,
   Text,
@@ -6,15 +7,240 @@ import {
   Alert,
   ScrollView,
   Linking,
+  TextInput,
+  ActivityIndicator,
 } from 'react-native'
 import { router } from 'expo-router'
 import Constants from 'expo-constants'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/auth'
-import { authApi } from '@/services/api'
+import { authApi, plaidApi } from '@/services/api'
+import { create, open } from 'react-native-plaid-link-sdk'
+import type { PlaidItem } from '@/types'
+
+function formatTimeAgo(iso: string | null): string {
+  if (!iso) return 'never'
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
+}
+
+interface BankCardProps {
+  item: PlaidItem
+  currentUserId: string
+  onRename: (id: string, name: string) => void
+  onReconnect: (id: string) => void
+  onDisconnect: (id: string, name: string) => void
+}
+
+function BankCard({ item, currentUserId, onRename, onReconnect, onDisconnect }: BankCardProps) {
+  const [editing, setEditing] = useState(false)
+  const [nameInput, setNameInput] = useState(item.institution_name)
+
+  const handleRenameConfirm = () => {
+    if (nameInput.trim() && nameInput.trim() !== item.institution_name) {
+      onRename(item.id, nameInput.trim())
+    }
+    setEditing(false)
+  }
+
+  return (
+    <View style={cardStyles.card}>
+      <View style={cardStyles.topRow}>
+        <Text style={cardStyles.icon}>🏦</Text>
+        {editing ? (
+          <View style={cardStyles.renameRow}>
+            <TextInput
+              style={cardStyles.renameInput}
+              value={nameInput}
+              onChangeText={setNameInput}
+              autoFocus
+              onSubmitEditing={handleRenameConfirm}
+            />
+            <TouchableOpacity onPress={handleRenameConfirm} style={cardStyles.confirmBtn}>
+              <Text style={cardStyles.confirmText}>✓</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <Text style={cardStyles.institutionName}>{item.institution_name}</Text>
+        )}
+        {item.status === 'needs_reauth' && (
+          <View style={cardStyles.reAuthBadge}>
+            <Text style={cardStyles.reAuthText}>Needs reauth</Text>
+          </View>
+        )}
+      </View>
+      <Text style={cardStyles.meta}>
+        {item.accounts.length} account{item.accounts.length !== 1 ? 's' : ''}
+        {item.last_synced_at ? ` · last sync ${formatTimeAgo(item.last_synced_at)}` : ''}
+      </Text>
+
+      <View style={cardStyles.actions}>
+        <TouchableOpacity
+          style={cardStyles.actionBtn}
+          onPress={() => setEditing(true)}
+          testID={`rename-item-${item.id}`}
+        >
+          <Text style={cardStyles.actionText}>Rename</Text>
+        </TouchableOpacity>
+        {item.status === 'needs_reauth' && (
+          <TouchableOpacity
+            style={[cardStyles.actionBtn, cardStyles.actionBtnWarning]}
+            onPress={() => onReconnect(item.id)}
+            testID={`reconnect-item-${item.id}`}
+          >
+            <Text style={[cardStyles.actionText, cardStyles.actionTextWarning]}>Reconnect</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity
+          style={[cardStyles.actionBtn, cardStyles.actionBtnDanger]}
+          onPress={() => onDisconnect(item.id, item.institution_name)}
+          testID={`disconnect-item-${item.id}`}
+        >
+          <Text style={[cardStyles.actionText, cardStyles.actionTextDanger]}>Disconnect</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  )
+}
+
+const cardStyles = StyleSheet.create({
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 14,
+    marginTop: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  topRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  icon: { fontSize: 20, marginRight: 8 },
+  institutionName: { fontSize: 15, fontWeight: '600', color: '#111827', flex: 1 },
+  reAuthBadge: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginLeft: 8,
+  },
+  reAuthText: { fontSize: 11, color: '#92400e', fontWeight: '600' },
+  meta: { fontSize: 12, color: '#6b7280', marginBottom: 10 },
+  actions: { flexDirection: 'row', gap: 8 },
+  actionBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#f9fafb',
+  },
+  actionBtnWarning: { borderColor: '#fbbf24', backgroundColor: '#fffbeb' },
+  actionBtnDanger: { borderColor: '#fca5a5', backgroundColor: '#fef2f2' },
+  actionText: { fontSize: 12, color: '#374151', fontWeight: '500' },
+  actionTextWarning: { color: '#92400e' },
+  actionTextDanger: { color: '#dc2626' },
+  renameRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  renameInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#93c5fd',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    fontSize: 15,
+    color: '#111827',
+  },
+  confirmBtn: { padding: 6 },
+  confirmText: { fontSize: 16, color: '#16a34a', fontWeight: '700' },
+})
 
 export default function SettingsScreen() {
   const { user, family, logout } = useAuthStore()
   const appVersion = Constants.expoConfig?.version ?? '1.0.0'
+  const queryClient = useQueryClient()
+  const [connectingBank, setConnectingBank] = useState(false)
+
+  const { data: itemsData, isLoading: itemsLoading } = useQuery({
+    queryKey: ['plaid', 'items'],
+    queryFn: () => plaidApi.listItems(),
+    enabled: !!user?.family_id,
+  })
+
+  const renameMutation = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => plaidApi.renameItem(id, name),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['plaid', 'items'] }),
+    onError: () => Alert.alert('Error', 'Failed to rename account.'),
+  })
+
+  const disconnectMutation = useMutation({
+    mutationFn: (id: string) => plaidApi.disconnectItem(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['plaid', 'items'] })
+      queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
+    },
+    onError: () => Alert.alert('Error', 'Failed to disconnect account.'),
+  })
+
+  const handleConnectBank = async () => {
+    try {
+      setConnectingBank(true)
+      const { link_token } = await plaidApi.createLinkToken()
+      create({ token: link_token })
+      open({
+        onSuccess: async (success: { publicToken: string }) => {
+          try {
+            await plaidApi.exchangePublicToken(success.publicToken)
+            queryClient.invalidateQueries({ queryKey: ['plaid', 'items'] })
+            queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
+          } catch {
+            Alert.alert('Error', 'Failed to link bank account.')
+          }
+        },
+        onExit: (_exit: unknown) => {
+          // user dismissed
+        },
+      })
+    } catch {
+      Alert.alert('Error', 'Failed to start bank connection.')
+    } finally {
+      setConnectingBank(false)
+    }
+  }
+
+  const handleReconnect = async (id: string) => {
+    try {
+      const { link_token } = await plaidApi.reconnectItem(id)
+      create({ token: link_token })
+      open({
+        onSuccess: async (_success: { publicToken: string }) => {
+          queryClient.invalidateQueries({ queryKey: ['plaid', 'items'] })
+          queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
+        },
+        onExit: (_exit: unknown) => {},
+      })
+    } catch {
+      Alert.alert('Error', 'Failed to start reconnect.')
+    }
+  }
+
+  const handleDisconnect = (id: string, name: string) => {
+    Alert.alert(
+      `Disconnect ${name}?`,
+      'Pending items from this connection will also be removed.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: () => disconnectMutation.mutate(id),
+        },
+      ]
+    )
+  }
 
   const handleSignOut = () => {
     Alert.alert('Sign out', 'Are you sure you want to sign out?', [
@@ -26,7 +252,7 @@ export default function SettingsScreen() {
           try {
             await authApi.logout()
           } catch {
-            // ignore — backend session cleanup is best-effort
+            // ignore
           }
           await logout()
           router.replace('/login')
@@ -38,6 +264,8 @@ export default function SettingsScreen() {
   const openWebApp = () => {
     Linking.openURL('https://ui.expense-tracker.blueelephants.org')
   }
+
+  const items = itemsData?.items ?? []
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -59,6 +287,41 @@ export default function SettingsScreen() {
             <Text style={styles.rowLabel}>Family</Text>
             <Text style={styles.rowValue}>{family.name}</Text>
           </View>
+        )}
+      </View>
+
+      {/* Connected Accounts */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Connected Accounts</Text>
+        <TouchableOpacity
+          style={styles.connectBtn}
+          onPress={handleConnectBank}
+          disabled={connectingBank}
+          testID="connect-bank-btn"
+        >
+          {connectingBank ? (
+            <ActivityIndicator size="small" color="#2563eb" />
+          ) : (
+            <Text style={styles.connectBtnText}>+ Connect a bank</Text>
+          )}
+        </TouchableOpacity>
+        {itemsLoading ? (
+          <ActivityIndicator size="small" color="#9ca3af" style={{ margin: 16 }} />
+        ) : items.length === 0 ? (
+          <View style={styles.row}>
+            <Text style={styles.rowValue}>No connected banks</Text>
+          </View>
+        ) : (
+          items.map((item) => (
+            <BankCard
+              key={item.id}
+              item={item}
+              currentUserId={user?.id ?? ''}
+              onRename={(id, name) => renameMutation.mutate({ id, name })}
+              onReconnect={handleReconnect}
+              onDisconnect={handleDisconnect}
+            />
+          ))
         )}
       </View>
 
@@ -159,6 +422,17 @@ const styles = StyleSheet.create({
   },
   linkText: { fontSize: 15, color: '#2563eb' },
   linkArrow: { fontSize: 15, color: '#9ca3af' },
+  connectBtn: {
+    margin: 12,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#93c5fd',
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    backgroundColor: '#eff6ff',
+  },
+  connectBtnText: { fontSize: 15, color: '#2563eb', fontWeight: '600' },
   signOutBtn: {
     marginHorizontal: 16,
     backgroundColor: '#fff',

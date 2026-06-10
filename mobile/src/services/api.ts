@@ -19,6 +19,9 @@ import type {
   InvestmentAccount,
   HoldingGroup,
   ChatMessage,
+  PlaidItemsResponse,
+  PlaidItem,
+  PendingListResponse,
 } from '../types'
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
@@ -396,6 +399,73 @@ export const chatApi = {
 
   deleteConversation: async (convId: string): Promise<void> => {
     await api.delete(`/chat/conversations/${encodeURIComponent(convId)}`)
+  },
+}
+
+// ─── Plaid ────────────────────────────────────────────────────────────────────
+
+export const plaidApi = {
+  createLinkToken: async (): Promise<{ link_token: string; expiration: string }> => {
+    const response = await api.post<{ link_token: string; expiration: string }>('/plaid/link-token')
+    return response.data
+  },
+
+  exchangePublicToken: async (
+    public_token: string
+  ): Promise<{ plaid_item_id: string; institution_name: string }> => {
+    const response = await api.post<{ plaid_item_id: string; institution_name: string }>(
+      '/plaid/exchange',
+      { public_token }
+    )
+    return response.data
+  },
+
+  listItems: async (): Promise<PlaidItemsResponse> => {
+    const response = await api.get<PlaidItemsResponse>('/plaid/items')
+    return response.data
+  },
+
+  renameItem: async (id: string, institution_name: string): Promise<{ ok: boolean }> => {
+    const response = await api.patch<{ ok: boolean }>(`/plaid/items/${id}`, { institution_name })
+    return response.data
+  },
+
+  disconnectItem: async (id: string): Promise<void> => {
+    await api.delete(`/plaid/items/${id}`)
+  },
+
+  reconnectItem: async (id: string): Promise<{ link_token: string }> => {
+    const response = await api.post<{ link_token: string }>(`/plaid/items/${id}/reconnect`)
+    return response.data
+  },
+
+  listPending: async (page?: number, page_size?: number): Promise<PendingListResponse> => {
+    const response = await api.get<PendingListResponse>('/plaid/pending', {
+      params: { page, page_size },
+    })
+    return response.data
+  },
+
+  approve: async (
+    id: string,
+    edits?: { amount?: number; category?: string; description?: string; beneficiary?: string }
+  ): Promise<{ expense: Expense }> => {
+    const response = await api.post<{ expense: Expense }>(
+      `/plaid/pending/${id}/approve`,
+      edits || {}
+    )
+    return response.data
+  },
+
+  discard: async (id: string): Promise<void> => {
+    await api.post(`/plaid/pending/${id}/discard`)
+  },
+
+  saveUncategorized: async (id: string): Promise<{ expense: Expense }> => {
+    const response = await api.post<{ expense: Expense }>(
+      `/plaid/pending/${id}/save-uncategorized`
+    )
+    return response.data
   },
 }
 

@@ -12,6 +12,12 @@ jest.mock('expo-router', () => ({ router: { replace: jest.fn(), push: jest.fn() 
 
 
 jest.mock('@/services/api', () => {
+  const mockPending = {
+    pending: [],
+    total: 0,
+    page: 1,
+    page_size: 50,
+  }
   const mockData = [
     {
       id: 'e1',
@@ -58,6 +64,12 @@ jest.mock('@/services/api', () => {
       create: jest.fn().mockResolvedValue({ ...mockData[0], id: 'e-new' }),
       update: jest.fn().mockResolvedValue(mockData[0]),
       delete: jest.fn().mockResolvedValue(undefined),
+    },
+    plaidApi: {
+      listPending: jest.fn().mockResolvedValue(mockPending),
+      approve: jest.fn().mockResolvedValue({ expense: {} }),
+      discard: jest.fn().mockResolvedValue(undefined),
+      saveUncategorized: jest.fn().mockResolvedValue({ expense: {} }),
     },
   }
 })
@@ -131,6 +143,6 @@ describe('ExpensesScreen', () => {
     })
 
     const { findByText } = render(<ExpensesScreen />, { wrapper: makeWrapper() })
-    expect(await findByText('No expenses yet')).toBeTruthy()
+    expect(await findByText('No transactions yet')).toBeTruthy()
   })
 })

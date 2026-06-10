@@ -238,6 +238,64 @@ export interface ChatRequest {
   family_id?: string
 }
 
+// Plaid types — mirrored from frontend/src/types/index.ts
+export interface PlaidAccount {
+  id: string
+  name: string
+  mask: string | null
+  type: string
+  subtype: string | null
+  balances: {
+    current: number | null
+    available: number | null
+    iso_currency_code: string | null
+  }
+}
+
+export interface PlaidItem {
+  id: string
+  institution_name: string
+  status: 'active' | 'needs_reauth' | string
+  last_synced_at: string | null
+  connected_by_user_id: string
+  accounts: PlaidAccount[]
+}
+
+export interface PlaidItemsResponse {
+  items: PlaidItem[]
+}
+
+export interface PendingTransaction {
+  id: string
+  family_id: string
+  connected_by_user_id: string
+  plaid_item_id: string
+  plaid_transaction_id: string
+  account_id: string
+  account_name: string
+  institution_name: string
+  merchant_name: string | null
+  name: string | null
+  amount: number
+  iso_currency_code: string | null
+  date: string | null
+  authorized_date: string | null
+  suggested_category: ExpenseCategory
+  plaid_category: string | null
+  pending_until_posted: boolean
+  status: 'pending' | 'approved' | 'discarded'
+  expense_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PendingListResponse {
+  pending: PendingTransaction[]
+  total: number
+  page: number
+  page_size: number
+}
+
 // Category display info
 export const CATEGORY_INFO: Record<
   ExpenseCategory,

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import {
   View,
   Text,
@@ -12,13 +12,14 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Animated,
 } from 'react-native'
 import Slider from '@react-native-community/slider'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { expensesApi } from '@/services/api'
+import { expensesApi, plaidApi } from '@/services/api'
 import { useAuthStore } from '@/store/auth'
 import { CATEGORY_INFO } from '@/types'
-import type { ExpenseCategory, ExpenseCreate, Expense } from '@/types'
+import type { ExpenseCategory, ExpenseCreate, Expense, PendingTransaction } from '@/types'
 
 const CATEGORY_EMOJI: Record<string, string> = {
   groceries: '🛒',
@@ -65,6 +66,176 @@ function defaultForm(): ExpenseFormData {
     beneficiary: '',
   }
 }
+
+// ─── Approve modal (for both Add/Edit and Plaid pending approval) ──────────────
+
+interface ApproveModalProps {
+  visible: boolean
+  pending: PendingTransaction | null
+  onClose: () => void
+  onApprove: (edits: {
+    amount: number
+    category: ExpenseCategory
+    description: string
+    beneficiary: string
+  }) => void
+  isApproving: boolean
+  familyMembers: { id: string; display_name: string }[]
+  currentUserId: string
+}
+
+function ApproveModal({
+  visible,
+  pending,
+  onClose,
+  onApprove,
+  isApproving,
+  familyMembers,
+  currentUserId,
+}: ApproveModalProps) {
+  const [amount, setAmount] = useState('')
+  const [category, setCategory] = useState<ExpenseCategory>('other')
+  const [description, setDescription] = useState('')
+  const [beneficiary, setBeneficiary] = useState('')
+
+  useEffect(() => {
+    if (pending && visible) {
+      setAmount(String(pending.amount ?? ''))
+      setCategory(pending.suggested_category ?? 'other')
+      setDescription(pending.merchant_name ?? pending.name ?? '')
+      setBeneficiary(currentUserId)
+    }
+  }, [pending, visible, currentUserId])
+
+  const handleApprove = () => {
+    const amt = parseFloat(amount)
+    if (isNaN(amt) || amt <= 0) {
+      Alert.alert('Validation', 'Enter a valid amount greater than 0.')
+      return
+    }
+    onApprove({ amount: amt, category, description: description.trim(), beneficiary })
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <View style={modalStyles.container}>
+          <View style={modalStyles.header}>
+            <TouchableOpacity onPress={onClose}>
+              <Text style={modalStyles.cancel}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={modalStyles.title}>Approve Transaction</Text>
+            <TouchableOpacity onPress={handleApprove} disabled={isApproving}>
+              {isApproving ? (
+                <ActivityIndicator size="small" color="#2563eb" />
+              ) : (
+                <Text style={modalStyles.save}>Approve</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Category chips */}
+          <View style={modalStyles.chipsBar}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {CATEGORIES.map((cat) => {
+                const active = category === cat
+                return (
+                  <TouchableOpacity
+                    key={cat}
+                    style={[modalStyles.catChip, active && modalStyles.catChipActive]}
+                    onPress={() => setCategory(cat)}
+                    testID={`approve-category-chip-${cat}`}
+                  >
+                    <Text style={modalStyles.catEmoji}>{CATEGORY_EMOJI[cat] ?? '📝'}</Text>
+                    <Text style={[modalStyles.catLabel, active && modalStyles.catLabelActive]}>
+                      {CATEGORY_INFO[cat].label}
+                    </Text>
+                  </TouchableOpacity>
+                )
+              })}
+            </ScrollView>
+          </View>
+
+          <ScrollView
+            style={{ flex: 1 }}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ paddingBottom: 64 }}
+          >
+            <View style={modalStyles.form}>
+              <Text style={modalStyles.label}>Amount</Text>
+              <View style={modalStyles.amountRow}>
+                <Text style={modalStyles.dollar}>$</Text>
+                <TextInput
+                  style={modalStyles.amountInput}
+                  value={amount}
+                  onChangeText={setAmount}
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  testID="approve-amount-input"
+                />
+              </View>
+
+              <Text style={modalStyles.label}>Description</Text>
+              <TextInput
+                style={modalStyles.input}
+                value={description}
+                onChangeText={setDescription}
+                placeholder="What was this for?"
+                testID="approve-description-input"
+              />
+
+              {familyMembers.length > 1 && (
+                <>
+                  <Text style={modalStyles.label}>For</Text>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={{ marginBottom: 16 }}
+                  >
+                    {familyMembers.map((m) => (
+                      <TouchableOpacity
+                        key={m.id}
+                        style={[
+                          modalStyles.chip,
+                          beneficiary === m.id && modalStyles.chipActive,
+                        ]}
+                        onPress={() => setBeneficiary(m.id)}
+                      >
+                        <Text
+                          style={[
+                            modalStyles.chipText,
+                            beneficiary === m.id && modalStyles.chipTextActive,
+                          ]}
+                        >
+                          {m.display_name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </>
+              )}
+
+              {pending && (
+                <View style={modalStyles.pendingMeta}>
+                  <Text style={modalStyles.pendingMetaText}>
+                    {pending.institution_name}
+                    {pending.account_name ? ` · ${pending.account_name}` : ''}
+                    {pending.date ? ` · ${pending.date}` : ''}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  )
+}
+
+// ─── Add/Edit modal ────────────────────────────────────────────────────────────
 
 interface AddEditModalProps {
   visible: boolean
@@ -120,10 +291,6 @@ function AddEditModal({
     })
   }
 
-  // Mirror the web's QuickAddStrip: category chips at top (always visible
-  // even when the keyboard is open), amount with slider + numeric input,
-  // merchant typeahead, then a collapsible "Advanced" section for date +
-  // beneficiary.
   const [showAdvanced, setShowAdvanced] = useState(false)
   const sliderValue = Math.min(parseFloat(form.amount) || 0, 100)
 
@@ -149,8 +316,6 @@ function AddEditModal({
             </TouchableOpacity>
           </View>
 
-          {/* Category chips — pinned to the TOP so they remain visible even
-              when the keyboard is open (was the user's main complaint). */}
           <View style={modalStyles.chipsBar}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               {CATEGORIES.map((cat) => {
@@ -178,7 +343,6 @@ function AddEditModal({
             contentContainerStyle={{ paddingBottom: 64 }}
           >
             <View style={modalStyles.form}>
-              {/* Amount — big display + slider underneath */}
               <Text style={modalStyles.label}>Amount</Text>
               <View style={modalStyles.amountRow}>
                 <Text style={modalStyles.dollar}>$</Text>
@@ -221,7 +385,6 @@ function AddEditModal({
                 returnKeyType="next"
               />
 
-              {/* Advanced toggle — Date + Beneficiary collapsed by default */}
               <TouchableOpacity
                 onPress={() => setShowAdvanced((v) => !v)}
                 style={modalStyles.advancedToggle}
@@ -297,6 +460,208 @@ function AddEditModal({
   )
 }
 
+// ─── Undo snackbar ─────────────────────────────────────────────────────────────
+
+interface SnackbarItem {
+  id: string
+  label: string
+  onUndo: () => void
+}
+
+function Snackbar({ item, onDismiss }: { item: SnackbarItem; onDismiss: () => void }) {
+  const opacity = useRef(new Animated.Value(0)).current
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.delay(4000),
+      Animated.timing(opacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]).start(() => onDismiss())
+  }, [])
+
+  return (
+    <Animated.View style={[snackStyles.bar, { opacity }]}>
+      <Text style={snackStyles.label}>{item.label}</Text>
+      <TouchableOpacity
+        onPress={() => {
+          opacity.stopAnimation()
+          item.onUndo()
+          onDismiss()
+        }}
+      >
+        <Text style={snackStyles.undo}>Undo</Text>
+      </TouchableOpacity>
+    </Animated.View>
+  )
+}
+
+const snackStyles = StyleSheet.create({
+  bar: {
+    position: 'absolute',
+    bottom: 24,
+    left: 16,
+    right: 16,
+    backgroundColor: '#1f2937',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  label: { color: '#fff', fontSize: 14, flex: 1, marginRight: 12 },
+  undo: { color: '#60a5fa', fontSize: 14, fontWeight: '600' },
+})
+
+// ─── Pending review section ────────────────────────────────────────────────────
+
+interface PendingReviewSectionProps {
+  pendingItems: PendingTransaction[]
+  onApprove: (item: PendingTransaction) => void
+  onDiscard: (item: PendingTransaction) => void
+  onSaveUncategorized: (item: PendingTransaction) => void
+}
+
+function PendingReviewSection({
+  pendingItems,
+  onApprove,
+  onDiscard,
+  onSaveUncategorized,
+}: PendingReviewSectionProps) {
+  const [collapsed, setCollapsed] = useState(false)
+
+  if (pendingItems.length === 0) return null
+
+  return (
+    <View style={pendingStyles.container} testID="pending-review-section">
+      <TouchableOpacity
+        style={pendingStyles.header}
+        onPress={() => setCollapsed((v) => !v)}
+        testID="pending-review-header"
+      >
+        <Text style={pendingStyles.headerText}>
+          🔔  {pendingItems.length} transaction{pendingItems.length !== 1 ? 's' : ''} need review
+        </Text>
+        <Text style={pendingStyles.toggleBtn}>{collapsed ? 'Show' : 'Hide'}</Text>
+      </TouchableOpacity>
+
+      {!collapsed &&
+        pendingItems.map((item) => (
+          <View key={item.id} style={pendingStyles.row} testID={`pending-row-${item.id}`}>
+            <TouchableOpacity
+              style={pendingStyles.rowBody}
+              onPress={() => onApprove(item)}
+              testID={`pending-tap-${item.id}`}
+            >
+              <View style={pendingStyles.rowTop}>
+                <Text style={pendingStyles.merchant} numberOfLines={1}>
+                  {item.merchant_name ?? item.name ?? 'Unknown'}
+                </Text>
+                <Text style={pendingStyles.amount}>{fmtUSD(item.amount)}</Text>
+              </View>
+              <Text style={pendingStyles.meta}>
+                {item.date ?? ''}
+                {item.institution_name ? ` · ${item.institution_name}` : ''}
+                {item.account_name ? ` · ${item.account_name}` : ''}
+              </Text>
+            </TouchableOpacity>
+            <View style={pendingStyles.actions}>
+              <TouchableOpacity
+                style={pendingStyles.approveBtn}
+                onPress={() => onApprove(item)}
+                testID={`pending-approve-${item.id}`}
+              >
+                <Text style={pendingStyles.approveBtnText}>Approve</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={pendingStyles.saveUncatBtn}
+                onPress={() => onSaveUncategorized(item)}
+                testID={`pending-save-uncat-${item.id}`}
+              >
+                <Text style={pendingStyles.saveUncatBtnText}>Save</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={pendingStyles.discardBtn}
+                onPress={() => onDiscard(item)}
+                testID={`pending-discard-${item.id}`}
+              >
+                <Text style={pendingStyles.discardBtnText}>Discard</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
+    </View>
+  )
+}
+
+const pendingStyles = StyleSheet.create({
+  container: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 4,
+    backgroundColor: '#fffbeb',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    overflow: 'hidden',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#fef3c7',
+  },
+  headerText: { fontSize: 14, fontWeight: '600', color: '#92400e', flex: 1 },
+  toggleBtn: { fontSize: 13, color: '#b45309', fontWeight: '500' },
+  row: {
+    borderTopWidth: 1,
+    borderTopColor: '#fde68a',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  rowBody: { marginBottom: 8 },
+  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  merchant: { fontSize: 14, fontWeight: '600', color: '#111827', flex: 1, marginRight: 8 },
+  amount: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  meta: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  actions: { flexDirection: 'row', gap: 8 },
+  approveBtn: {
+    flex: 1,
+    backgroundColor: '#dcfce7',
+    borderRadius: 6,
+    paddingVertical: 6,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#86efac',
+  },
+  approveBtnText: { fontSize: 13, fontWeight: '600', color: '#166534' },
+  saveUncatBtn: {
+    flex: 1,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 6,
+    paddingVertical: 6,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+  },
+  saveUncatBtnText: { fontSize: 13, fontWeight: '600', color: '#374151' },
+  discardBtn: {
+    flex: 1,
+    backgroundColor: '#fee2e2',
+    borderRadius: 6,
+    paddingVertical: 6,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+  },
+  discardBtnText: { fontSize: 13, fontWeight: '600', color: '#991b1b' },
+})
+
+// ─── Modal styles ──────────────────────────────────────────────────────────────
+
 const modalStyles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   header: {
@@ -332,8 +697,6 @@ const modalStyles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   chipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-
-  // ── QuickAdd-strip styles ─────────────────────────────────────────────
   chipsBar: {
     paddingHorizontal: 12,
     paddingVertical: 12,
@@ -352,20 +715,11 @@ const modalStyles = StyleSheet.create({
     backgroundColor: '#fff',
     marginRight: 8,
   },
-  catChipActive: {
-    backgroundColor: '#eef2ff',
-    borderColor: '#2563eb',
-  },
+  catChipActive: { backgroundColor: '#eef2ff', borderColor: '#2563eb' },
   catEmoji: { fontSize: 16, marginRight: 6 },
   catLabel: { fontSize: 13, color: '#374151', fontWeight: '500' },
   catLabelActive: { color: '#1d4ed8', fontWeight: '600' },
-
-  amountRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
-  },
+  amountRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   dollar: { fontSize: 22, color: '#6b7280', fontWeight: '600' },
   amountInput: {
     flex: 1,
@@ -378,31 +732,62 @@ const modalStyles = StyleSheet.create({
     fontWeight: '700',
     color: '#111827',
   },
-  advancedToggle: {
-    paddingVertical: 8,
-    marginBottom: 8,
-  },
-  advancedToggleText: {
-    fontSize: 13,
-    color: '#6b7280',
-    fontWeight: '500',
-  },
+  advancedToggle: { paddingVertical: 8, marginBottom: 8 },
+  advancedToggleText: { fontSize: 13, color: '#6b7280', fontWeight: '500' },
   chipText: { fontSize: 13, color: '#374151' },
   chipTextActive: { color: '#fff' },
+  pendingMeta: {
+    backgroundColor: '#f3f4f6',
+    borderRadius: 6,
+    padding: 10,
+    marginTop: 4,
+  },
+  pendingMetaText: { fontSize: 12, color: '#6b7280' },
 })
 
-export default function ExpensesScreen() {
+// ─── Main screen ───────────────────────────────────────────────────────────────
+
+export default function TransactionsScreen() {
   const [showModal, setShowModal] = useState(false)
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
   const [page, setPage] = useState(1)
   const { user, familyMembers } = useAuthStore()
   const queryClient = useQueryClient()
 
+  // Plaid pending state
+  const [approvingPending, setApprovingPending] = useState<PendingTransaction | null>(null)
+  // IDs optimistically removed from the pending list (approved, discarded, saved)
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set())
+  // Items re-inserted by Undo (keyed by id to avoid duplicates)
+  const [undoneItems, setUndoneItems] = useState<Map<string, PendingTransaction>>(new Map())
+  const [snackbar, setSnackbar] = useState<SnackbarItem | null>(null)
+  const discardTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
   const { data, isLoading } = useQuery({
     queryKey: ['expenses', page],
     queryFn: () => expensesApi.list({ page, page_size: 20 }),
     enabled: !!user?.family_id,
   })
+
+  const { data: pendingData } = useQuery({
+    queryKey: ['plaid', 'pending'],
+    queryFn: () => plaidApi.listPending(1, 50),
+    enabled: !!user?.family_id,
+  })
+
+  // Derive local pending from server data minus removed IDs, plus undo'd items
+  const localPending: PendingTransaction[] = (() => {
+    const serverItems = pendingData?.pending ?? []
+    const merged = new Map<string, PendingTransaction>()
+    // Put undo'd items first
+    undoneItems.forEach((item, id) => {
+      if (!removedIds.has(id)) merged.set(id, item)
+    })
+    serverItems.forEach((item) => {
+      if (!removedIds.has(item.id)) merged.set(item.id, item)
+    })
+    return Array.from(merged.values())
+  })()
 
   const createMutation = useMutation({
     mutationFn: expensesApi.create,
@@ -431,6 +816,31 @@ export default function ExpensesScreen() {
     onError: () => Alert.alert('Error', 'Failed to delete expense.'),
   })
 
+  const approveMutation = useMutation({
+    mutationFn: ({
+      id,
+      edits,
+    }: {
+      id: string
+      edits: { amount: number; category: string; description: string; beneficiary: string }
+    }) => plaidApi.approve(id, edits),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
+      queryClient.invalidateQueries({ queryKey: ['expenses'] })
+      setApprovingPending(null)
+    },
+    onError: () => Alert.alert('Error', 'Failed to approve transaction.'),
+  })
+
+  const saveUncatMutation = useMutation({
+    mutationFn: (id: string) => plaidApi.saveUncategorized(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
+      queryClient.invalidateQueries({ queryKey: ['expenses'] })
+    },
+    onError: () => Alert.alert('Error', 'Failed to save transaction.'),
+  })
+
   const handleDelete = (id: string) => {
     Alert.alert('Delete expense', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
@@ -456,11 +866,72 @@ export default function ExpensesScreen() {
     setShowModal(true)
   }
 
+  const handleApprove = useCallback((item: PendingTransaction) => {
+    setApprovingPending(item)
+  }, [])
+
+  const handleApproveSubmit = useCallback(
+    (edits: { amount: number; category: ExpenseCategory; description: string; beneficiary: string }) => {
+      if (!approvingPending) return
+      // Optimistically remove from list
+      setRemovedIds((prev) => new Set([...prev, approvingPending.id]))
+      approveMutation.mutate({ id: approvingPending.id, edits })
+    },
+    [approvingPending, approveMutation]
+  )
+
+  const handleDiscard = useCallback(
+    (item: PendingTransaction) => {
+      // Optimistically remove
+      setRemovedIds((prev) => new Set([...prev, item.id]))
+
+      const label = `Discarded ${item.merchant_name ?? item.name ?? 'transaction'}`
+      let undone = false
+
+      const timer = setTimeout(() => {
+        if (!undone) {
+          plaidApi.discard(item.id).then(() => {
+            queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
+          })
+        }
+        discardTimers.current.delete(item.id)
+      }, 5000)
+
+      discardTimers.current.set(item.id, timer)
+
+      setSnackbar({
+        id: item.id,
+        label,
+        onUndo: () => {
+          undone = true
+          clearTimeout(timer)
+          discardTimers.current.delete(item.id)
+          // Remove from removedIds and re-add to undone items
+          setRemovedIds((prev) => {
+            const next = new Set(prev)
+            next.delete(item.id)
+            return next
+          })
+          setUndoneItems((prev) => new Map([...prev, [item.id, item]]))
+        },
+      })
+    },
+    [queryClient]
+  )
+
+  const handleSaveUncategorized = useCallback(
+    (item: PendingTransaction) => {
+      setRemovedIds((prev) => new Set([...prev, item.id]))
+      saveUncatMutation.mutate(item.id)
+    },
+    [saveUncatMutation]
+  )
+
   return (
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Expenses</Text>
+        <Text style={styles.title}>Transactions</Text>
         <TouchableOpacity style={styles.addBtn} onPress={openAdd} testID="add-expense-btn">
           <Text style={styles.addBtnText}>+ Add</Text>
         </TouchableOpacity>
@@ -468,56 +939,73 @@ export default function ExpensesScreen() {
 
       {isLoading ? (
         <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 40 }} />
-      ) : data?.expenses.length === 0 ? (
-        <View style={styles.empty}>
-          <Text style={styles.emptyTitle}>No expenses yet</Text>
-          <Text style={styles.emptySubtitle}>Tap "+ Add" to record your first expense.</Text>
-        </View>
       ) : (
         <FlatList
           data={data?.expenses ?? []}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={{ padding: 16 }}
+          contentContainerStyle={{ padding: 16, paddingTop: 0 }}
           testID="expenses-list"
-          renderItem={({ item }) => (
-            <View style={styles.expenseCard}>
-              <View style={{ flex: 1 }}>
-                <View style={styles.expenseRow}>
-                  <Text style={styles.expenseDescription} numberOfLines={1}>
-                    {item.description}
-                  </Text>
-                  <Text style={styles.expenseAmount}>{fmtUSD(item.amount)}</Text>
-                </View>
-                <View style={styles.expenseRow}>
-                  <View style={styles.categoryBadge}>
-                    <Text style={styles.categoryBadgeText}>
-                      {CATEGORY_INFO[item.category]?.label ?? item.category}
-                    </Text>
-                  </View>
-                  <Text style={styles.expenseDate}>{item.date}</Text>
-                </View>
-                {item.merchant && (
-                  <Text style={styles.expenseMerchant}>{item.merchant}</Text>
-                )}
-              </View>
-              <View style={styles.actions}>
-                <TouchableOpacity
-                  onPress={() => openEdit(item)}
-                  style={styles.actionBtn}
-                  testID={`edit-expense-${item.id}`}
-                >
-                  <Text style={styles.actionEdit}>Edit</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => handleDelete(item.id)}
-                  style={styles.actionBtn}
-                  testID={`delete-expense-${item.id}`}
-                >
-                  <Text style={styles.actionDelete}>Del</Text>
-                </TouchableOpacity>
-              </View>
+          ListHeaderComponent={
+            <PendingReviewSection
+              pendingItems={localPending}
+              onApprove={handleApprove}
+              onDiscard={handleDiscard}
+              onSaveUncategorized={handleSaveUncategorized}
+            />
+          }
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Text style={styles.emptyTitle}>No transactions yet</Text>
+              <Text style={styles.emptySubtitle}>Tap "+ Add" or connect a bank in Settings.</Text>
             </View>
-          )}
+          }
+          renderItem={({ item }) => {
+            const isPlaid = !!(item as Expense & { source?: string }).source?.includes?.('plaid')
+            return (
+              <View style={[styles.expenseCard, { marginTop: 10 }]}>
+                <View style={{ flex: 1 }}>
+                  <View style={styles.expenseRow}>
+                    <Text style={styles.expenseDescription} numberOfLines={1}>
+                      {item.description}
+                    </Text>
+                    <Text style={styles.expenseAmount}>{fmtUSD(item.amount)}</Text>
+                  </View>
+                  <View style={styles.expenseRow}>
+                    <View style={styles.categoryBadge}>
+                      <Text style={styles.categoryBadgeText}>
+                        {CATEGORY_INFO[item.category]?.label ?? item.category}
+                      </Text>
+                    </View>
+                    {isPlaid && (
+                      <View style={styles.plaidBadge}>
+                        <Text style={styles.plaidBadgeText}>🏦</Text>
+                      </View>
+                    )}
+                    <Text style={styles.expenseDate}>{item.date}</Text>
+                  </View>
+                  {item.merchant && (
+                    <Text style={styles.expenseMerchant}>{item.merchant}</Text>
+                  )}
+                </View>
+                <View style={styles.actions}>
+                  <TouchableOpacity
+                    onPress={() => openEdit(item)}
+                    style={styles.actionBtn}
+                    testID={`edit-expense-${item.id}`}
+                  >
+                    <Text style={styles.actionEdit}>Edit</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => handleDelete(item.id)}
+                    style={styles.actionBtn}
+                    testID={`delete-expense-${item.id}`}
+                  >
+                    <Text style={styles.actionDelete}>Del</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )
+          }}
           ListFooterComponent={
             data?.has_more ? (
               <TouchableOpacity
@@ -542,6 +1030,23 @@ export default function ExpensesScreen() {
         isSaving={createMutation.isPending || updateMutation.isPending}
         familyMembers={familyMembers}
       />
+
+      <ApproveModal
+        visible={!!approvingPending}
+        pending={approvingPending}
+        onClose={() => setApprovingPending(null)}
+        onApprove={handleApproveSubmit}
+        isApproving={approveMutation.isPending}
+        familyMembers={familyMembers}
+        currentUserId={user?.id ?? ''}
+      />
+
+      {snackbar && (
+        <Snackbar
+          item={snackbar}
+          onDismiss={() => setSnackbar(null)}
+        />
+      )}
     </View>
   )
 }
@@ -566,14 +1071,14 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   addBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, paddingTop: 48 },
   emptyTitle: { fontSize: 18, fontWeight: '600', color: '#374151', marginBottom: 8 },
   emptySubtitle: { fontSize: 14, color: '#9ca3af', textAlign: 'center' },
   expenseCard: {
     backgroundColor: '#fff',
     borderRadius: 10,
     padding: 14,
-    marginBottom: 10,
+    marginBottom: 0,
     flexDirection: 'row',
     alignItems: 'flex-start',
     shadowColor: '#000',
@@ -597,6 +1102,11 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   categoryBadgeText: { fontSize: 11, color: '#1d4ed8', fontWeight: '500' },
+  plaidBadge: {
+    marginLeft: 4,
+    marginRight: 4,
+  },
+  plaidBadgeText: { fontSize: 12 },
   expenseDate: { fontSize: 12, color: '#9ca3af' },
   expenseMerchant: { fontSize: 12, color: '#6b7280', marginTop: 2 },
   actions: { flexDirection: 'column', alignItems: 'flex-end', gap: 6, marginLeft: 8 },
