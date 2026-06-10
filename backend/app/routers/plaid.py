@@ -927,14 +927,37 @@ async def sandbox_connect(
         status="active",
     )
 
-    # 6. Sync transactions synchronously so pending rows appear immediately
-    sync_result: dict = {}
-    try:
-        sync_result = plaid_service.sync_transactions(plaid_item_id)
-    except Exception:
-        logger.warning("Initial sandbox sync failed for item %s — pending may be empty", plaid_item_id)
+    # 6. Sync transactions (with retry) so pending rows appear immediately.
+    # Plaid Sandbox sometimes takes a moment to seed historical transactions after
+    # a new item is created. We retry up to 3 times with a short sleep between
+    # attempts so E2E tests reliably see > 0 pending rows.
+    import asyncio as _asyncio
 
-    pending_count = sync_result.get("added", 0)
+    sync_result: dict = {}
+    total_added = 0
+    for attempt in range(3):
+        try:
+            sync_result = plaid_service.sync_transactions(plaid_item_id)
+            total_added = sync_result.get("added", 0)
+            logger.info(
+                "sandbox sync attempt=%d item=%s added=%d",
+                attempt + 1,
+                plaid_item_id,
+                total_added,
+            )
+            if total_added > 0:
+                break
+            # Wait before retrying — Plaid Sandbox may need time to seed transactions
+            await _asyncio.sleep(2)
+        except Exception:
+            logger.warning(
+                "sandbox sync attempt=%d failed for item %s",
+                attempt + 1,
+                plaid_item_id,
+            )
+            await _asyncio.sleep(1)
+
+    pending_count = total_added
 
     logger.info(
         "sandbox_connect complete user_id=%s family_id=%s item=%s accounts=%d pending=%d",
