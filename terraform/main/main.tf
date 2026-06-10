@@ -322,6 +322,58 @@ resource "google_secret_manager_secret_version" "finnhub_api_key" {
   secret_data = var.finnhub_api_key
 }
 
+# --- Plaid (bank account linking + transaction sync) ---
+resource "google_secret_manager_secret" "plaid_client_id" {
+  secret_id = "${var.backend_service_name}-plaid-client-id"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "plaid_client_id" {
+  secret      = google_secret_manager_secret.plaid_client_id.id
+  secret_data = var.plaid_client_id
+}
+
+resource "google_secret_manager_secret" "plaid_secret" {
+  secret_id = "${var.backend_service_name}-plaid-secret"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "plaid_secret" {
+  secret      = google_secret_manager_secret.plaid_secret.id
+  secret_data = var.plaid_secret
+}
+
+resource "google_secret_manager_secret" "plaid_env" {
+  secret_id = "${var.backend_service_name}-plaid-env"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "plaid_env" {
+  secret      = google_secret_manager_secret.plaid_env.id
+  secret_data = var.plaid_env
+}
+
 # Cloud Run service for backend
 resource "google_cloud_run_service" "backend" {
   name     = var.backend_service_name
@@ -474,6 +526,36 @@ resource "google_cloud_run_service" "backend" {
           value_from {
             secret_key_ref {
               name = google_secret_manager_secret.finnhub_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "PLAID_CLIENT_ID"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.plaid_client_id.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "PLAID_SECRET"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.plaid_secret.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "PLAID_ENV"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.plaid_env.secret_id
               key  = "latest"
             }
           }

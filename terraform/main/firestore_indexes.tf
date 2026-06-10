@@ -203,6 +203,46 @@ resource "google_firestore_index" "chat_conversations_user_updated" {
   depends_on = [google_firestore_database.database]
 }
 
+# plaid_items list: filter by owner, order by updated_at desc.
+# Required by plaid_service.list_items.
+resource "google_firestore_index" "plaid_items_user_updated" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "plaid_items"
+
+  fields {
+    field_path = "user_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "updated_at"
+    order      = "DESCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
+
+# plaid_accounts: filter by owner + item for per-item account fetches.
+# Required by plaid_service.upsert_accounts / delete_item cascade.
+resource "google_firestore_index" "plaid_accounts_user_item" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "plaid_accounts"
+
+  fields {
+    field_path = "user_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "plaid_item_id"
+    order      = "ASCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
+
 # Index for querying notifications by user and read status
 resource "google_firestore_index" "notifications_user_unread" {
   project    = var.project_id

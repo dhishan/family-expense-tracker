@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     snaptrade_client_id: str = ""
     snaptrade_consumer_key: str = ""
 
+    # Plaid (bank account linking + transaction sync)
+    plaid_client_id: str = ""
+    plaid_secret: str = ""
+    plaid_env: str = "sandbox"  # sandbox | development | production
+
     # Financial data APIs (Phase F)
     fred_api_key: str = ""
     tiingo_api_key: str = ""

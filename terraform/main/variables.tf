@@ -140,3 +140,24 @@ variable "finnhub_api_key" {
   sensitive   = true
   default     = ""
 }
+
+# --- Plaid (bank account linking + transaction sync) ---
+variable "plaid_client_id" {
+  description = "Plaid client ID (from dashboard.plaid.com)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "plaid_secret" {
+  description = "Plaid secret key (environment-specific)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "plaid_env" {
+  description = "Plaid environment: sandbox | development | production"
+  type        = string
+  default     = "sandbox"
+}
