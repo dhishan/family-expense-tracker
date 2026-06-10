@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   View,
   Text,
@@ -16,7 +16,26 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { budgetsApi } from '@/services/api'
 import { useAuthStore } from '@/store/auth'
-import type { BudgetCreate, BudgetStatus, BudgetPeriod } from '@/types'
+import type {
+  BudgetCreate,
+  BudgetStatus,
+  BudgetPeriod,
+  ExpenseCategory,
+} from '@/types'
+import { CATEGORY_INFO } from '@/types'
+
+const CATEGORY_VALUES: ExpenseCategory[] = [
+  'groceries',
+  'dining',
+  'transportation',
+  'utilities',
+  'entertainment',
+  'healthcare',
+  'shopping',
+  'travel',
+  'education',
+  'other',
+]
 
 function fmtUSD(n: number) {
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -40,20 +59,30 @@ interface BudgetModalProps {
   onClose: () => void
   onSave: (data: BudgetCreate) => void
   isSaving: boolean
+  familyMembers: { id: string; display_name: string }[]
 }
 
-function BudgetModal({ visible, editing, onClose, onSave, isSaving }: BudgetModalProps) {
-  const [form, setForm] = useState<BudgetFormData>(() =>
-    editing
-      ? {
-          name: editing.budget.name,
-          amount: String(editing.budget.amount),
-          period: editing.budget.period,
-          category: editing.budget.category ?? '',
-          beneficiary: editing.budget.beneficiary ?? '',
-        }
-      : defaultForm()
-  )
+function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMembers }: BudgetModalProps) {
+  const [form, setForm] = useState<BudgetFormData>(defaultForm)
+
+  // Re-seed the form every time the modal opens (or the budget being
+  // edited changes). The previous lazy useState initializer only ran
+  // ONCE per mount, so reopening Edit on a different budget kept stale
+  // form values from whatever was previously open.
+  useEffect(() => {
+    if (!visible) return
+    if (editing) {
+      setForm({
+        name: editing.budget.name,
+        amount: String(editing.budget.amount),
+        period: editing.budget.period,
+        category: editing.budget.category ?? '',
+        beneficiary: editing.budget.beneficiary ?? '',
+      })
+    } else {
+      setForm(defaultForm())
+    }
+  }, [visible, editing])
 
   const set = (key: keyof BudgetFormData) => (value: string) =>
     setForm((prev) => ({ ...prev, [key]: value }))
@@ -143,20 +172,92 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving }: BudgetModa
               </View>
 
               <Text style={modalStyles.label}>Category (optional)</Text>
-              <TextInput
-                style={modalStyles.input}
-                value={form.category}
-                onChangeText={set('category')}
-                placeholder="e.g. groceries"
-              />
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ marginBottom: 16 }}
+                keyboardShouldPersistTaps="handled"
+              >
+                <TouchableOpacity
+                  style={[
+                    modalStyles.chip,
+                    form.category === '' && modalStyles.chipActive,
+                  ]}
+                  onPress={() => set('category')('')}
+                >
+                  <Text
+                    style={[
+                      modalStyles.chipText,
+                      form.category === '' && modalStyles.chipTextActive,
+                    ]}
+                  >
+                    All
+                  </Text>
+                </TouchableOpacity>
+                {CATEGORY_VALUES.map((c) => (
+                  <TouchableOpacity
+                    key={c}
+                    style={[
+                      modalStyles.chip,
+                      form.category === c && modalStyles.chipActive,
+                    ]}
+                    onPress={() => set('category')(c)}
+                  >
+                    <Text
+                      style={[
+                        modalStyles.chipText,
+                        form.category === c && modalStyles.chipTextActive,
+                      ]}
+                    >
+                      {CATEGORY_INFO[c].label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
 
-              <Text style={modalStyles.label}>Beneficiary (optional)</Text>
-              <TextInput
-                style={modalStyles.input}
-                value={form.beneficiary}
-                onChangeText={set('beneficiary')}
-                placeholder="Leave blank for whole family"
-              />
+              <Text style={modalStyles.label}>For (optional)</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ marginBottom: 16 }}
+                keyboardShouldPersistTaps="handled"
+              >
+                <TouchableOpacity
+                  style={[
+                    modalStyles.chip,
+                    form.beneficiary === '' && modalStyles.chipActive,
+                  ]}
+                  onPress={() => set('beneficiary')('')}
+                >
+                  <Text
+                    style={[
+                      modalStyles.chipText,
+                      form.beneficiary === '' && modalStyles.chipTextActive,
+                    ]}
+                  >
+                    Family
+                  </Text>
+                </TouchableOpacity>
+                {familyMembers.map((m) => (
+                  <TouchableOpacity
+                    key={m.id}
+                    style={[
+                      modalStyles.chip,
+                      form.beneficiary === m.id && modalStyles.chipActive,
+                    ]}
+                    onPress={() => set('beneficiary')(m.id)}
+                  >
+                    <Text
+                      style={[
+                        modalStyles.chipText,
+                        form.beneficiary === m.id && modalStyles.chipTextActive,
+                      ]}
+                    >
+                      {m.display_name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             </View>
           </ScrollView>
         </View>
@@ -202,12 +303,24 @@ const modalStyles = StyleSheet.create({
   segmentActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
   segmentText: { fontSize: 14, color: '#374151' },
   segmentTextActive: { color: '#fff', fontWeight: '600' },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    marginRight: 8,
+    backgroundColor: '#fff',
+  },
+  chipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
+  chipText: { fontSize: 13, color: '#374151' },
+  chipTextActive: { color: '#fff', fontWeight: '600' },
 })
 
 export default function BudgetsScreen() {
   const [showModal, setShowModal] = useState(false)
   const [editingBudget, setEditingBudget] = useState<BudgetStatus | null>(null)
-  const { user } = useAuthStore()
+  const { user, familyMembers } = useAuthStore()
   const queryClient = useQueryClient()
 
   const { data, isLoading } = useQuery({
@@ -356,6 +469,7 @@ export default function BudgetsScreen() {
         }}
         onSave={handleSave}
         isSaving={createMutation.isPending || updateMutation.isPending}
+        familyMembers={familyMembers.map((m) => ({ id: m.id, display_name: m.display_name }))}
       />
     </View>
   )

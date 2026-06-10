@@ -67,6 +67,10 @@ jest.mock('@/services/api', () => ({
 jest.mock('@/store/auth', () => ({
   useAuthStore: jest.fn(() => ({
     user: { id: 'user-1', family_id: 'f1' },
+    familyMembers: [
+      { id: 'user-1', display_name: 'Dhishan' },
+      { id: 'user-2', display_name: 'Nithya' },
+    ],
   })),
 }))
 
