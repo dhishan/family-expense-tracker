@@ -815,3 +815,200 @@ async def save_uncategorized(
         override_description=None,
         override_beneficiary=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Sandbox / test-only endpoints — 404 in production
+# ---------------------------------------------------------------------------
+
+
+def _assert_non_prod():
+    """Raise 404 if running in production so these endpoints are never exposed."""
+    if settings.environment.lower() in ("production", "prod"):
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+@router.post("/_test/sandbox-connect")
+async def sandbox_connect(
+    current_user: User = Depends(get_current_user),
+):
+    """Bypass the Plaid Link iframe: connect First Platypus Bank in sandbox and sync transactions.
+
+    ONLY available when environment != production.  Returns 404 in prod.
+    Call this from E2E tests instead of driving the Plaid Link UI.
+
+    Returns: {plaid_item_id, accounts_count, pending_count}
+    """
+    _assert_non_prod()
+
+    from plaid.model.sandbox_public_token_create_request import SandboxPublicTokenCreateRequest  # type: ignore
+    from plaid.model.products import Products  # type: ignore
+    from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest  # type: ignore
+    from plaid.model.institutions_get_by_id_request import InstitutionsGetByIdRequest  # type: ignore
+    from plaid.model.accounts_get_request import AccountsGetRequest  # type: ignore
+    from plaid.model.country_code import CountryCode  # type: ignore
+
+    family_id = _require_family_id(current_user)
+    client = _plaid_client()
+
+    logger.info(
+        "sandbox_connect called user_id=%s family_id=%s",
+        current_user.id,
+        family_id,
+    )
+
+    # 1. Create sandbox public token for First Platypus Bank
+    try:
+        sandbox_resp = client.sandbox_public_token_create(
+            SandboxPublicTokenCreateRequest(
+                institution_id="ins_109508",
+                initial_products=[Products("transactions")],
+            )
+        )
+    except Exception as exc:
+        logger.exception("sandbox_public_token_create failed")
+        raise HTTPException(status_code=502, detail=f"Plaid sandbox error: {exc}")
+
+    sandbox_data = sandbox_resp.to_dict() if hasattr(sandbox_resp, "to_dict") else sandbox_resp
+    public_token: str = sandbox_data["public_token"]
+
+    # 2. Exchange public token for access token
+    try:
+        exchange_resp = client.item_public_token_exchange(
+            ItemPublicTokenExchangeRequest(public_token=public_token)
+        )
+    except Exception as exc:
+        logger.exception("item_public_token_exchange failed in sandbox_connect")
+        raise HTTPException(status_code=502, detail=f"Plaid error: {exc}")
+
+    exchange_data = exchange_resp.to_dict() if hasattr(exchange_resp, "to_dict") else exchange_resp
+    access_token: str = exchange_data["access_token"]
+    plaid_item_id: str = exchange_data["item_id"]
+
+    # 3. Fetch institution details
+    institution_id = "ins_109508"
+    institution_name = "First Platypus Bank"
+    try:
+        inst_resp = client.institutions_get_by_id(
+            InstitutionsGetByIdRequest(
+                institution_id=institution_id,
+                country_codes=[CountryCode("US")],
+            )
+        )
+        inst_data = inst_resp.to_dict() if hasattr(inst_resp, "to_dict") else inst_resp
+        institution_name = (inst_data.get("institution") or {}).get("name", institution_name)
+    except Exception:
+        logger.warning("Could not fetch institution name for sandbox item %s", plaid_item_id)
+
+    # 4. Fetch accounts
+    raw_accounts: list[dict] = []
+    try:
+        accts_resp = client.accounts_get(AccountsGetRequest(access_token=access_token))
+        accts_data = accts_resp.to_dict() if hasattr(accts_resp, "to_dict") else accts_resp
+        raw_accounts = accts_data.get("accounts") or []
+    except Exception:
+        logger.warning("Could not fetch accounts for sandbox item %s", plaid_item_id)
+
+    # 5. Upsert accounts + item (family-scoped)
+    plaid_service.upsert_accounts(
+        plaid_item_id,
+        family_id,
+        raw_accounts,
+        connected_by_user_id=current_user.id,
+    )
+    plaid_service.upsert_item(
+        plaid_item_id=plaid_item_id,
+        family_id=family_id,
+        connected_by_user_id=current_user.id,
+        plaid_access_token=access_token,
+        institution_id=institution_id,
+        institution_name=institution_name,
+        cursor=None,
+        status="active",
+    )
+
+    # 6. Sync transactions synchronously so pending rows appear immediately
+    sync_result: dict = {}
+    try:
+        sync_result = plaid_service.sync_transactions(plaid_item_id)
+    except Exception:
+        logger.warning("Initial sandbox sync failed for item %s — pending may be empty", plaid_item_id)
+
+    pending_count = sync_result.get("added", 0)
+
+    logger.info(
+        "sandbox_connect complete user_id=%s family_id=%s item=%s accounts=%d pending=%d",
+        current_user.id,
+        family_id,
+        plaid_item_id,
+        len(raw_accounts),
+        pending_count,
+    )
+
+    return {
+        "plaid_item_id": plaid_item_id,
+        "accounts_count": len(raw_accounts),
+        "pending_count": pending_count,
+    }
+
+
+@router.post("/_test/reset")
+async def sandbox_reset(
+    current_user: User = Depends(get_current_user),
+):
+    """Delete all Plaid items, accounts, and pending transactions for the calling user's family.
+
+    ONLY available when environment != production.  Returns 404 in prod.
+    Call this in test globalSetup / afterEach to start from a clean slate.
+
+    Returns: {deleted_items, deleted_pending}
+    """
+    _assert_non_prod()
+
+    family_id = _require_family_id(current_user)
+    db = get_firestore_client()
+
+    logger.info(
+        "sandbox_reset called user_id=%s family_id=%s",
+        current_user.id,
+        family_id,
+    )
+
+    from google.cloud import firestore as _fs  # type: ignore
+
+    # Collect item IDs for this family
+    item_snaps = list(
+        db.collection(plaid_service.PLAID_ITEMS_COLLECTION)
+        .where(filter=_fs.FieldFilter("family_id", "==", family_id))
+        .stream()
+    )
+    deleted_items = 0
+    for snap in item_snaps:
+        item_id = snap.id
+        plaid_service.delete_pending_transactions_for_item(item_id)
+        plaid_service.delete_item(item_id, family_id)
+        deleted_items += 1
+
+    # Any orphaned pending rows (item deleted mid-test, etc.)
+    orphan_snaps = list(
+        db.collection(plaid_service.PLAID_PENDING_COLLECTION)
+        .where(filter=_fs.FieldFilter("family_id", "==", family_id))
+        .stream()
+    )
+    deleted_pending = 0
+    if orphan_snaps:
+        batch = db.batch()
+        for snap in orphan_snaps:
+            batch.delete(snap.reference)
+            deleted_pending += 1
+        batch.commit()
+
+    logger.info(
+        "sandbox_reset complete user_id=%s family_id=%s deleted_items=%d deleted_pending=%d",
+        current_user.id,
+        family_id,
+        deleted_items,
+        deleted_pending,
+    )
+
+    return {"deleted_items": deleted_items, "deleted_pending": deleted_pending}

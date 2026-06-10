@@ -40,6 +40,35 @@ function get(url: string, token: string): Promise<unknown> {
   })
 }
 
+function apiPost(url: string, token: string, body?: object): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const bodyStr = body ? JSON.stringify(body) : ''
+    const u = new URL(url)
+    const req = https.request(
+      {
+        hostname: u.hostname,
+        path: u.pathname + u.search,
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(bodyStr),
+        },
+      },
+      (res) => {
+        let data = ''
+        res.on('data', (chunk) => (data += chunk))
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)) } catch { resolve(data) }
+        })
+      }
+    )
+    req.on('error', reject)
+    if (bodyStr) req.write(bodyStr)
+    req.end()
+  })
+}
+
 function del(url: string, token: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const u = new URL(url)
@@ -147,6 +176,7 @@ export default async function globalSetup() {
     await Promise.all([
       deleteAllExpenses(jwt),
       deleteAllBudgets(jwt),
+      apiPost(`${API}/plaid/_test/reset`, jwt).catch(() => {}),  // best-effort; endpoint only exists in non-prod
     ])
   }
 

@@ -65,9 +65,28 @@ export default async function globalTeardown() {
   const { jwt } = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
 
   console.log('\n🧹 Global teardown: deleting test data...')
+
+  function apiPost(url: string, token: string): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const u = new URL(url)
+      const req = https.request(
+        {
+          hostname: u.hostname,
+          path: u.pathname + u.search,
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Length': 0 },
+        },
+        (res) => { res.resume(); res.on('end', resolve) }
+      )
+      req.on('error', reject)
+      req.end()
+    })
+  }
+
   await Promise.all([
     deleteAllExpenses(jwt),
     deleteAllBudgets(jwt),
+    apiPost(`${API}/plaid/_test/reset`, jwt).catch(() => {}),
   ])
   console.log('   ✅ Test data deleted\n')
 

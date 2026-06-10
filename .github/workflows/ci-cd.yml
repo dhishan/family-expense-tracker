@@ -198,3 +198,49 @@ jobs:
         run: |
           cd frontend
           npx --yes firebase-tools deploy --only hosting --project ${{ env.PROJECT_ID }} --non-interactive
+
+  e2e-plaid:
+    name: E2E - Plaid Integration
+    needs: [deploy-backend, deploy-frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Plaid E2E tests
+        run: npx playwright test tests/plaid.spec.ts --project=chromium
+        env:
+          BASE_URL: https://ui.expense-tracker.blueelephants.org
+          API_URL: https://api.expense-tracker.blueelephants.org/api/v1
+          GOOGLE_TEST_REFRESH_TOKEN: ${{ secrets.GOOGLE_TEST_REFRESH_TOKEN }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          # Optional: set these secrets to enable cross-family tests (tests 09 + 10)
+          # TEST_USER_2_JWT: ${{ secrets.TEST_USER_2_JWT }}
+          CI: true
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-plaid-results
+          path: frontend/playwright-report/
+          retention-days: 7
