@@ -302,6 +302,12 @@ def upsert_accounts(
         account_id = acct.get("account_id") or acct.get("id") or ""
         if not account_id:
             continue
+        # Skip investment accounts. Brokerage data is already aggregated via
+        # SnapTrade in the Stocks tab — pulling investment accounts here
+        # would duplicate balances and pollute the Connected Accounts list.
+        # We only want depository / credit / loan from Plaid.
+        if (acct.get("type") or "").lower() == "investment":
+            continue
         balances = acct.get("balances") or {}
         doc: dict[str, Any] = {
             "family_id": family_id,
