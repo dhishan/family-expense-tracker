@@ -162,23 +162,16 @@ variable "plaid_env" {
   default     = "sandbox"
 }
 
-# --- Kalshi (CFTC-regulated prediction market) ---
-variable "kalshi_email" {
-  description = "Kalshi account email (optional; prefer kalshi_api_key)"
+# --- Kalshi (CFTC-regulated prediction market, RSA-PSS signing) ---
+variable "kalshi_key_id" {
+  description = "Kalshi key ID (the identifier Kalshi assigns to the uploaded public key)"
   type        = string
   sensitive   = true
   default     = ""
 }
 
-variable "kalshi_password" {
-  description = "Kalshi account password (optional; prefer kalshi_api_key)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "kalshi_api_key" {
-  description = "Kalshi API key (preferred over email+password)"
+variable "kalshi_private_key_b64" {
+  description = "Kalshi RSA private key — PEM format, base64-encoded (single-line env var safe)"
   type        = string
   sensitive   = true
   default     = ""

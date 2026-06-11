@@ -257,7 +257,7 @@ class TestKalshiSign:
         )
 
         with patch("app.services.market_data._time.time", return_value=1718125432.111), \
-             patch("app.config.get_settings", return_value=mock_settings):
+             patch("app.services.market_data.get_settings", return_value=mock_settings):
             key_id, ts, sig_b64 = md._kalshi_sign("GET", "/trade-api/v2/markets")
 
         assert key_id == "test-key-id"
@@ -283,7 +283,7 @@ class TestKalshiSign:
             kalshi_private_key_b64=key_b64,
         )
         with patch("app.services.market_data._time.time", return_value=1718125432.0), \
-             patch("app.config.get_settings", return_value=mock_settings):
+             patch("app.services.market_data.get_settings", return_value=mock_settings):
             key_id, ts, sig = md._kalshi_sign("GET", "/trade-api/v2/markets")
         assert key_id == "kid"
         assert ts == "1718125432000"
@@ -298,7 +298,7 @@ class TestKalshiSearch:
         """When KALSHI_KEY_ID or KALSHI_PRIVATE_KEY_B64 is empty, return friendly error."""
         from app.config import Settings
         mock_settings = Settings.model_construct(kalshi_key_id="", kalshi_private_key_b64="")
-        with patch("app.config.get_settings", return_value=mock_settings):
+        with patch("app.services.market_data.get_settings", return_value=mock_settings):
             result = md.kalshi_search("NVDA $200")
         assert isinstance(result, list)
         assert len(result) == 1
@@ -310,7 +310,7 @@ class TestKalshiSearch:
         key_b64 = _make_test_key_b64()
         from app.config import Settings
         mock_settings = Settings.model_construct(kalshi_key_id="", kalshi_private_key_b64=key_b64)
-        with patch("app.config.get_settings", return_value=mock_settings):
+        with patch("app.services.market_data.get_settings", return_value=mock_settings):
             result = md.kalshi_search("NVDA")
         assert "error" in result[0]
 
@@ -320,7 +320,7 @@ class TestKalshiSearch:
         mock_settings = Settings.model_construct(
             kalshi_key_id="test-key-id", kalshi_private_key_b64=key_b64
         )
-        with patch("app.config.get_settings", return_value=mock_settings), \
+        with patch("app.services.market_data.get_settings", return_value=mock_settings), \
              patch("httpx.get", return_value=_mock_response(KALSHI_MARKETS_RESPONSE)):
             result = md.kalshi_search("NVDA")
         assert isinstance(result, list)
@@ -332,7 +332,7 @@ class TestKalshiSearch:
         mock_settings = Settings.model_construct(
             kalshi_key_id="test-key-id", kalshi_private_key_b64=key_b64
         )
-        with patch("app.config.get_settings", return_value=mock_settings), \
+        with patch("app.services.market_data.get_settings", return_value=mock_settings), \
              patch("httpx.get", return_value=_mock_response(KALSHI_MARKETS_RESPONSE)):
             result = md.kalshi_search("NVDA")
         assert result[0]["yes_bid"] == pytest.approx(0.62)
@@ -344,7 +344,7 @@ class TestKalshiSearch:
         mock_settings = Settings.model_construct(
             kalshi_key_id="test-key-id", kalshi_private_key_b64=key_b64
         )
-        with patch("app.config.get_settings", return_value=mock_settings), \
+        with patch("app.services.market_data.get_settings", return_value=mock_settings), \
              patch("httpx.get", side_effect=Exception("network down")):
             result = md.kalshi_search("NVDA")
         assert isinstance(result, list)
@@ -358,7 +358,7 @@ class TestKalshiMarket:
         mock_settings = Settings.model_construct(
             kalshi_key_id="test-key-id", kalshi_private_key_b64=key_b64
         )
-        with patch("app.config.get_settings", return_value=mock_settings), \
+        with patch("app.services.market_data.get_settings", return_value=mock_settings), \
              patch("httpx.get", return_value=_mock_response(KALSHI_SINGLE_MARKET_RESPONSE)):
             result = md.kalshi_market("FED-25SEP-T4.75")
         assert result["ticker"] == "FED-25SEP-T4.75"
@@ -367,6 +367,6 @@ class TestKalshiMarket:
     def test_returns_friendly_error_when_not_configured(self):
         from app.config import Settings
         mock_settings = Settings.model_construct(kalshi_key_id="", kalshi_private_key_b64="")
-        with patch("app.config.get_settings", return_value=mock_settings):
+        with patch("app.services.market_data.get_settings", return_value=mock_settings):
             result = md.kalshi_market("FED-25SEP-T4.75")
         assert "error" in result

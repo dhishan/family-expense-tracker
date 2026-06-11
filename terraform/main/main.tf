@@ -396,9 +396,9 @@ resource "google_secret_manager_secret_version" "plaid_env" {
   secret_data = var.plaid_env
 }
 
-# --- Kalshi (CFTC-regulated prediction market) ---
-resource "google_secret_manager_secret" "kalshi_email" {
-  secret_id = "${var.backend_service_name}-kalshi-email"
+# --- Kalshi (CFTC-regulated prediction market, RSA-PSS signing) ---
+resource "google_secret_manager_secret" "kalshi_key_id" {
+  secret_id = "${var.backend_service_name}-kalshi-key-id"
   replication {
     user_managed {
       replicas {
@@ -409,13 +409,13 @@ resource "google_secret_manager_secret" "kalshi_email" {
   depends_on = [google_project_service.secretmanager]
 }
 
-resource "google_secret_manager_secret_version" "kalshi_email" {
-  secret      = google_secret_manager_secret.kalshi_email.id
-  secret_data = coalesce(var.kalshi_email, "not-configured")
+resource "google_secret_manager_secret_version" "kalshi_key_id" {
+  secret      = google_secret_manager_secret.kalshi_key_id.id
+  secret_data = coalesce(var.kalshi_key_id, "not-configured")
 }
 
-resource "google_secret_manager_secret" "kalshi_password" {
-  secret_id = "${var.backend_service_name}-kalshi-password"
+resource "google_secret_manager_secret" "kalshi_private_key_b64" {
+  secret_id = "${var.backend_service_name}-kalshi-private-key-b64"
   replication {
     user_managed {
       replicas {
@@ -426,26 +426,9 @@ resource "google_secret_manager_secret" "kalshi_password" {
   depends_on = [google_project_service.secretmanager]
 }
 
-resource "google_secret_manager_secret_version" "kalshi_password" {
-  secret      = google_secret_manager_secret.kalshi_password.id
-  secret_data = coalesce(var.kalshi_password, "not-configured")
-}
-
-resource "google_secret_manager_secret" "kalshi_api_key" {
-  secret_id = "${var.backend_service_name}-kalshi-api-key"
-  replication {
-    user_managed {
-      replicas {
-        location = var.region
-      }
-    }
-  }
-  depends_on = [google_project_service.secretmanager]
-}
-
-resource "google_secret_manager_secret_version" "kalshi_api_key" {
-  secret      = google_secret_manager_secret.kalshi_api_key.id
-  secret_data = coalesce(var.kalshi_api_key, "not-configured")
+resource "google_secret_manager_secret_version" "kalshi_private_key_b64" {
+  secret      = google_secret_manager_secret.kalshi_private_key_b64.id
+  secret_data = coalesce(var.kalshi_private_key_b64, "not-configured")
 }
 
 # Cloud Run service for backend
@@ -636,30 +619,20 @@ resource "google_cloud_run_service" "backend" {
         }
 
         env {
-          name = "KALSHI_EMAIL"
+          name = "KALSHI_KEY_ID"
           value_from {
             secret_key_ref {
-              name = google_secret_manager_secret.kalshi_email.secret_id
+              name = google_secret_manager_secret.kalshi_key_id.secret_id
               key  = "latest"
             }
           }
         }
 
         env {
-          name = "KALSHI_PASSWORD"
+          name = "KALSHI_PRIVATE_KEY_B64"
           value_from {
             secret_key_ref {
-              name = google_secret_manager_secret.kalshi_password.secret_id
-              key  = "latest"
-            }
-          }
-        }
-
-        env {
-          name = "KALSHI_API_KEY"
-          value_from {
-            secret_key_ref {
-              name = google_secret_manager_secret.kalshi_api_key.secret_id
+              name = google_secret_manager_secret.kalshi_private_key_b64.secret_id
               key  = "latest"
             }
           }
@@ -731,9 +704,8 @@ resource "google_cloud_run_service" "backend" {
     google_secret_manager_secret_version.plaid_client_id,
     google_secret_manager_secret_version.plaid_secret,
     google_secret_manager_secret_version.plaid_env,
-    google_secret_manager_secret_version.kalshi_email,
-    google_secret_manager_secret_version.kalshi_password,
-    google_secret_manager_secret_version.kalshi_api_key,
+    google_secret_manager_secret_version.kalshi_key_id,
+    google_secret_manager_secret_version.kalshi_private_key_b64,
   ]
 }
 

@@ -769,40 +769,55 @@ def _normalize_polymarket(m: dict) -> dict:
 
 # --- Kalshi (CFTC-regulated real-money US prediction market) ---
 
+import base64 as _base64
 import time as _time
 
-_kalshi_token: dict = {"token": None, "expires_at": 0.0}
+from cryptography.hazmat.primitives import hashes as _hashes, serialization as _serialization
+from cryptography.hazmat.primitives.asymmetric import padding as _padding
+
+from app.config import get_settings
 
 
-def _kalshi_auth_header() -> dict:
-    """Return Authorization header for Kalshi. Prefers API key; falls back to email+password login."""
-    api_key = os.environ.get("KALSHI_API_KEY", "")
-    if api_key:
-        return {"Authorization": f"Token {api_key}"}
+def _kalshi_private_key():
+    """Load the RSA private key from the base64-encoded PEM in settings."""
+    pem_bytes = _base64.b64decode(get_settings().kalshi_private_key_b64)
+    return _serialization.load_pem_private_key(pem_bytes, password=None)
 
-    email = os.environ.get("KALSHI_EMAIL", "")
-    password = os.environ.get("KALSHI_PASSWORD", "")
-    if not email or not password:
-        raise RuntimeError(
-            "Kalshi is not configured. Set KALSHI_API_KEY (or KALSHI_EMAIL + KALSHI_PASSWORD) "
-            "in the environment to enable Kalshi prediction market tools."
-        )
 
-    now = _time.time()
-    if _kalshi_token["token"] and now < _kalshi_token["expires_at"]:
-        return {"Authorization": f"Bearer {_kalshi_token['token']}"}
+def _kalshi_sign(method: str, path: str) -> tuple[str, str, str]:
+    """Return (key_id, timestamp_ms_str, base64_signature) for a Kalshi API call.
 
-    resp = httpx.post(
-        "https://api.elections.kalshi.com/trade-api/v2/login",
-        json={"email": email, "password": password},
-        timeout=_TIMEOUT,
+    Kalshi uses RSA-PSS with SHA-256. The message is:
+        timestamp_ms_string + METHOD_UPPERCASE + /trade-api/v2/path
+    """
+    settings = get_settings()
+    ts = str(int(_time.time() * 1000))
+    message = (ts + method.upper() + path).encode()
+    key = _kalshi_private_key()
+    sig = key.sign(
+        message,
+        _padding.PSS(
+            mgf=_padding.MGF1(_hashes.SHA256()),
+            salt_length=_padding.PSS.DIGEST_LENGTH,
+        ),
+        _hashes.SHA256(),
     )
-    resp.raise_for_status()
-    data = resp.json()
-    token = data.get("token") or data.get("member_token", "")
-    _kalshi_token["token"] = token
-    _kalshi_token["expires_at"] = now + 600  # cache for 10 minutes
-    return {"Authorization": f"Bearer {token}"}
+    return settings.kalshi_key_id, ts, _base64.b64encode(sig).decode()
+
+
+def _kalshi_headers(method: str, path: str) -> dict:
+    """Return the three Kalshi auth headers, or raise RuntimeError if unconfigured."""
+    settings = get_settings()
+    if not settings.kalshi_key_id or not settings.kalshi_private_key_b64:
+        raise RuntimeError(
+            "Kalshi is not configured; set KALSHI_KEY_ID and KALSHI_PRIVATE_KEY_B64"
+        )
+    key_id, ts, sig = _kalshi_sign(method, path)
+    return {
+        "KALSHI-ACCESS-KEY": key_id,
+        "KALSHI-ACCESS-TIMESTAMP": ts,
+        "KALSHI-ACCESS-SIGNATURE": sig,
+    }
 
 
 def kalshi_search(query: str, limit: int = 10) -> list[dict]:
@@ -820,13 +835,14 @@ def kalshi_search(query: str, limit: int = 10) -> list[dict]:
     Returns:
         List of {ticker, title, yes_bid, yes_ask, volume, close_time, status} dicts.
     """
+    _path = "/trade-api/v2/markets"
     try:
-        headers = _kalshi_auth_header()
+        headers = _kalshi_headers("GET", _path)
     except RuntimeError as exc:
         return [{"error": str(exc)}]
     try:
         resp = httpx.get(
-            "https://api.elections.kalshi.com/trade-api/v2/markets",
+            f"https://api.elections.kalshi.com{_path}",
             params={"limit": limit, "status": "open"},
             headers=headers,
             timeout=_TIMEOUT,
@@ -857,13 +873,14 @@ def kalshi_market(ticker: str) -> dict:
     Returns:
         {ticker, title, yes_bid, yes_ask, volume, close_time, status}
     """
+    _path = f"/trade-api/v2/markets/{ticker}"
     try:
-        headers = _kalshi_auth_header()
+        headers = _kalshi_headers("GET", _path)
     except RuntimeError as exc:
         return {"error": str(exc)}
     try:
         resp = httpx.get(
-            f"https://api.elections.kalshi.com/trade-api/v2/markets/{ticker}",
+            f"https://api.elections.kalshi.com{_path}",
             headers=headers,
             timeout=_TIMEOUT,
         )
