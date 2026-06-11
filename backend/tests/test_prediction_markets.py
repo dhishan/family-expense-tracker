@@ -5,10 +5,14 @@ so tests are hermetic.
 """
 from __future__ import annotations
 
+import base64
 import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
 
 import app.services.market_data as md
 
@@ -212,56 +216,157 @@ class TestPolymarketSearch:
 
 
 # ---------------------------------------------------------------------------
+# Kalshi helpers
+# ---------------------------------------------------------------------------
+
+def _make_test_key_b64() -> str:
+    """Generate a throwaway 2048-bit RSA key and return it as base64-encoded PEM."""
+    key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+        backend=default_backend(),
+    )
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    return base64.b64encode(pem).decode()
+
+
+# ---------------------------------------------------------------------------
 # Kalshi tests
 # ---------------------------------------------------------------------------
 
+class TestKalshiSign:
+    def test_produces_valid_rsa_pss_signature(self):
+        """_kalshi_sign should produce a base64-encoded RSA-PSS-SHA256 signature."""
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+
+        key_b64 = _make_test_key_b64()
+        # Load the public key to verify
+        pem_bytes = base64.b64decode(key_b64)
+        priv_key = serialization.load_pem_private_key(pem_bytes, password=None)
+        pub_key = priv_key.public_key()
+
+        from app.config import Settings
+        mock_settings = Settings.model_construct(
+            kalshi_key_id="test-key-id",
+            kalshi_private_key_b64=key_b64,
+        )
+
+        with patch("app.services.market_data._time.time", return_value=1718125432.111), \
+             patch("app.config.get_settings", return_value=mock_settings):
+            key_id, ts, sig_b64 = md._kalshi_sign("GET", "/trade-api/v2/markets")
+
+        assert key_id == "test-key-id"
+        assert ts == "1718125432111"
+
+        # Verify the signature is valid RSA-PSS-SHA256
+        message = (ts + "GET" + "/trade-api/v2/markets").encode()
+        sig_bytes = base64.b64decode(sig_b64)
+        # Should not raise
+        pub_key.verify(
+            sig_bytes,
+            message,
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH),
+            hashes.SHA256(),
+        )
+
+    def test_sign_returns_valid_key_id_and_timestamp(self):
+        """_kalshi_sign returns the configured key_id and a millisecond timestamp string."""
+        key_b64 = _make_test_key_b64()
+        from app.config import Settings
+        mock_settings = Settings.model_construct(
+            kalshi_key_id="kid",
+            kalshi_private_key_b64=key_b64,
+        )
+        with patch("app.services.market_data._time.time", return_value=1718125432.0), \
+             patch("app.config.get_settings", return_value=mock_settings):
+            key_id, ts, sig = md._kalshi_sign("GET", "/trade-api/v2/markets")
+        assert key_id == "kid"
+        assert ts == "1718125432000"
+        # sig should be a non-empty base64 string
+        assert len(sig) > 0
+        import base64 as b64
+        b64.b64decode(sig)  # should not raise
+
+
 class TestKalshiSearch:
-    def test_returns_friendly_error_when_no_api_key_set(self):
-        """When no Kalshi credentials are configured, return error list — do not crash."""
-        # Ensure env vars are unset
-        with patch.dict("os.environ", {}, clear=False):
-            import os
-            for key in ("KALSHI_API_KEY", "KALSHI_EMAIL", "KALSHI_PASSWORD"):
-                os.environ.pop(key, None)
+    def test_returns_friendly_error_when_not_configured(self):
+        """When KALSHI_KEY_ID or KALSHI_PRIVATE_KEY_B64 is empty, return friendly error."""
+        from app.config import Settings
+        mock_settings = Settings.model_construct(kalshi_key_id="", kalshi_private_key_b64="")
+        with patch("app.config.get_settings", return_value=mock_settings):
             result = md.kalshi_search("NVDA $200")
         assert isinstance(result, list)
         assert len(result) == 1
         assert "error" in result[0]
-        assert "Kalshi" in result[0]["error"] or "not configured" in result[0]["error"].lower()
+        assert "KALSHI_KEY_ID" in result[0]["error"] or "not configured" in result[0]["error"]
 
-    def test_returns_markets_when_api_key_set(self):
-        with patch.dict("os.environ", {"KALSHI_API_KEY": "test-key"}):
-            with patch("httpx.get", return_value=_mock_response(KALSHI_MARKETS_RESPONSE)):
-                result = md.kalshi_search("NVDA")
+    def test_returns_friendly_error_when_key_id_missing(self):
+        """Missing key_id alone should trigger the friendly error."""
+        key_b64 = _make_test_key_b64()
+        from app.config import Settings
+        mock_settings = Settings.model_construct(kalshi_key_id="", kalshi_private_key_b64=key_b64)
+        with patch("app.config.get_settings", return_value=mock_settings):
+            result = md.kalshi_search("NVDA")
+        assert "error" in result[0]
+
+    def test_returns_markets_when_configured(self):
+        key_b64 = _make_test_key_b64()
+        from app.config import Settings
+        mock_settings = Settings.model_construct(
+            kalshi_key_id="test-key-id", kalshi_private_key_b64=key_b64
+        )
+        with patch("app.config.get_settings", return_value=mock_settings), \
+             patch("httpx.get", return_value=_mock_response(KALSHI_MARKETS_RESPONSE)):
+            result = md.kalshi_search("NVDA")
         assert isinstance(result, list)
         assert result[0]["ticker"] == "NVDA-200-Q3-25"
 
     def test_converts_cents_to_probability(self):
-        with patch.dict("os.environ", {"KALSHI_API_KEY": "test-key"}):
-            with patch("httpx.get", return_value=_mock_response(KALSHI_MARKETS_RESPONSE)):
-                result = md.kalshi_search("NVDA")
+        key_b64 = _make_test_key_b64()
+        from app.config import Settings
+        mock_settings = Settings.model_construct(
+            kalshi_key_id="test-key-id", kalshi_private_key_b64=key_b64
+        )
+        with patch("app.config.get_settings", return_value=mock_settings), \
+             patch("httpx.get", return_value=_mock_response(KALSHI_MARKETS_RESPONSE)):
+            result = md.kalshi_search("NVDA")
         assert result[0]["yes_bid"] == pytest.approx(0.62)
         assert result[0]["yes_ask"] == pytest.approx(0.64)
 
-    def test_returns_empty_list_on_network_exception(self):
-        with patch.dict("os.environ", {"KALSHI_API_KEY": "test-key"}):
-            with patch("httpx.get", side_effect=Exception("network down")):
-                result = md.kalshi_search("NVDA")
+    def test_returns_error_on_network_exception(self):
+        key_b64 = _make_test_key_b64()
+        from app.config import Settings
+        mock_settings = Settings.model_construct(
+            kalshi_key_id="test-key-id", kalshi_private_key_b64=key_b64
+        )
+        with patch("app.config.get_settings", return_value=mock_settings), \
+             patch("httpx.get", side_effect=Exception("network down")):
+            result = md.kalshi_search("NVDA")
         assert isinstance(result, list)
         assert "error" in result[0]
 
 
 class TestKalshiMarket:
     def test_returns_single_market(self):
-        with patch.dict("os.environ", {"KALSHI_API_KEY": "test-key"}):
-            with patch("httpx.get", return_value=_mock_response(KALSHI_SINGLE_MARKET_RESPONSE)):
-                result = md.kalshi_market("FED-25SEP-T4.75")
+        key_b64 = _make_test_key_b64()
+        from app.config import Settings
+        mock_settings = Settings.model_construct(
+            kalshi_key_id="test-key-id", kalshi_private_key_b64=key_b64
+        )
+        with patch("app.config.get_settings", return_value=mock_settings), \
+             patch("httpx.get", return_value=_mock_response(KALSHI_SINGLE_MARKET_RESPONSE)):
+            result = md.kalshi_market("FED-25SEP-T4.75")
         assert result["ticker"] == "FED-25SEP-T4.75"
         assert result["yes_bid"] == pytest.approx(0.38)
 
-    def test_returns_friendly_error_when_no_credentials(self):
-        import os
-        for key in ("KALSHI_API_KEY", "KALSHI_EMAIL", "KALSHI_PASSWORD"):
-            os.environ.pop(key, None)
-        result = md.kalshi_market("FED-25SEP-T4.75")
+    def test_returns_friendly_error_when_not_configured(self):
+        from app.config import Settings
+        mock_settings = Settings.model_construct(kalshi_key_id="", kalshi_private_key_b64="")
+        with patch("app.config.get_settings", return_value=mock_settings):
+            result = md.kalshi_market("FED-25SEP-T4.75")
         assert "error" in result
