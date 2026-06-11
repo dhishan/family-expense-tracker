@@ -170,7 +170,7 @@ class TestApproveHappyPath:
             import asyncio
             from app.routers.plaid import _approve_pending
 
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 _approve_pending(
                     "pend-001",
                     user,
@@ -217,7 +217,7 @@ class TestApproveHappyPath:
             import asyncio
             from app.routers.plaid import _approve_pending
 
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 _approve_pending("pend-001", user, None, None, None, None)
             )
 
@@ -237,7 +237,7 @@ class TestApproveHappyPath:
             from app.routers.plaid import _approve_pending
 
             with pytest.raises(HTTPException) as exc_info:
-                asyncio.get_event_loop().run_until_complete(
+                asyncio.run(
                     _approve_pending("pend-001", user, None, None, None, None)
                 )
             assert exc_info.value.status_code == 422
@@ -255,7 +255,7 @@ class TestDiscardHappyPath:
             import asyncio
             from app.routers.plaid import discard_pending
 
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 discard_pending("pend-001", current_user=user)
             )
 
@@ -276,7 +276,7 @@ class TestDiscardHappyPath:
             from app.routers.plaid import discard_pending
 
             with pytest.raises(HTTPException) as exc_info:
-                asyncio.get_event_loop().run_until_complete(
+                asyncio.run(
                     discard_pending("pend-001", current_user=user)
                 )
             assert exc_info.value.status_code == 409
@@ -311,7 +311,7 @@ class TestSaveUncategorizedHappyPath:
             import asyncio
             from app.routers.plaid import save_uncategorized
 
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 save_uncategorized("pend-001", current_user=user)
             )
 
@@ -336,7 +336,7 @@ class TestCrossFamilyAccess:
             from app.routers.plaid import _approve_pending
 
             with pytest.raises(HTTPException) as exc_info:
-                asyncio.get_event_loop().run_until_complete(
+                asyncio.run(
                     _approve_pending("pend-001", user_bob, None, None, None, None)
                 )
             assert exc_info.value.status_code == 404
@@ -350,7 +350,7 @@ class TestCrossFamilyAccess:
             from app.routers.plaid import discard_pending
 
             with pytest.raises(HTTPException) as exc_info:
-                asyncio.get_event_loop().run_until_complete(
+                asyncio.run(
                     discard_pending("pend-001", current_user=user_bob)
                 )
             assert exc_info.value.status_code == 404
@@ -422,7 +422,7 @@ class TestUserWithoutFamily:
         from app.routers.plaid import discard_pending
 
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 discard_pending("pend-001", current_user=user_no_family)
             )
         assert exc_info.value.status_code == 400
@@ -815,7 +815,7 @@ class TestExchangeAsync:
                 req = ExchangeRequest(public_token="public-test-token")
                 return await exchange_public_token(req, current_user=user)
 
-            result = asyncio.get_event_loop().run_until_complete(run())
+            result = asyncio.run(run())
 
         assert result["sync_status"] == "pending"
         assert result["pending_count"] == 0

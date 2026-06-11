@@ -226,7 +226,7 @@ class TestSandboxConnectHappyPath:
              patch("app.services.plaid_service.get_firestore_client", return_value=mock_db), \
              patch("app.routers.plaid.get_firestore_client", return_value=mock_db):
             mock_s.environment = "test"
-            result = asyncio.get_event_loop().run_until_complete(sandbox_connect(user))
+            result = asyncio.run(sandbox_connect(user))
 
         assert result["plaid_item_id"] == "item-sandbox-001"
         assert result["accounts_count"] == 2
@@ -285,7 +285,7 @@ class TestSandboxReset:
              patch.object(plaid_service, "delete_pending_transactions_for_item") as mock_del_pending, \
              patch.object(plaid_service, "delete_item") as mock_del_item:
             mock_s.environment = "test"
-            result = asyncio.get_event_loop().run_until_complete(sandbox_reset(user))
+            result = asyncio.run(sandbox_reset(user))
 
         assert result["deleted_items"] == 2
         assert mock_del_pending.call_count == 2
