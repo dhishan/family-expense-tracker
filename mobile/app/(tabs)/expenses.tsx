@@ -15,7 +15,7 @@ import {
   Animated,
 } from 'react-native'
 import Slider from '@react-native-community/slider'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { expensesApi, plaidApi, budgetsApi } from '@/services/api'
 import { useAuthStore } from '@/store/auth'
 import { CATEGORY_INFO } from '@/types'
@@ -951,6 +951,9 @@ const snackStyles = StyleSheet.create({
 interface PendingReviewSectionProps {
   pendingItems: PendingTransaction[]
   totalPending?: number
+  hasMore?: boolean
+  isLoadingMore?: boolean
+  onLoadMore?: () => void
   onApprove: (item: PendingTransaction) => void
   onDiscard: (item: PendingTransaction) => void
   onSaveUncategorized: (item: PendingTransaction) => void
@@ -959,6 +962,9 @@ interface PendingReviewSectionProps {
 function PendingReviewSection({
   pendingItems,
   totalPending,
+  hasMore,
+  isLoadingMore,
+  onLoadMore,
   onApprove,
   onDiscard,
   onSaveUncategorized,
@@ -967,13 +973,8 @@ function PendingReviewSection({
 
   if (pendingItems.length === 0) return null
 
-  // Prefer the server's total (could be larger than locally rendered
-  // count if we paginate or optimistically discard items).
   const totalShown = totalPending ?? pendingItems.length
-  const cappedAt = pendingItems.length < totalShown
-  const headerLabel = cappedAt
-    ? `${totalShown} transactions need review (showing ${pendingItems.length})`
-    : `${pendingItems.length} transaction${pendingItems.length !== 1 ? 's' : ''} need review`
+  const headerLabel = `${totalShown} transaction${totalShown !== 1 ? 's' : ''} need review`
 
   return (
     <View style={pendingStyles.container} testID="pending-review-section">
@@ -1031,6 +1032,23 @@ function PendingReviewSection({
             </View>
           </View>
         ))}
+
+      {!collapsed && hasMore && (
+        <TouchableOpacity
+          style={pendingStyles.loadMoreBtn}
+          onPress={onLoadMore}
+          disabled={isLoadingMore}
+          testID="pending-load-more"
+        >
+          {isLoadingMore ? (
+            <ActivityIndicator size="small" color="#92400e" />
+          ) : (
+            <Text style={pendingStyles.loadMoreText}>
+              Load more ({(totalPending ?? 0) - pendingItems.length} remaining)
+            </Text>
+          )}
+        </TouchableOpacity>
+      )}
     </View>
   )
 }
@@ -1101,6 +1119,17 @@ const pendingStyles = StyleSheet.create({
     borderColor: '#d1d5db',
   },
   saveUncatBtnText: { fontSize: 13, fontWeight: '600', color: '#374151' },
+  loadMoreBtn: {
+    marginHorizontal: 12,
+    marginTop: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: 8,
+    backgroundColor: '#fef3c7',
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+  },
+  loadMoreText: { fontSize: 14, fontWeight: '600', color: '#92400e' },
   discardBtn: {
     flex: 1,
     backgroundColor: '#fee2e2',
@@ -1232,19 +1261,27 @@ export default function TransactionsScreen() {
   })
   const budgets: BudgetStatus[] = budgetsData?.budgets ?? []
 
-  const { data: pendingData } = useQuery({
+  const PENDING_PAGE_SIZE = 50
+  const {
+    data: pendingData,
+    fetchNextPage: fetchNextPending,
+    hasNextPage: hasMorePending,
+    isFetchingNextPage: isFetchingMorePending,
+  } = useInfiniteQuery({
     queryKey: ['plaid', 'pending'],
-    // 200 is the backend cap; with the initial Plaid pull surfacing
-    // 300+ pending we'd previously show only the first 50 with no
-    // hint that more exist. A single 200-item fetch is still cheap
-    // and matches the "review inbox" mental model better.
-    queryFn: () => plaidApi.listPending(1, 200),
+    queryFn: ({ pageParam = 1 }) => plaidApi.listPending(pageParam, PENDING_PAGE_SIZE),
     enabled: !!user?.family_id,
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((n, p) => n + p.pending.length, 0)
+      return loaded < lastPage.total ? allPages.length + 1 : undefined
+    },
   })
+  const pendingServerTotal = pendingData?.pages[0]?.total ?? 0
 
   // Derive local pending from server data minus removed IDs, plus undo'd items
   const localPending: PendingTransaction[] = (() => {
-    const serverItems = pendingData?.pending ?? []
+    const serverItems = pendingData?.pages.flatMap((p) => p.pending) ?? []
     const merged = new Map<string, PendingTransaction>()
     // Put undo'd items first
     undoneItems.forEach((item, id) => {
@@ -1415,6 +1452,10 @@ export default function TransactionsScreen() {
           ListHeaderComponent={
             <PendingReviewSection
               pendingItems={localPending}
+              totalPending={pendingServerTotal}
+              hasMore={hasMorePending}
+              isLoadingMore={isFetchingMorePending}
+              onLoadMore={() => fetchNextPending()}
               onApprove={handleApprove}
               onDiscard={handleDiscard}
               onSaveUncategorized={handleSaveUncategorized}

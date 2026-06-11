@@ -160,9 +160,6 @@ export default function Transactions() {
   const [page, setPage] = useState(1)
   const [pendingHidden, setPendingHidden] = useState(false)
   const [approveBudgetId, setApproveBudgetId] = useState<string | undefined>(undefined)
-  const [showAllBudgets, setShowAllBudgets] = useState(false)
-  // Track if the user manually changed category in the approve form (for budget auto-fill)
-  const [approveCategoryManuallySet, setApproveCategoryManuallySet] = useState(false)
 
   // Discard undo buffer: map id -> { tx, timerId }
   const discardBuffer = useRef<Map<string, { tx: PendingTransaction; timerId: ReturnType<typeof setTimeout> }>>(new Map())
@@ -351,8 +348,6 @@ export default function Transactions() {
     setApprovingIsIncome(tx.is_income === true)
     setIncomeConfirmed(false)
     setApproveBudgetId(undefined)
-    setShowAllBudgets(false)
-    setApproveCategoryManuallySet(false)
     const dateStr = tx.date || tx.authorized_date || ''
     resetApprove({
       amount: Math.abs(tx.amount),
@@ -943,70 +938,37 @@ export default function Transactions() {
               {/* Budget picker */}
               {budgets.length > 0 && (
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-sm font-medium text-gray-700">Budget</label>
-                    <button
-                      type="button"
-                      onClick={() => setShowAllBudgets((v) => !v)}
-                      className="text-xs text-primary-600 hover:text-primary-700"
-                    >
-                      {showAllBudgets ? 'Show relevant' : 'Show all'}
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {/* None chip */}
-                    <button
-                      type="button"
-                      onClick={() => setApproveBudgetId(undefined)}
-                      className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
-                        !approveBudgetId
-                          ? 'bg-primary-600 text-white border-primary-600'
-                          : 'border-gray-300 text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      None
-                    </button>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Budget</label>
+                  <select
+                    value={approveBudgetId ?? ''}
+                    onChange={(e) => setApproveBudgetId(e.target.value || undefined)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  >
+                    <option value="">None</option>
                     {(() => {
-                      // Get current category from the form
-                      const currentCategory = (document.querySelector('select[name=category]') as HTMLSelectElement)?.value || approvingTx?.suggested_category
                       const periodOrder: Record<string, number> = { weekly: 0, monthly: 1, yearly: 2 }
-                      const visible = showAllBudgets
-                        ? budgets
-                        : budgets.filter((b) => !b.budget.category || b.budget.category === currentCategory)
-                      return visible
+                      const groups: Record<string, BudgetStatus[]> = { weekly: [], monthly: [], yearly: [] }
+                      budgets
                         .slice()
                         .sort((a, b) => (periodOrder[a.budget.period] ?? 3) - (periodOrder[b.budget.period] ?? 3))
-                        .map((bs) => {
-                          const active = approveBudgetId === bs.budget.id
-                          const pct = Math.round(bs.percentage_used)
-                          return (
-                            <button
-                              key={bs.budget.id}
-                              type="button"
-                              onClick={() => {
-                                setApproveBudgetId(bs.budget.id)
-                                // Auto-fill category if user hasn't manually changed it
-                                if (!approveCategoryManuallySet && bs.budget.category) {
-                                  // react-hook-form doesn't expose a direct way to set a value
-                                  // from outside without using setValue — we skip auto-fill on web
-                                  // to keep this PR focused; the user can manually pick
-                                }
-                              }}
-                              className={`px-3 py-1.5 text-xs rounded-full border transition-colors text-left ${
-                                active
-                                  ? 'bg-indigo-50 text-indigo-700 border-indigo-400'
-                                  : bs.is_over_budget
-                                  ? 'border-red-300 text-red-700 bg-red-50'
-                                  : 'border-gray-300 text-gray-600 hover:bg-gray-50'
-                              }`}
-                            >
-                              <span className="font-medium">{bs.budget.name}</span>
-                              <span className="ml-1 opacity-70">({pct}% used)</span>
-                            </button>
-                          )
+                        .forEach((bs) => {
+                          const p = bs.budget.period
+                          if (groups[p]) groups[p].push(bs)
                         })
+                      return (['weekly', 'monthly', 'yearly'] as const)
+                        .filter((p) => groups[p].length > 0)
+                        .map((p) => (
+                          <optgroup key={p} label={p.charAt(0).toUpperCase() + p.slice(1)}>
+                            {groups[p].map((bs) => (
+                              <option key={bs.budget.id} value={bs.budget.id}>
+                                {bs.budget.name} ({Math.round(bs.percentage_used)}% used
+                                {bs.is_over_budget ? ' • over' : ''})
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))
                     })()}
-                  </div>
+                  </select>
                 </div>
               )}
 
