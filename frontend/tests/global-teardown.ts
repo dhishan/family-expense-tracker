@@ -1,4 +1,5 @@
 import * as https from 'https'
+import * as http from 'http'
 import * as fs from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
@@ -8,11 +9,21 @@ const STATE_FILE = join(__dirname, '.test-state.json')
 
 const API = process.env.API_URL || 'https://api.expense-tracker.blueelephants.org/api/v1'
 
+function clientFor(u: URL) {
+  return u.protocol === 'http:' ? http : https
+}
+
 function get(url: string, token: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const u = new URL(url)
-    const req = https.request(
-      { hostname: u.hostname, path: u.pathname + u.search, method: 'GET', headers: { Authorization: `Bearer ${token}` } },
+    const req = clientFor(u).request(
+      {
+        hostname: u.hostname,
+        port: u.port || undefined,
+        path: u.pathname + u.search,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      },
       (res) => {
         let data = ''
         res.on('data', (chunk) => (data += chunk))
@@ -27,8 +38,14 @@ function get(url: string, token: string): Promise<unknown> {
 function del(url: string, token: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const u = new URL(url)
-    const req = https.request(
-      { hostname: u.hostname, path: u.pathname, method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+    const req = clientFor(u).request(
+      {
+        hostname: u.hostname,
+        port: u.port || undefined,
+        path: u.pathname,
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      },
       (res) => {
         res.resume()
         res.on('end', resolve)
@@ -69,9 +86,10 @@ export default async function globalTeardown() {
   function apiPost(url: string, token: string): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const u = new URL(url)
-      const req = https.request(
+      const req = clientFor(u).request(
         {
           hostname: u.hostname,
+          port: u.port || undefined,
           path: u.pathname + u.search,
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Length': 0 },
