@@ -194,6 +194,7 @@ class BudgetService:
             end_date=period_end,
             category=budget.category,
             beneficiary=budget.beneficiary,
+            budget_id=budget.id,
         )
 
         remaining = budget.amount - spent

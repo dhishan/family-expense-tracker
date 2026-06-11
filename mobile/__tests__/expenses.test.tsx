@@ -71,6 +71,9 @@ jest.mock('@/services/api', () => {
       discard: jest.fn().mockResolvedValue(undefined),
       saveUncategorized: jest.fn().mockResolvedValue({ expense: {} }),
     },
+    budgetsApi: {
+      list: jest.fn().mockResolvedValue({ budgets: [], total: 0 }),
+    },
   }
 })
 

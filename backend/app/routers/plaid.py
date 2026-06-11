@@ -80,6 +80,7 @@ class ApproveRequest(BaseModel):
     payment_method: Optional[str] = None
     tags: Optional[list[str]] = None
     is_income_override: bool = False     # True when user explicitly approves an income row
+    budget_id: Optional[str] = None     # Explicitly pin this expense to a budget
 
 
 # ---------------------------------------------------------------------------
@@ -696,6 +697,7 @@ async def _approve_pending(
     override_payment_method: str | None = None,
     override_tags: list[str] | None = None,
     is_income_override: bool = False,
+    override_budget_id: str | None = None,
 ) -> dict:
     """Shared logic for approve and save-uncategorized."""
     if not current_user.family_id:
@@ -775,6 +777,7 @@ async def _approve_pending(
         category=category,
         beneficiary=beneficiary,
         tags=tags,
+        budget_id=override_budget_id or None,
     )
 
     svc = get_expense_service()
@@ -824,6 +827,7 @@ async def approve_pending(
         override_payment_method=body.payment_method,
         override_tags=body.tags,
         is_income_override=body.is_income_override,
+        override_budget_id=body.budget_id,
     )
 
 

@@ -347,6 +347,7 @@ export const plaidApi = {
       payment_method?: string
       tags?: string[]
       is_income_override?: boolean
+      budget_id?: string | null
     }
   ): Promise<{ expense: Expense }> => {
     const response = await api.post<{ expense: Expense }>(`/plaid/pending/${id}/approve`, edits || {})

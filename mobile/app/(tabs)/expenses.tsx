@@ -16,10 +16,10 @@ import {
 } from 'react-native'
 import Slider from '@react-native-community/slider'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { expensesApi, plaidApi } from '@/services/api'
+import { expensesApi, plaidApi, budgetsApi } from '@/services/api'
 import { useAuthStore } from '@/store/auth'
 import { CATEGORY_INFO } from '@/types'
-import type { ExpenseCategory, ExpenseCreate, Expense, PendingTransaction } from '@/types'
+import type { ExpenseCategory, ExpenseCreate, Expense, PendingTransaction, PaymentMethod, BudgetStatus } from '@/types'
 
 const CATEGORY_EMOJI: Record<string, string> = {
   groceries: '🛒',
@@ -67,21 +67,48 @@ function defaultForm(): ExpenseFormData {
   }
 }
 
-// ─── Approve modal (for both Add/Edit and Plaid pending approval) ──────────────
+const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
+  { value: 'credit', label: 'Credit' },
+  { value: 'debit', label: 'Debit' },
+  { value: 'cash', label: 'Cash' },
+  { value: 'bank_transfer', label: 'Bank' },
+  { value: 'paypal', label: 'PayPal' },
+  { value: 'venmo', label: 'Venmo' },
+  { value: 'other', label: 'Other' },
+]
+
+// Derive a sensible payment method from the Plaid account type string
+function derivePaymentMethod(accountType?: string | null): PaymentMethod {
+  const t = (accountType ?? '').toLowerCase()
+  if (t === 'depository') return 'debit'
+  if (t === 'credit') return 'credit'
+  return 'credit'
+}
+
+// ─── Approve modal (for Plaid pending approval) ────────────────────────────────
+
+interface ApproveEdits {
+  amount: number
+  date: string
+  category: ExpenseCategory
+  description: string
+  merchant: string
+  payment_method: PaymentMethod
+  beneficiary: string
+  tags: string[]
+  budget_id?: string | null
+}
 
 interface ApproveModalProps {
   visible: boolean
   pending: PendingTransaction | null
   onClose: () => void
-  onApprove: (edits: {
-    amount: number
-    category: ExpenseCategory
-    description: string
-    beneficiary: string
-  }) => void
+  onApprove: (edits: ApproveEdits) => void
   isApproving: boolean
   familyMembers: { id: string; display_name: string }[]
   currentUserId: string
+  // Account type for payment method derivation
+  accountType?: string | null
 }
 
 function ApproveModal({
@@ -92,20 +119,67 @@ function ApproveModal({
   isApproving,
   familyMembers,
   currentUserId,
+  accountType,
 }: ApproveModalProps) {
   const [amount, setAmount] = useState('')
+  const [date, setDate] = useState('')
   const [category, setCategory] = useState<ExpenseCategory>('other')
   const [description, setDescription] = useState('')
+  const [merchant, setMerchant] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('credit')
   const [beneficiary, setBeneficiary] = useState('')
+  const [tags, setTags] = useState('')
+  const [budgetId, setBudgetId] = useState<string | null>(null)
+  // Track if the user manually changed category so budget auto-fill doesn't fight them
+  const [categoryManuallySet, setCategoryManuallySet] = useState(false)
+
+  const { data: budgetsData } = useQuery({
+    queryKey: ['budgets', 'list'],
+    queryFn: budgetsApi.list,
+    enabled: visible,
+  })
+  const budgets: BudgetStatus[] = budgetsData?.budgets ?? []
 
   useEffect(() => {
     if (pending && visible) {
-      setAmount(String(pending.amount ?? ''))
+      const rawAmt = Math.abs(pending.amount ?? 0)
+      setAmount(String(rawAmt))
+      const dateStr = pending.date ?? pending.authorized_date ?? toLocalISODate()
+      setDate(dateStr)
       setCategory(pending.suggested_category ?? 'other')
       setDescription(pending.merchant_name ?? pending.name ?? '')
+      setMerchant(pending.merchant_name ?? '')
+      setPaymentMethod(derivePaymentMethod(accountType))
       setBeneficiary(currentUserId)
+      setTags('')
+      setBudgetId(pending.suggested_budget_id ?? null)
+      setCategoryManuallySet(false)
     }
-  }, [pending, visible, currentUserId])
+  }, [pending, visible, currentUserId, accountType])
+
+  // When category changes, deselect budget if it no longer matches
+  const handleCategoryChange = (cat: ExpenseCategory) => {
+    setCategory(cat)
+    setCategoryManuallySet(true)
+    if (budgetId) {
+      const selected = budgets.find((b) => b.budget.id === budgetId)
+      if (selected && selected.budget.category && selected.budget.category !== cat) {
+        setBudgetId(null)
+      }
+    }
+  }
+
+  // When a budget is selected, auto-fill category if not manually overridden
+  const handleBudgetSelect = (bs: BudgetStatus | null) => {
+    if (!bs) {
+      setBudgetId(null)
+      return
+    }
+    setBudgetId(bs.budget.id)
+    if (!categoryManuallySet && bs.budget.category) {
+      setCategory(bs.budget.category as ExpenseCategory)
+    }
+  }
 
   const handleApprove = () => {
     const amt = parseFloat(amount)
@@ -113,8 +187,35 @@ function ApproveModal({
       Alert.alert('Validation', 'Enter a valid amount greater than 0.')
       return
     }
-    onApprove({ amount: amt, category, description: description.trim(), beneficiary })
+    const tagsArr = tags
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean)
+    onApprove({
+      amount: amt,
+      date: date || toLocalISODate(),
+      category,
+      description: description.trim(),
+      merchant: merchant.trim(),
+      payment_method: paymentMethod,
+      beneficiary,
+      tags: tagsArr,
+      budget_id: budgetId,
+    })
   }
+
+  // Filter budgets: show those whose category matches current category, or has no category.
+  // "Show all" toggle reveals the rest.
+  const [showAllBudgets, setShowAllBudgets] = useState(false)
+  const filteredBudgets = showAllBudgets
+    ? budgets
+    : budgets.filter((b) => !b.budget.category || b.budget.category === category)
+
+  // Sort: weekly first, monthly, yearly
+  const periodOrder: Record<string, number> = { weekly: 0, monthly: 1, yearly: 2 }
+  const sortedBudgets = [...filteredBudgets].sort(
+    (a, b) => (periodOrder[a.budget.period] ?? 3) - (periodOrder[b.budget.period] ?? 3)
+  )
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
@@ -146,7 +247,7 @@ function ApproveModal({
                   <TouchableOpacity
                     key={cat}
                     style={[modalStyles.catChip, active && modalStyles.catChipActive]}
-                    onPress={() => setCategory(cat)}
+                    onPress={() => handleCategoryChange(cat)}
                     testID={`approve-category-chip-${cat}`}
                   >
                     <Text style={modalStyles.catEmoji}>{CATEGORY_EMOJI[cat] ?? '📝'}</Text>
@@ -178,7 +279,16 @@ function ApproveModal({
                 />
               </View>
 
-              <Text style={modalStyles.label}>Description</Text>
+              <Text style={modalStyles.label}>Date</Text>
+              <TextInput
+                style={modalStyles.input}
+                value={date}
+                onChangeText={setDate}
+                placeholder="YYYY-MM-DD"
+                testID="approve-date-input"
+              />
+
+              <Text style={modalStyles.label}>Note</Text>
               <TextInput
                 style={modalStyles.input}
                 value={description}
@@ -186,6 +296,116 @@ function ApproveModal({
                 placeholder="What was this for?"
                 testID="approve-description-input"
               />
+
+              <Text style={modalStyles.label}>Merchant</Text>
+              <TextInput
+                style={modalStyles.input}
+                value={merchant}
+                onChangeText={setMerchant}
+                placeholder="Store or vendor name"
+                testID="approve-merchant-input"
+              />
+
+              <Text style={modalStyles.label}>Payment method</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ marginBottom: 16 }}
+              >
+                {PAYMENT_METHODS.map((pm) => (
+                  <TouchableOpacity
+                    key={pm.value}
+                    style={[
+                      modalStyles.chip,
+                      paymentMethod === pm.value && modalStyles.chipActive,
+                    ]}
+                    onPress={() => setPaymentMethod(pm.value)}
+                    testID={`approve-pm-chip-${pm.value}`}
+                  >
+                    <Text
+                      style={[
+                        modalStyles.chipText,
+                        paymentMethod === pm.value && modalStyles.chipTextActive,
+                      ]}
+                    >
+                      {pm.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              {/* Budget picker */}
+              {budgets.length > 0 && (
+                <>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Text style={[modalStyles.label, { flex: 1, marginBottom: 0 }]}>Budget</Text>
+                    <TouchableOpacity onPress={() => setShowAllBudgets((v) => !v)}>
+                      <Text style={approveStyles.showAllText}>
+                        {showAllBudgets ? 'Show relevant' : 'Show all'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={{ marginBottom: 16 }}
+                  >
+                    {/* None chip */}
+                    <TouchableOpacity
+                      style={[
+                        approveStyles.budgetChip,
+                        !budgetId && approveStyles.budgetChipActive,
+                      ]}
+                      onPress={() => handleBudgetSelect(null)}
+                      testID="approve-budget-none"
+                    >
+                      <Text
+                        style={[
+                          approveStyles.budgetChipName,
+                          !budgetId && approveStyles.budgetChipNameActive,
+                        ]}
+                      >
+                        None
+                      </Text>
+                    </TouchableOpacity>
+
+                    {sortedBudgets.map((bs) => {
+                      const active = budgetId === bs.budget.id
+                      const pct = Math.round(bs.percentage_used)
+                      return (
+                        <TouchableOpacity
+                          key={bs.budget.id}
+                          style={[
+                            approveStyles.budgetChip,
+                            active && approveStyles.budgetChipActive,
+                            bs.is_over_budget && approveStyles.budgetChipOver,
+                          ]}
+                          onPress={() => handleBudgetSelect(bs)}
+                          testID={`approve-budget-chip-${bs.budget.id}`}
+                        >
+                          <Text
+                            style={[
+                              approveStyles.budgetChipName,
+                              active && approveStyles.budgetChipNameActive,
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {bs.budget.name}
+                          </Text>
+                          <Text
+                            style={[
+                              approveStyles.budgetChipMeta,
+                              active && approveStyles.budgetChipMetaActive,
+                            ]}
+                          >
+                            {pct}% used
+                          </Text>
+                        </TouchableOpacity>
+                      )
+                    })}
+                  </ScrollView>
+                </>
+              )}
 
               {familyMembers.length > 1 && (
                 <>
@@ -218,6 +438,15 @@ function ApproveModal({
                 </>
               )}
 
+              <Text style={modalStyles.label}>Tags (comma-separated)</Text>
+              <TextInput
+                style={modalStyles.input}
+                value={tags}
+                onChangeText={setTags}
+                placeholder="e.g. work, reimbursable"
+                testID="approve-tags-input"
+              />
+
               {pending && (
                 <View style={modalStyles.pendingMeta}>
                   <Text style={modalStyles.pendingMetaText}>
@@ -234,6 +463,27 @@ function ApproveModal({
     </Modal>
   )
 }
+
+const approveStyles = StyleSheet.create({
+  showAllText: { fontSize: 12, color: '#2563eb', fontWeight: '500' },
+  budgetChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    marginRight: 8,
+    backgroundColor: '#fff',
+    minWidth: 72,
+    alignItems: 'center',
+  },
+  budgetChipActive: { backgroundColor: '#eef2ff', borderColor: '#2563eb' },
+  budgetChipOver: { borderColor: '#dc2626', backgroundColor: '#fff1f2' },
+  budgetChipName: { fontSize: 13, color: '#374151', fontWeight: '600' },
+  budgetChipNameActive: { color: '#1d4ed8' },
+  budgetChipMeta: { fontSize: 10, color: '#9ca3af', marginTop: 2 },
+  budgetChipMetaActive: { color: '#6366f1' },
+})
 
 // ─── Add/Edit modal ────────────────────────────────────────────────────────────
 
@@ -822,7 +1072,7 @@ export default function TransactionsScreen() {
       edits,
     }: {
       id: string
-      edits: { amount: number; category: string; description: string; beneficiary: string }
+      edits: ApproveEdits
     }) => plaidApi.approve(id, edits),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
@@ -871,7 +1121,7 @@ export default function TransactionsScreen() {
   }, [])
 
   const handleApproveSubmit = useCallback(
-    (edits: { amount: number; category: ExpenseCategory; description: string; beneficiary: string }) => {
+    (edits: ApproveEdits) => {
       if (!approvingPending) return
       // Optimistically remove from list
       setRemovedIds((prev) => new Set([...prev, approvingPending.id]))
@@ -1039,6 +1289,7 @@ export default function TransactionsScreen() {
         isApproving={approveMutation.isPending}
         familyMembers={familyMembers}
         currentUserId={user?.id ?? ''}
+        accountType={null}
       />
 
       {snackbar && (

@@ -65,6 +65,7 @@ export interface Expense {
   category: ExpenseCategory
   beneficiary: string
   tags: string[]
+  budget_id?: string | null
   created_by: string
   created_at: string
   updated_at: string
@@ -80,6 +81,7 @@ export interface ExpenseCreate {
   category: ExpenseCategory
   beneficiary: string
   tags?: string[]
+  budget_id?: string | null
 }
 
 export interface ExpenseUpdate {
@@ -92,6 +94,7 @@ export interface ExpenseUpdate {
   category?: ExpenseCategory
   beneficiary?: string
   tags?: string[]
+  budget_id?: string | null
 }
 
 export interface ExpenseListResponse {
@@ -283,8 +286,10 @@ export interface PendingTransaction {
   suggested_category: ExpenseCategory
   plaid_category: string | null
   pending_until_posted: boolean
+  is_income?: boolean
   status: 'pending' | 'approved' | 'discarded'
   expense_id: string | null
+  suggested_budget_id?: string | null
   created_at: string
   updated_at: string
 }

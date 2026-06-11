@@ -256,27 +256,55 @@ class ExpenseService:
         end_date: date,
         category: Optional[str] = None,
         beneficiary: Optional[str] = None,
+        budget_id: Optional[str] = None,
     ) -> float:
-        """Get total spending for budget tracking."""
-        query = self.collection.where(
-            filter=FieldFilter("family_id", "==", family_id)
-        )
-        
+        """Get total spending for budget tracking.
+
+        Two sources are summed:
+        1. Expenses explicitly pinned to this budget via budget_id (wins regardless of category).
+        2. Expenses with no budget_id whose category matches (backward-compat fallback).
+
+        This means existing budgets that predate the budget_id field continue to work
+        as before, and newly pinned expenses are correctly attributed even if their
+        category differs from the budget's category.
+        """
         start_dt = datetime.combine(start_date, datetime.min.time())
         end_dt = datetime.combine(end_date, datetime.max.time())
-        
-        query = query.where(filter=FieldFilter("date", ">=", start_dt))
-        query = query.where(filter=FieldFilter("date", "<=", end_dt))
-        
+        total = 0.0
+
+        # Part 1 — explicitly pinned expenses (only when we have a budget_id to pin to)
+        if budget_id:
+            pinned_query = (
+                self.collection
+                .where(filter=FieldFilter("family_id", "==", family_id))
+                .where(filter=FieldFilter("budget_id", "==", budget_id))
+                .where(filter=FieldFilter("date", ">=", start_dt))
+                .where(filter=FieldFilter("date", "<=", end_dt))
+            )
+            if beneficiary:
+                pinned_query = pinned_query.where(filter=FieldFilter("beneficiary", "==", beneficiary))
+            for doc in pinned_query.stream():
+                total += doc.to_dict().get("amount", 0)
+
+        # Part 2 — unpinned expenses that match by category (fallback / legacy)
+        fallback_query = (
+            self.collection
+            .where(filter=FieldFilter("family_id", "==", family_id))
+            .where(filter=FieldFilter("date", ">=", start_dt))
+            .where(filter=FieldFilter("date", "<=", end_dt))
+        )
         if category:
-            query = query.where(filter=FieldFilter("category", "==", category))
-        
+            fallback_query = fallback_query.where(filter=FieldFilter("category", "==", category))
         if beneficiary:
-            query = query.where(filter=FieldFilter("beneficiary", "==", beneficiary))
-        
-        docs = query.stream()
-        
-        total = sum(doc.to_dict().get("amount", 0) for doc in docs)
+            fallback_query = fallback_query.where(filter=FieldFilter("beneficiary", "==", beneficiary))
+
+        for doc in fallback_query.stream():
+            data = doc.to_dict()
+            # Skip expenses that are pinned (already counted in part 1, or pinned to a different budget)
+            if data.get("budget_id"):
+                continue
+            total += data.get("amount", 0)
+
         return total
 
 

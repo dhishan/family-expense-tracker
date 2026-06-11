@@ -41,6 +41,7 @@ class ExpenseBase(BaseModel):
     category: ExpenseCategory = ExpenseCategory.OTHER
     beneficiary: str = Field(..., description="User ID or 'family'")
     tags: List[str] = Field(default_factory=list)
+    budget_id: Optional[str] = Field(None, description="Explicitly pinned budget ID")
 
 
 class ExpenseCreate(ExpenseBase):
@@ -59,6 +60,7 @@ class ExpenseUpdate(BaseModel):
     category: Optional[ExpenseCategory] = None
     beneficiary: Optional[str] = None
     tags: Optional[List[str]] = None
+    budget_id: Optional[str] = None
 
 
 class Expense(ExpenseBase):
@@ -86,6 +88,7 @@ class ExpenseResponse(BaseModel):
     category: str
     beneficiary: str
     tags: List[str]
+    budget_id: Optional[str] = None
     created_by: str
     created_at: datetime
     updated_at: datetime

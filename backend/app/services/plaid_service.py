@@ -458,6 +458,8 @@ def _txn_to_doc(txn: Any, family_id: str, connected_by_user_id: str, plaid_item_
         "is_income": is_income_transaction(pfc, float(amount)),
         "status": "pending",
         "expense_id": None,
+        # TODO: populate suggested_budget_id via LLM auto-suggestion (Haiku) at sync time
+        "suggested_budget_id": None,
         "created_at": _now(),
         "updated_at": _now(),
     }

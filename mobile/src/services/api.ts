@@ -448,7 +448,18 @@ export const plaidApi = {
 
   approve: async (
     id: string,
-    edits?: { amount?: number; category?: string; description?: string; beneficiary?: string }
+    edits?: {
+      amount?: number
+      date?: string
+      category?: string
+      description?: string
+      merchant?: string
+      payment_method?: string
+      beneficiary?: string
+      tags?: string[]
+      is_income_override?: boolean
+      budget_id?: string | null
+    }
   ): Promise<{ expense: Expense }> => {
     const response = await api.post<{ expense: Expense }>(
       `/plaid/pending/${id}/approve`,
