@@ -396,6 +396,58 @@ resource "google_secret_manager_secret_version" "plaid_env" {
   secret_data = var.plaid_env
 }
 
+# --- Kalshi (CFTC-regulated prediction market) ---
+resource "google_secret_manager_secret" "kalshi_email" {
+  secret_id = "${var.backend_service_name}-kalshi-email"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "kalshi_email" {
+  secret      = google_secret_manager_secret.kalshi_email.id
+  secret_data = coalesce(var.kalshi_email, "not-configured")
+}
+
+resource "google_secret_manager_secret" "kalshi_password" {
+  secret_id = "${var.backend_service_name}-kalshi-password"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "kalshi_password" {
+  secret      = google_secret_manager_secret.kalshi_password.id
+  secret_data = coalesce(var.kalshi_password, "not-configured")
+}
+
+resource "google_secret_manager_secret" "kalshi_api_key" {
+  secret_id = "${var.backend_service_name}-kalshi-api-key"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "kalshi_api_key" {
+  secret      = google_secret_manager_secret.kalshi_api_key.id
+  secret_data = coalesce(var.kalshi_api_key, "not-configured")
+}
+
 # Cloud Run service for backend
 resource "google_cloud_run_service" "backend" {
   name     = var.backend_service_name
@@ -583,6 +635,36 @@ resource "google_cloud_run_service" "backend" {
           }
         }
 
+        env {
+          name = "KALSHI_EMAIL"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.kalshi_email.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "KALSHI_PASSWORD"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.kalshi_password.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "KALSHI_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.kalshi_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
         resources {
           limits = {
             cpu    = "1000m"
@@ -649,6 +731,9 @@ resource "google_cloud_run_service" "backend" {
     google_secret_manager_secret_version.plaid_client_id,
     google_secret_manager_secret_version.plaid_secret,
     google_secret_manager_secret_version.plaid_env,
+    google_secret_manager_secret_version.kalshi_email,
+    google_secret_manager_secret_version.kalshi_password,
+    google_secret_manager_secret_version.kalshi_api_key,
   ]
 }
 

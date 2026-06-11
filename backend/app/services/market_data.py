@@ -579,3 +579,319 @@ def edgar_insider_transactions(ticker: str, days: int = 90) -> list[dict]:
         return recent if recent else [{"message": f"No Form 4 filings in the last {days} days for {ticker}"}]
     except Exception as exc:
         return [{"error": str(exc), "ticker": ticker}]
+
+
+# ---------------------------------------------------------------------------
+# Prediction Markets
+# ---------------------------------------------------------------------------
+
+# --- Manifold Markets (play money, no auth required) ---
+
+def manifold_search(query: str, limit: int = 10) -> list[dict]:
+    """Search Manifold Markets for prediction markets matching a query.
+
+    Manifold uses play money (mana), so prices reflect crowd sentiment rather
+    than real-money positioning. Good signal for political, tech, and macro
+    questions.
+
+    Args:
+        query: Search term, e.g. "fed rate cut September".
+        limit: Max markets to return (default 10).
+
+    Returns:
+        List of {id, question, probability, volume, close_time, url, is_resolved} dicts.
+    """
+    try:
+        resp = httpx.get(
+            "https://api.manifold.markets/v0/search-markets",
+            params={"term": query, "limit": limit},
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        markets = resp.json()
+        return [_normalize_manifold(m) for m in markets]
+    except Exception as exc:
+        return [{"error": str(exc), "query": query}]
+
+
+def manifold_market(id_or_slug: str) -> dict:
+    """Fetch a specific Manifold market by ID or slug.
+
+    Args:
+        id_or_slug: Manifold market ID or URL slug.
+
+    Returns:
+        {id, question, probability, volume, close_time, url, is_resolved, traders}
+    """
+    try:
+        resp = httpx.get(
+            f"https://api.manifold.markets/v0/market/{id_or_slug}",
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return _normalize_manifold(resp.json())
+    except Exception as exc:
+        return {"error": str(exc), "id_or_slug": id_or_slug}
+
+
+def _normalize_manifold(m: dict) -> dict:
+    return {
+        "id": m.get("id"),
+        "question": m.get("question"),
+        "probability": m.get("probability"),
+        "volume": m.get("volume"),
+        "close_time": m.get("closeTime"),
+        "url": m.get("url"),
+        "is_resolved": m.get("isResolved", False),
+        "outcome_type": m.get("outcomeType"),
+        "traders": m.get("uniqueBettorCount"),
+    }
+
+
+# --- Polymarket (real-money USDC, US-restricted in many states) ---
+
+def polymarket_search(query: str, limit: int = 10) -> list[dict]:
+    """Search Polymarket for prediction markets matching a query.
+
+    Polymarket is a real-money USDC market (US users restricted in many states).
+    Prices are 0-1 representing implied probability (e.g. 0.62 = 62%).
+
+    Args:
+        query: Search term, e.g. "israel iran ceasefire".
+        limit: Max markets to return (default 10).
+
+    Returns:
+        List of {question, slug, url, yes_price, no_price, volume_24h, liquidity,
+                 end_date, closed} dicts.
+    """
+    try:
+        resp = httpx.get(
+            "https://gamma-api.polymarket.com/markets",
+            params={"q": query, "active": "true", "closed": "false", "limit": limit},
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        markets = resp.json()
+        # gamma-api may return a list or a dict with "markets" key
+        if isinstance(markets, dict):
+            markets = markets.get("markets", [])
+        return [_normalize_polymarket(m) for m in markets[:limit]]
+    except Exception as exc:
+        return [{"error": str(exc), "query": query}]
+
+
+def polymarket_market(slug: str) -> dict:
+    """Fetch a specific Polymarket market by slug.
+
+    Args:
+        slug: Polymarket market slug (from the URL, e.g. "will-fed-cut-rates-in-september").
+
+    Returns:
+        {question, slug, url, yes_price, no_price, volume_24h, liquidity, end_date, closed}
+    """
+    try:
+        resp = httpx.get(
+            "https://gamma-api.polymarket.com/markets",
+            params={"slug": slug},
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, list) and data:
+            return _normalize_polymarket(data[0])
+        if isinstance(data, dict) and "markets" in data:
+            markets = data["markets"]
+            if markets:
+                return _normalize_polymarket(markets[0])
+        return {"error": f"No market found for slug: {slug}"}
+    except Exception as exc:
+        return {"error": str(exc), "slug": slug}
+
+
+def _normalize_polymarket(m: dict) -> dict:
+    import json as _json
+
+    outcomes_raw = m.get("outcomes", [])
+    prices_raw = m.get("outcomePrices", [])
+
+    # outcomePrices may be a JSON-encoded string
+    if isinstance(prices_raw, str):
+        try:
+            prices_raw = _json.loads(prices_raw)
+        except Exception:
+            prices_raw = []
+
+    if isinstance(outcomes_raw, str):
+        try:
+            outcomes_raw = _json.loads(outcomes_raw)
+        except Exception:
+            outcomes_raw = []
+
+    # Build outcome->price mapping
+    outcome_map = {}
+    for i, outcome in enumerate(outcomes_raw):
+        price = prices_raw[i] if i < len(prices_raw) else None
+        try:
+            price = float(price) if price is not None else None
+        except (TypeError, ValueError):
+            price = None
+        outcome_map[outcome] = price
+
+    # Extract yes/no prices for binary markets; fall back to full map
+    yes_price = outcome_map.get("Yes") or outcome_map.get("UP") or (
+        list(outcome_map.values())[0] if outcome_map else None
+    )
+    no_price = outcome_map.get("No") or outcome_map.get("DOWN") or (
+        list(outcome_map.values())[1] if len(outcome_map) > 1 else None
+    )
+
+    slug = m.get("slug") or m.get("conditionId") or ""
+    url = f"https://polymarket.com/event/{slug}" if slug else ""
+
+    result: dict = {
+        "question": m.get("question"),
+        "slug": slug,
+        "url": url,
+        "yes_price": yes_price,
+        "no_price": no_price,
+        "volume_24h": m.get("volume24hr") or m.get("volume24h"),
+        "liquidity": m.get("liquidity"),
+        "end_date": m.get("endDate") or m.get("closeTime"),
+        "closed": m.get("closed", False),
+    }
+
+    # For multi-outcome markets also include raw map
+    if len(outcome_map) > 2:
+        result["outcomes"] = outcome_map
+
+    return result
+
+
+# --- Kalshi (CFTC-regulated real-money US prediction market) ---
+
+import time as _time
+
+_kalshi_token: dict = {"token": None, "expires_at": 0.0}
+
+
+def _kalshi_auth_header() -> dict:
+    """Return Authorization header for Kalshi. Prefers API key; falls back to email+password login."""
+    api_key = os.environ.get("KALSHI_API_KEY", "")
+    if api_key:
+        return {"Authorization": f"Token {api_key}"}
+
+    email = os.environ.get("KALSHI_EMAIL", "")
+    password = os.environ.get("KALSHI_PASSWORD", "")
+    if not email or not password:
+        raise RuntimeError(
+            "Kalshi is not configured. Set KALSHI_API_KEY (or KALSHI_EMAIL + KALSHI_PASSWORD) "
+            "in the environment to enable Kalshi prediction market tools."
+        )
+
+    now = _time.time()
+    if _kalshi_token["token"] and now < _kalshi_token["expires_at"]:
+        return {"Authorization": f"Bearer {_kalshi_token['token']}"}
+
+    resp = httpx.post(
+        "https://api.elections.kalshi.com/trade-api/v2/login",
+        json={"email": email, "password": password},
+        timeout=_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    token = data.get("token") or data.get("member_token", "")
+    _kalshi_token["token"] = token
+    _kalshi_token["expires_at"] = now + 600  # cache for 10 minutes
+    return {"Authorization": f"Bearer {token}"}
+
+
+def kalshi_search(query: str, limit: int = 10) -> list[dict]:
+    """Search Kalshi for CFTC-regulated prediction markets matching a query.
+
+    Kalshi is a US real-money regulated prediction market. Prices are in cents
+    (0-100); this function converts them to 0-1 probability.
+
+    Returns friendly error if Kalshi credentials are not configured.
+
+    Args:
+        query: Search term, e.g. "NVDA $200".
+        limit: Max markets to return (default 10).
+
+    Returns:
+        List of {ticker, title, yes_bid, yes_ask, volume, close_time, status} dicts.
+    """
+    try:
+        headers = _kalshi_auth_header()
+    except RuntimeError as exc:
+        return [{"error": str(exc)}]
+    try:
+        resp = httpx.get(
+            "https://api.elections.kalshi.com/trade-api/v2/markets",
+            params={"limit": limit, "status": "open"},
+            headers=headers,
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        markets = data.get("markets", [])
+        # Filter by query string (case-insensitive substring)
+        query_lower = query.lower()
+        filtered = [
+            m for m in markets
+            if query_lower in (m.get("title") or "").lower()
+            or query_lower in (m.get("subtitle") or "").lower()
+        ]
+        # If no match, return top results anyway
+        result_markets = filtered[:limit] if filtered else markets[:limit]
+        return [_normalize_kalshi(m) for m in result_markets]
+    except Exception as exc:
+        return [{"error": str(exc), "query": query}]
+
+
+def kalshi_market(ticker: str) -> dict:
+    """Fetch a specific Kalshi market by ticker.
+
+    Args:
+        ticker: Kalshi market ticker, e.g. "NVDA-200-Q3".
+
+    Returns:
+        {ticker, title, yes_bid, yes_ask, volume, close_time, status}
+    """
+    try:
+        headers = _kalshi_auth_header()
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+    try:
+        resp = httpx.get(
+            f"https://api.elections.kalshi.com/trade-api/v2/markets/{ticker}",
+            headers=headers,
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        m = data.get("market", data)
+        return _normalize_kalshi(m)
+    except Exception as exc:
+        return {"error": str(exc), "ticker": ticker}
+
+
+def _normalize_kalshi(m: dict) -> dict:
+    def _cents_to_prob(v) -> Optional[float]:
+        if v is None:
+            return None
+        try:
+            return round(float(v) / 100, 4)
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "ticker": m.get("ticker"),
+        "title": m.get("title"),
+        "subtitle": m.get("subtitle"),
+        "yes_bid": _cents_to_prob(m.get("yes_bid")),
+        "yes_ask": _cents_to_prob(m.get("yes_ask")),
+        "volume": m.get("volume"),
+        "liquidity": m.get("liquidity"),
+        "close_time": m.get("close_time") or m.get("closeTime"),
+        "status": m.get("status"),
+    }

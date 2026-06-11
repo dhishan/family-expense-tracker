@@ -537,6 +537,91 @@ TOOLS: list[dict] = [
             "required": ["ticker"],
         },
     },
+    # --- Prediction markets ---
+    {
+        "name": "manifold_search",
+        "description": (
+            "Search Manifold Markets for prediction markets matching a query. "
+            "Manifold uses play money (mana), so prices reflect crowd sentiment rather than "
+            "real-money positioning. Good for political, tech, and macro questions. "
+            "Use when the user asks 'what does Manifold say about X' or wants crowd-sentiment odds."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search term, e.g. 'fed rate cut September'"},
+                "limit": {"type": "integer", "description": "Max markets to return (default 10)", "default": 10},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "manifold_market",
+        "description": "Fetch a specific Manifold Market by ID or slug for full detail.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id_or_slug": {"type": "string", "description": "Manifold market ID or URL slug"},
+            },
+            "required": ["id_or_slug"],
+        },
+    },
+    {
+        "name": "polymarket_search",
+        "description": (
+            "Search Polymarket for real-money USDC prediction markets. "
+            "Prices are 0-1 representing implied probability (e.g. 0.62 = 62% yes). "
+            "Note: Polymarket is US-restricted in many states. "
+            "Use when the user asks 'what does Polymarket say about X' or wants real-money market odds."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search term, e.g. 'Israel Iran ceasefire'"},
+                "limit": {"type": "integer", "description": "Max markets to return (default 10)", "default": 10},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "polymarket_market",
+        "description": "Fetch a specific Polymarket market by slug for full detail.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "slug": {"type": "string", "description": "Polymarket market slug from the URL"},
+            },
+            "required": ["slug"],
+        },
+    },
+    {
+        "name": "kalshi_search",
+        "description": (
+            "Search Kalshi for CFTC-regulated real-money US prediction markets. "
+            "Prices are in 0-1 probability (converted from cents). "
+            "Requires KALSHI_API_KEY or KALSHI_EMAIL+KALSHI_PASSWORD in environment. "
+            "Use when the user asks 'what is Kalshi's price on X' or wants regulated market odds."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search term, e.g. 'NVDA $200 Q3'"},
+                "limit": {"type": "integer", "description": "Max markets to return (default 10)", "default": 10},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "kalshi_market",
+        "description": "Fetch a specific Kalshi market by ticker for full detail.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Kalshi market ticker, e.g. 'FED-25SEP-T4.75'"},
+            },
+            "required": ["ticker"],
+        },
+    },
     # --- Plaid bank tools ---
     {
         "name": "bank_accounts",
@@ -606,6 +691,11 @@ TOOLS: list[dict] = [
 
 _EXPENSE_TOOLS = {"expense_list", "expense_summary", "expense_top_merchants", "budget_status", "budget_burn_rate"}
 _PLAID_TOOLS = {"bank_accounts", "bank_transactions", "bank_recurring"}
+_PREDICTION_MARKET_TOOLS = {
+    "manifold_search", "manifold_market",
+    "polymarket_search", "polymarket_market",
+    "kalshi_search", "kalshi_market",
+}
 
 
 def _get_family_id(user_id: str) -> str | None:
@@ -808,6 +898,38 @@ async def _execute_expense_tool(name: str, tool_input: dict, user_id: str) -> st
         return json.dumps({"error": f"Unknown expense tool: {name}"})
     except Exception as exc:
         logger.exception("Expense tool %s failed", name)
+        return json.dumps({"error": str(exc)})
+
+
+def _execute_prediction_market_tool(name: str, tool_input: dict) -> str:
+    """Execute a prediction market tool (Manifold, Polymarket, Kalshi). Returns JSON string."""
+    try:
+        if name == "manifold_search":
+            result = market_data.manifold_search(
+                query=tool_input["query"],
+                limit=tool_input.get("limit", 10),
+            )
+        elif name == "manifold_market":
+            result = market_data.manifold_market(id_or_slug=tool_input["id_or_slug"])
+        elif name == "polymarket_search":
+            result = market_data.polymarket_search(
+                query=tool_input["query"],
+                limit=tool_input.get("limit", 10),
+            )
+        elif name == "polymarket_market":
+            result = market_data.polymarket_market(slug=tool_input["slug"])
+        elif name == "kalshi_search":
+            result = market_data.kalshi_search(
+                query=tool_input["query"],
+                limit=tool_input.get("limit", 10),
+            )
+        elif name == "kalshi_market":
+            result = market_data.kalshi_market(ticker=tool_input["ticker"])
+        else:
+            return json.dumps({"error": f"Unknown prediction market tool: {name}"})
+        return json.dumps(result, default=str)
+    except Exception as exc:
+        logger.exception("Prediction market tool %s failed", name)
         return json.dumps({"error": str(exc)})
 
 
@@ -1211,6 +1333,13 @@ _TOOL_CONTEXT_BUDGETS: dict[str, int] = {
     "bank_accounts": 3_000,
     "bank_transactions": 6_000,
     "bank_recurring": 4_000,
+    # Prediction market tools
+    "manifold_search": 4_000,
+    "manifold_market": 2_000,
+    "polymarket_search": 4_000,
+    "polymarket_market": 2_000,
+    "kalshi_search": 4_000,
+    "kalshi_market": 2_000,
 }
 _DEFAULT_CONTEXT_BUDGET = 4_000  # chars
 
@@ -1634,6 +1763,8 @@ async def _generate_turn(
                     result_content = await _execute_expense_tool(tc["name"], tc["input"], user_id)
                 elif tc["name"] in _PLAID_TOOLS:
                     result_content = await _execute_plaid_tool(tc["name"], tc["input"], user_id)
+                elif tc["name"] in _PREDICTION_MARKET_TOOLS:
+                    result_content = _execute_prediction_market_tool(tc["name"], tc["input"])
                 else:
                     result_content = _execute_snaptrade_tool(tc["name"], tc["input"], user_id)
                 _safe_end(

@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     tiingo_api_key: str = ""
     finnhub_api_key: str = ""
 
+    # Kalshi (CFTC-regulated prediction market)
+    kalshi_email: str = ""
+    kalshi_password: str = ""
+    kalshi_api_key: str = ""
+
     # Cloudflare Access (gates the hosted /mcp endpoint in production)
     cf_access_team_domain: str = ""  # e.g. blueelephants.cloudflareaccess.com
     cf_access_aud: str = ""          # Application AUD tag

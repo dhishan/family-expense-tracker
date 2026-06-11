@@ -441,6 +441,60 @@ def edgar_insider_transactions(ticker: str, days: int = 90) -> list[dict]:
     return market_data.edgar_insider_transactions(ticker=ticker, days=days)
 
 
+# ---- Prediction market tools -----------------------------------------------
+
+
+@mcp.tool()
+def manifold_search(query: str, limit: int = 10) -> list[dict]:
+    """Search Manifold Markets for prediction markets matching a query.
+
+    Manifold uses play money (mana); prices reflect crowd sentiment, not real-money positioning.
+    Good for political, tech, and macro questions.
+    """
+    return market_data.manifold_search(query=query, limit=limit)
+
+
+@mcp.tool()
+def manifold_market(id_or_slug: str) -> dict:
+    """Fetch a specific Manifold prediction market by ID or slug."""
+    return market_data.manifold_market(id_or_slug=id_or_slug)
+
+
+@mcp.tool()
+def polymarket_search(query: str, limit: int = 10) -> list[dict]:
+    """Search Polymarket for real-money USDC prediction markets.
+
+    Prices are 0-1 representing implied probability (0.62 = 62% yes).
+    Polymarket is US-restricted in many states.
+    """
+    return market_data.polymarket_search(query=query, limit=limit)
+
+
+@mcp.tool()
+def polymarket_market(slug: str) -> dict:
+    """Fetch a specific Polymarket market by slug."""
+    return market_data.polymarket_market(slug=slug)
+
+
+@mcp.tool()
+def kalshi_search(query: str, limit: int = 10) -> list[dict]:
+    """Search Kalshi for CFTC-regulated real-money US prediction markets.
+
+    Requires KALSHI_API_KEY (or KALSHI_EMAIL + KALSHI_PASSWORD) in environment.
+    Returns friendly error when not configured rather than raising.
+    """
+    return market_data.kalshi_search(query=query, limit=limit)
+
+
+@mcp.tool()
+def kalshi_market(ticker: str) -> dict:
+    """Fetch a specific Kalshi market by ticker.
+
+    Requires KALSHI_API_KEY (or KALSHI_EMAIL + KALSHI_PASSWORD) in environment.
+    """
+    return market_data.kalshi_market(ticker=ticker)
+
+
 # ---- Expense + budget tools ------------------------------------------------
 
 

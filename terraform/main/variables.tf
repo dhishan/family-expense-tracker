@@ -161,3 +161,25 @@ variable "plaid_env" {
   type        = string
   default     = "sandbox"
 }
+
+# --- Kalshi (CFTC-regulated prediction market) ---
+variable "kalshi_email" {
+  description = "Kalshi account email (optional; prefer kalshi_api_key)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "kalshi_password" {
+  description = "Kalshi account password (optional; prefer kalshi_api_key)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "kalshi_api_key" {
+  description = "Kalshi API key (preferred over email+password)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
