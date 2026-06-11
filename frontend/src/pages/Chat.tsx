@@ -1,8 +1,12 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '../store/auth'
 import { PaperAirplaneIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { expensesApi, budgetsApi, investmentsApi } from '../services/api'
+import type { HoldingGroup } from '../services/api'
+import type { BudgetStatus } from '../types'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -64,12 +68,96 @@ interface Message {
 
 // ---- Suggested starters -----------------------------------------------------
 
-const STARTERS = [
-  'Show me my portfolio',
-  'Analyze my concentration risk',
-  'What should I consider selling?',
+const FALLBACK_STARTERS = [
+  'What are prediction markets saying about Fed rate cuts?',
+  'Explain my net worth in one paragraph',
+  'Help me set up my first budget',
   'How am I positioned for current macro conditions?',
 ]
+
+function useDynamicStarters(): string[] {
+  const { user } = useAuthStore()
+
+  const { data: holdingsData } = useQuery({
+    queryKey: ['investments', 'holdings'],
+    queryFn: () => investmentsApi.holdings(),
+    enabled: !!user?.family_id,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const { data: recentExpenses } = useQuery({
+    queryKey: ['expenses', 'recent'],
+    queryFn: () => expensesApi.list({ page_size: 20 }),
+    enabled: !!user?.family_id,
+    staleTime: 2 * 60 * 1000,
+  })
+
+  const { data: budgetsData } = useQuery({
+    queryKey: ['budgets'],
+    queryFn: () => budgetsApi.list(),
+    enabled: !!user?.family_id,
+    staleTime: 2 * 60 * 1000,
+  })
+
+  return useMemo(() => {
+    const suggestions: string[] = []
+
+    // Top holding by value
+    const allPositions: { symbol: string; value: number }[] = []
+    for (const group of (holdingsData ?? []) as HoldingGroup[]) {
+      for (const pos of group.positions ?? []) {
+        const sym = pos.symbol?.symbol?.symbol
+        const value = (pos.units ?? 0) * (pos.price ?? 0)
+        if (sym && value > 0) allPositions.push({ symbol: sym, value })
+      }
+    }
+    if (allPositions.length > 0) {
+      allPositions.sort((a, b) => b.value - a.value)
+      suggestions.push(`How is my ${allPositions[0].symbol} position trending?`)
+    }
+
+    // Budget near limit (>70% used)
+    const warningBudgets = ((budgetsData?.budgets ?? []) as BudgetStatus[]).filter(
+      (b) => b.percentage_used >= 70 && !b.is_over_budget,
+    )
+    if (warningBudgets.length > 0) {
+      const b = warningBudgets[0]
+      suggestions.push(`Am I close to my ${b.budget.name} budget?`)
+    } else {
+      const overBudgets = ((budgetsData?.budgets ?? []) as BudgetStatus[]).filter((b) => b.is_over_budget)
+      if (overBudgets.length > 0) {
+        suggestions.push(`I went over my ${overBudgets[0].budget.name} budget - what should I cut?`)
+      }
+    }
+
+    // Most-frequent recent merchant
+    const expenses = recentExpenses?.expenses ?? []
+    if (expenses.length > 0) {
+      const freq: Record<string, number> = {}
+      for (const e of expenses) {
+        if (e.merchant) freq[e.merchant] = (freq[e.merchant] ?? 0) + 1
+      }
+      const topMerchant = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]?.[0]
+      if (topMerchant) {
+        suggestions.push(`What did I spend at ${topMerchant} last month?`)
+      }
+    }
+
+    // Generic fallback if fewer than 3 personalized suggestions
+    const fallbacks = [
+      'Show me prediction markets on Fed rate cuts',
+      'Analyze my concentration risk',
+      'What should I consider selling?',
+      'Explain my net worth in one paragraph',
+    ]
+    let fi = 0
+    while (suggestions.length < 3 && fi < fallbacks.length) {
+      suggestions.push(fallbacks[fi++])
+    }
+
+    return suggestions.slice(0, 4)
+  }, [holdingsData, recentExpenses, budgetsData])
+}
 
 // ---- Tool call card ---------------------------------------------------------
 
@@ -227,6 +315,7 @@ export default function Chat() {
   const [streaming, setStreaming] = useState(false)
   const [activity, setActivity] = useState<string>('Thinking…')
   const [stickToBottom, setStickToBottom] = useState(true)
+  const starters = useDynamicStarters()
   // Durable conversation tracking. null = next /chat/start creates a new
   // conversation; once set, subsequent sends continue the same one
   // server-side. Reset by "New chat".
@@ -468,7 +557,7 @@ export default function Chat() {
               </span>
             )}
           </div>
-          <p className="text-xs text-gray-500">Powered by Claude — pulls live data from your brokers, FRED, Tiingo, Finnhub, and SEC EDGAR</p>
+          <p className="text-xs text-gray-500">Powered by Claude - live data from your brokers, banks and cards, FRED, Tiingo, Finnhub, SEC EDGAR, prediction markets, and options chains</p>
         </div>
         {messages.length > 0 && (
           <button
@@ -502,7 +591,7 @@ export default function Chat() {
               </p>
             </div>
             <div className="flex flex-wrap justify-center gap-2 max-w-md">
-              {STARTERS.map((s) => (
+              {(starters.length > 0 ? starters : FALLBACK_STARTERS).map((s) => (
                 <button
                   key={s}
                   onClick={() => sendMessage(s)}

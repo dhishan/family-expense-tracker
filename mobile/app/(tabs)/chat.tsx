@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import {
   View,
   Text,
@@ -10,12 +10,15 @@ import {
   Platform,
   ActivityIndicator,
   AppState,
+  ScrollView,
 } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import Markdown from 'react-native-markdown-display'
 import { Ionicons } from '@expo/vector-icons'
-import { chatApi } from '@/services/api'
+import { useQuery } from '@tanstack/react-query'
+import { chatApi, expensesApi, budgetsApi, investmentsApi } from '@/services/api'
 import { useAuthStore } from '@/store/auth'
+import type { BudgetStatus, HoldingGroup } from '@/types'
 
 interface UIMessage {
   id: string
@@ -58,6 +61,93 @@ const TOOL_LABELS: Record<string, string> = {
   edgar_company_facts: 'Reading SEC financials',
   edgar_insider_transactions: 'Checking insider transactions',
   web_search: 'Searching the web',
+}
+
+const FALLBACK_STARTERS = [
+  'What are prediction markets saying about Fed rate cuts?',
+  'Explain my net worth in one paragraph',
+  'Help me set up my first budget',
+]
+
+function useDynamicStarters(): string[] {
+  const { user } = useAuthStore()
+
+  const { data: holdingsData } = useQuery({
+    queryKey: ['investments', 'holdings'],
+    queryFn: () => investmentsApi.holdings(),
+    enabled: !!user?.family_id,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const { data: recentExpenses } = useQuery({
+    queryKey: ['expenses', 'recent'],
+    queryFn: () => expensesApi.list({ page_size: 20 }),
+    enabled: !!user?.family_id,
+    staleTime: 2 * 60 * 1000,
+  })
+
+  const { data: budgetsData } = useQuery({
+    queryKey: ['budgets'],
+    queryFn: () => budgetsApi.list(),
+    enabled: !!user?.family_id,
+    staleTime: 2 * 60 * 1000,
+  })
+
+  return useMemo(() => {
+    const suggestions: string[] = []
+
+    // Top holding by value
+    const allPositions: { symbol: string; value: number }[] = []
+    for (const group of (holdingsData ?? []) as HoldingGroup[]) {
+      for (const pos of group.positions ?? []) {
+        const sym = pos.symbol?.symbol?.symbol
+        const value = (pos.units ?? 0) * (pos.price ?? 0)
+        if (sym && value > 0) allPositions.push({ symbol: sym, value })
+      }
+    }
+    if (allPositions.length > 0) {
+      allPositions.sort((a, b) => b.value - a.value)
+      suggestions.push(`How is my ${allPositions[0].symbol} position trending?`)
+    }
+
+    // Budget near limit (>70% used)
+    const warningBudgets = ((budgetsData?.budgets ?? []) as BudgetStatus[]).filter(
+      (b) => b.percentage_used >= 70 && !b.is_over_budget,
+    )
+    if (warningBudgets.length > 0) {
+      suggestions.push(`Am I close to my ${warningBudgets[0].budget.name} budget?`)
+    } else {
+      const overBudgets = ((budgetsData?.budgets ?? []) as BudgetStatus[]).filter((b) => b.is_over_budget)
+      if (overBudgets.length > 0) {
+        suggestions.push(`I went over my ${overBudgets[0].budget.name} budget - what should I cut?`)
+      }
+    }
+
+    // Most-frequent recent merchant
+    const expenses = recentExpenses?.expenses ?? []
+    if (expenses.length > 0) {
+      const freq: Record<string, number> = {}
+      for (const e of expenses) {
+        if (e.merchant) freq[e.merchant] = (freq[e.merchant] ?? 0) + 1
+      }
+      const topMerchant = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]?.[0]
+      if (topMerchant) {
+        suggestions.push(`What did I spend at ${topMerchant} last month?`)
+      }
+    }
+
+    const fallbacks = [
+      'Show me prediction markets on Fed rate cuts',
+      'Analyze my concentration risk',
+      'What should I consider selling?',
+    ]
+    let fi = 0
+    while (suggestions.length < 3 && fi < fallbacks.length) {
+      suggestions.push(fallbacks[fi++])
+    }
+
+    return suggestions.slice(0, 4)
+  }, [holdingsData, recentExpenses, budgetsData])
 }
 
 function labelForTool(name: string, input?: Record<string, unknown>): string {
@@ -186,6 +276,7 @@ export default function ChatScreen() {
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const { user } = useAuthStore()
+  const starters = useDynamicStarters()
   const listRef = useRef<FlatList>(null)
   const streamingIdRef = useRef<string | null>(null)
   // Tracks transient SSE-disconnect retries within a single in-flight
@@ -597,7 +688,7 @@ export default function ChatScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Chat</Text>
-          <Text style={styles.subtitle}>Ask about your finances</Text>
+          <Text style={styles.subtitle}>Powered by Claude - brokers, banks, FRED, Tiingo, Finnhub, SEC EDGAR, prediction markets</Text>
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <TouchableOpacity
@@ -636,10 +727,24 @@ export default function ChatScreen() {
           <View style={styles.emptyState}>
             <Text style={styles.emptyEmoji}>💬</Text>
             <Text style={styles.emptyTitle}>Ask anything about your finances</Text>
-            <Text style={styles.emptySubtitle}>
-              Try: "How much did I spend on dining this month?" or "Which stocks are down
-              the most in my portfolio?"
-            </Text>
+            <ScrollView
+              horizontal={false}
+              showsVerticalScrollIndicator={false}
+              style={{ alignSelf: 'stretch', marginTop: 16 }}
+            >
+              {(starters.length > 0 ? starters : FALLBACK_STARTERS).map((s) => (
+                <TouchableOpacity
+                  key={s}
+                  style={styles.starterChip}
+                  onPress={() => {
+                    setInput('')
+                    runChat(s, false)
+                  }}
+                >
+                  <Text style={styles.starterChipText}>{s}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
         }
         onContentSizeChange={scrollToBottom}
@@ -844,4 +949,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   sendBtnDisabled: { backgroundColor: '#c7d2fe' },  // indigo-200
+  starterChip: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',  // slate-200
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#fff',
+    marginBottom: 8,
+  },
+  starterChipText: {
+    fontSize: 14,
+    color: '#334155',  // slate-700
+    lineHeight: 20,
+  },
 })
