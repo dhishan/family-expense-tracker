@@ -15,7 +15,7 @@ import {
 import { expensesApi, plaidApi, budgetsApi } from '../services/api'
 import { useAuthStore } from '../store/auth'
 import { CATEGORY_INFO, PAYMENT_METHOD_LABELS } from '../types'
-import type { ExpenseCreate, ExpenseCategory, PaymentMethod, Expense, PendingTransaction, BudgetStatus } from '../types'
+import type { ExpenseCreate, ExpenseCategory, PaymentMethod, Expense, PendingTransaction, BudgetStatus, PendingListResponse } from '../types'
 import QuickAddStrip from '../components/QuickAddStrip'
 
 interface EditFormData {
@@ -288,8 +288,23 @@ export default function Transactions() {
   const approveMutation = useMutation({
     mutationFn: ({ id, edits }: { id: string; edits: ApproveEdits }) =>
       plaidApi.approve(id, edits),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
+    onSuccess: (_data, vars) => {
+      // Surgical removal from the infinite query cache — avoids re-fetching
+      // every loaded page sequentially.
+      queryClient.setQueryData(
+        ['plaid', 'pending'],
+        (old: { pages: PendingListResponse[]; pageParams: number[] } | undefined) => {
+          if (!old) return old
+          return {
+            ...old,
+            pages: old.pages.map((p) => ({
+              ...p,
+              pending: p.pending.filter((t) => t.id !== vars.id),
+              total: Math.max(0, p.total - 1),
+            })),
+          }
+        }
+      )
       queryClient.invalidateQueries({ queryKey: ['expenses'] })
       setApprovingTx(null)
       toast.success('Transaction approved!')
@@ -324,6 +339,7 @@ export default function Transactions() {
     register: registerApprove,
     handleSubmit: handleApproveSubmit,
     reset: resetApprove,
+    setValue: setValueApprove,
   } = useForm<ApproveFormData>()
 
   const onEditSubmit = (data: EditFormData) => {
@@ -347,7 +363,7 @@ export default function Transactions() {
     setApprovingTx(tx)
     setApprovingIsIncome(tx.is_income === true)
     setIncomeConfirmed(false)
-    setApproveBudgetId(undefined)
+    setApproveBudgetId(tx.suggested_budget_id ?? undefined)
     const dateStr = tx.date || tx.authorized_date || ''
     resetApprove({
       amount: Math.abs(tx.amount),
@@ -941,7 +957,15 @@ export default function Transactions() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Budget</label>
                   <select
                     value={approveBudgetId ?? ''}
-                    onChange={(e) => setApproveBudgetId(e.target.value || undefined)}
+                    onChange={(e) => {
+                      const id = e.target.value || undefined
+                      setApproveBudgetId(id)
+                      if (id) {
+                        const b = budgets.find((bs) => bs.budget.id === id)?.budget
+                        if (b?.category) setValueApprove('category', b.category as ExpenseCategory)
+                        if (b?.beneficiary) setValueApprove('beneficiary', b.beneficiary)
+                      }
+                    }}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2"
                   >
                     <option value="">None</option>

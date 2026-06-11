@@ -365,12 +365,23 @@ function ApproveModal({
       setDescription(pending.merchant_name ?? pending.name ?? '')
       setMerchant(pending.merchant_name ?? '')
       setPaymentMethod(derivePaymentMethod(accountType))
-      setBeneficiary(currentUserId)
       setTags('')
+      const suggestedBudget = pending.suggested_budget_id
+        ? budgets.find((b) => b.budget.id === pending.suggested_budget_id)?.budget
+        : undefined
       setBudgetId(pending.suggested_budget_id ?? null)
+      // Beneficiary follows the suggested budget when present; otherwise current user
+      if (suggestedBudget) {
+        setBeneficiary(suggestedBudget.beneficiary ?? '')
+        if (suggestedBudget.category) {
+          setCategory(suggestedBudget.category as ExpenseCategory)
+        }
+      } else {
+        setBeneficiary(currentUserId)
+      }
       setCategoryManuallySet(false)
     }
-  }, [pending, visible, currentUserId, accountType])
+  }, [pending, visible, currentUserId, accountType, budgets])
 
   // When category changes, deselect budget if it no longer matches
   const handleCategoryChange = (cat: ExpenseCategory) => {
@@ -394,6 +405,8 @@ function ApproveModal({
     if (!categoryManuallySet && bs.budget.category) {
       setCategory(bs.budget.category as ExpenseCategory)
     }
+    // Budgets with null beneficiary = family-wide → '' selects the Family chip
+    setBeneficiary(bs.budget.beneficiary ?? '')
   }
 
   const handleApprove = () => {
@@ -578,6 +591,22 @@ function ApproveModal({
                     showsHorizontalScrollIndicator={false}
                     style={{ marginBottom: 16 }}
                   >
+                    <TouchableOpacity
+                      style={[
+                        modalStyles.chip,
+                        beneficiary === '' && modalStyles.chipActive,
+                      ]}
+                      onPress={() => setBeneficiary('')}
+                    >
+                      <Text
+                        style={[
+                          modalStyles.chipText,
+                          beneficiary === '' && modalStyles.chipTextActive,
+                        ]}
+                      >
+                        Family
+                      </Text>
+                    </TouchableOpacity>
                     {familyMembers.map((m) => (
                       <TouchableOpacity
                         key={m.id}
@@ -1320,6 +1349,23 @@ export default function TransactionsScreen() {
     onError: () => Alert.alert('Error', 'Failed to delete expense.'),
   })
 
+  const removePendingFromCache = (id: string) => {
+    queryClient.setQueryData(
+      ['plaid', 'pending'],
+      (old: { pages: { pending: PendingTransaction[]; total: number }[]; pageParams: number[] } | undefined) => {
+        if (!old) return old
+        return {
+          ...old,
+          pages: old.pages.map((p) => ({
+            ...p,
+            pending: p.pending.filter((t) => t.id !== id),
+            total: Math.max(0, p.total - 1),
+          })),
+        }
+      }
+    )
+  }
+
   const approveMutation = useMutation({
     mutationFn: ({
       id,
@@ -1328,8 +1374,8 @@ export default function TransactionsScreen() {
       id: string
       edits: ApproveEdits
     }) => plaidApi.approve(id, edits),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
+    onSuccess: (_data, vars) => {
+      removePendingFromCache(vars.id)
       queryClient.invalidateQueries({ queryKey: ['expenses'] })
       setApprovingPending(null)
     },
@@ -1338,8 +1384,8 @@ export default function TransactionsScreen() {
 
   const saveUncatMutation = useMutation({
     mutationFn: (id: string) => plaidApi.saveUncategorized(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
+    onSuccess: (_data, id) => {
+      removePendingFromCache(id)
       queryClient.invalidateQueries({ queryKey: ['expenses'] })
     },
     onError: () => Alert.alert('Error', 'Failed to save transaction.'),
