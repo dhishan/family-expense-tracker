@@ -495,61 +495,62 @@ def kalshi_market(ticker: str) -> dict:
     return market_data.kalshi_market(ticker=ticker)
 
 
-# ---- Tradier options tools -------------------------------------------------
+# ---- Alpaca market data + options tools ------------------------------------
 
 
 @mcp.tool()
-def tradier_quote(symbol: str) -> dict:
-    """Real-time market quote for a stock or ETF.
+def alpaca_quote(symbol: str) -> dict:
+    """Latest NBBO quote and last trade for a stock or ETF via Alpaca.
 
-    Returns last price, bid/ask, day high/low, volume, change, and description.
-    Use alongside option chain data for context on the underlying price.
+    Returns bid, ask, last price, sizes, and timestamp.
+    Use for live price context alongside option chain data.
     """
-    return market_data.tradier_quote(symbol=symbol)
+    return market_data.alpaca_quote(symbol=symbol)
 
 
 @mcp.tool()
-def tradier_option_expirations(symbol: str, include_all_roots: bool = True) -> list:
-    """List all available option expiration dates for a symbol.
+def alpaca_bars(
+    symbol: str,
+    timeframe: str = "1Day",
+    start: str | None = None,
+    end: str | None = None,
+    limit: int = 100,
+) -> list:
+    """OHLCV bars for a stock or ETF via Alpaca.
+
+    timeframe: 1Min, 5Min, 15Min, 1Hour, 1Day, 1Week, 1Month.
+    Use for price history, trend analysis, or return calculations.
+    """
+    return market_data.alpaca_bars(symbol=symbol, timeframe=timeframe, start=start, end=end, limit=limit)
+
+
+@mcp.tool()
+def alpaca_option_expirations(symbol: str) -> list:
+    """List all available option expiration dates for a symbol via Alpaca.
 
     Call this first to discover valid expirations before pulling a chain.
     Returns a sorted list of YYYY-MM-DD strings.
     """
-    return market_data.tradier_option_expirations(symbol=symbol, include_all_roots=include_all_roots)
+    return market_data.alpaca_option_expirations(symbol=symbol)
 
 
 @mcp.tool()
-def tradier_option_chain(symbol: str, expiration: str, greeks: bool = True) -> list:
-    """Full option chain (calls and puts) for a symbol and expiration date.
+def alpaca_option_chain(symbol: str, expiration: str, greeks: bool = True) -> list:
+    """Full option chain (calls and puts) for a symbol and expiration date via Alpaca.
 
     Returns contracts sorted by strike with delta, gamma, theta, vega, rho,
     and implied volatility. Use for 'show me the NVDA call chain' or IV queries.
     """
-    return market_data.tradier_option_chain(symbol=symbol, expiration=expiration, greeks=greeks)
+    return market_data.alpaca_option_chain(symbol=symbol, expiration=expiration, greeks=greeks)
 
 
 @mcp.tool()
-def tradier_option_strikes(symbol: str, expiration: str) -> list:
-    """List available strike prices for a symbol and expiration.
+def alpaca_option_strikes(symbol: str, expiration: str) -> list:
+    """List available strike prices for a symbol and expiration via Alpaca.
 
     Use to find valid strikes before pulling a full chain or quoting a specific contract.
     """
-    return market_data.tradier_option_strikes(symbol=symbol, expiration=expiration)
-
-
-@mcp.tool()
-def tradier_historical_quotes(
-    symbol: str,
-    start: str,
-    end: str,
-    interval: str = "daily",
-) -> list:
-    """Historical OHLCV price data for a stock from Tradier.
-
-    interval: daily, weekly, or monthly. Capped at 1000 daily candles per request.
-    Use for price trend analysis alongside options data.
-    """
-    return market_data.tradier_historical_quotes(symbol=symbol, start=start, end=end, interval=interval)
+    return market_data.alpaca_option_strikes(symbol=symbol, expiration=expiration)
 
 
 # ---- Expense + budget tools ------------------------------------------------

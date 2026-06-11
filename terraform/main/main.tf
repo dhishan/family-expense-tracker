@@ -431,9 +431,9 @@ resource "google_secret_manager_secret_version" "kalshi_private_key_b64" {
   secret_data = coalesce(var.kalshi_private_key_b64, "not-configured")
 }
 
-# --- Tradier (options data) ---
-resource "google_secret_manager_secret" "tradier_token" {
-  secret_id = "${var.backend_service_name}-tradier-token"
+# --- Alpaca (options data, market quotes, OHLCV bars) ---
+resource "google_secret_manager_secret" "apca_api_key_id" {
+  secret_id = "${var.backend_service_name}-apca-api-key-id"
   replication {
     user_managed {
       replicas {
@@ -444,13 +444,13 @@ resource "google_secret_manager_secret" "tradier_token" {
   depends_on = [google_project_service.secretmanager]
 }
 
-resource "google_secret_manager_secret_version" "tradier_token" {
-  secret      = google_secret_manager_secret.tradier_token.id
-  secret_data = coalesce(var.tradier_token, "not-configured")
+resource "google_secret_manager_secret_version" "apca_api_key_id" {
+  secret      = google_secret_manager_secret.apca_api_key_id.id
+  secret_data = coalesce(var.apca_api_key_id, "not-configured")
 }
 
-resource "google_secret_manager_secret" "tradier_env" {
-  secret_id = "${var.backend_service_name}-tradier-env"
+resource "google_secret_manager_secret" "apca_api_secret_key" {
+  secret_id = "${var.backend_service_name}-apca-api-secret-key"
   replication {
     user_managed {
       replicas {
@@ -461,9 +461,9 @@ resource "google_secret_manager_secret" "tradier_env" {
   depends_on = [google_project_service.secretmanager]
 }
 
-resource "google_secret_manager_secret_version" "tradier_env" {
-  secret      = google_secret_manager_secret.tradier_env.id
-  secret_data = var.tradier_env
+resource "google_secret_manager_secret_version" "apca_api_secret_key" {
+  secret      = google_secret_manager_secret.apca_api_secret_key.id
+  secret_data = coalesce(var.apca_api_secret_key, "not-configured")
 }
 
 # Cloud Run service for backend
@@ -674,20 +674,20 @@ resource "google_cloud_run_service" "backend" {
         }
 
         env {
-          name = "TRADIER_TOKEN"
+          name = "APCA_API_KEY_ID"
           value_from {
             secret_key_ref {
-              name = google_secret_manager_secret.tradier_token.secret_id
+              name = google_secret_manager_secret.apca_api_key_id.secret_id
               key  = "latest"
             }
           }
         }
 
         env {
-          name = "TRADIER_ENV"
+          name = "APCA_API_SECRET_KEY"
           value_from {
             secret_key_ref {
-              name = google_secret_manager_secret.tradier_env.secret_id
+              name = google_secret_manager_secret.apca_api_secret_key.secret_id
               key  = "latest"
             }
           }
@@ -761,8 +761,8 @@ resource "google_cloud_run_service" "backend" {
     google_secret_manager_secret_version.plaid_env,
     google_secret_manager_secret_version.kalshi_key_id,
     google_secret_manager_secret_version.kalshi_private_key_b64,
-    google_secret_manager_secret_version.tradier_token,
-    google_secret_manager_secret_version.tradier_env,
+    google_secret_manager_secret_version.apca_api_key_id,
+    google_secret_manager_secret_version.apca_api_secret_key,
   ]
 }
 

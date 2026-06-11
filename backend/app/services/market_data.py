@@ -915,167 +915,249 @@ def _normalize_kalshi(m: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Tradier — options chains, Greeks, quotes, price history
+# Alpaca — options chains, Greeks, quotes, OHLCV bars
 # ---------------------------------------------------------------------------
 
+import re as _re
 import requests as _requests  # noqa: E402
 
+_ALPACA_DATA_BASE = "https://data.alpaca.markets"
 
-def _tradier_base() -> str:
-    """Return the Tradier base URL based on environment setting."""
-    settings = get_settings()
-    if settings.tradier_env == "production":
-        return "https://api.tradier.com/v1"
-    return "https://sandbox.tradier.com/v1"
+_OCC_RE = _re.compile(
+    r"^(?P<root>[A-Z]+)(?P<yy>\d{2})(?P<mm>\d{2})(?P<dd>\d{2})(?P<type>[CP])(?P<strike>\d{8})$"
+)
 
 
-def _tradier_headers() -> dict:
-    """Return Authorization and Accept headers for Tradier. Raises RuntimeError if unconfigured."""
-    token = get_settings().tradier_token
-    if not token:
-        raise RuntimeError("Tradier not configured; set TRADIER_TOKEN")
+def _parse_occ_symbol(occ: str) -> dict | None:
+    """Parse an OCC option symbol into components.
+
+    Format: <root><YYMMDD><C|P><strike*1000>
+    Example: TSLA240621C00250000 -> TSLA, 2024-06-21, call, $250.000
+    """
+    m = _OCC_RE.match(occ)
+    if not m:
+        return None
+    yy, mm, dd = m.group("yy"), m.group("mm"), m.group("dd")
+    year = 2000 + int(yy)
     return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
+        "root": m.group("root"),
+        "expiration_date": f"{year:04d}-{mm}-{dd}",
+        "option_type": "call" if m.group("type") == "C" else "put",
+        "strike": int(m.group("strike")) / 1000,
     }
 
 
-def tradier_quote(symbol: str) -> dict:
-    """Current market quote for a symbol.
+def _alpaca_headers() -> dict:
+    """Return Alpaca auth headers. Raises RuntimeError if unconfigured."""
+    s = get_settings()
+    if not s.apca_api_key_id or not s.apca_api_secret_key:
+        raise RuntimeError(
+            "Alpaca not configured; set APCA_API_KEY_ID and APCA_API_SECRET_KEY"
+        )
+    return {
+        "APCA-API-KEY-ID": s.apca_api_key_id,
+        "APCA-API-SECRET-KEY": s.apca_api_secret_key,
+    }
+
+
+def alpaca_quote(symbol: str) -> dict:
+    """Latest NBBO quote + last trade for a stock symbol via Alpaca.
 
     Args:
         symbol: Stock or ETF ticker, e.g. AAPL.
 
     Returns:
-        Dict with symbol, last, change, change_pct, bid, ask, volume,
-        high, low, open, prev_close, description.
+        Dict with symbol, bid, ask, bid_size, ask_size, last_price, last_volume, timestamp.
     """
     try:
-        headers = _tradier_headers()
+        headers = _alpaca_headers()
     except RuntimeError as exc:
         return {"error": str(exc)}
     try:
-        resp = _requests.get(
-            f"{_tradier_base()}/markets/quotes",
-            params={"symbols": symbol.upper()},
+        sym = symbol.upper()
+        quote_resp = _requests.get(
+            f"{_ALPACA_DATA_BASE}/v2/stocks/quotes/latest",
+            params={"symbols": sym},
             headers=headers,
             timeout=_TIMEOUT,
         )
-        resp.raise_for_status()
-        data = resp.json()
-        raw = (data.get("quotes") or {}).get("quote", {})
-        # quote may be a list (multi-symbol) or a dict (single symbol)
-        if isinstance(raw, list):
-            raw = raw[0] if raw else {}
+        quote_resp.raise_for_status()
+        q = (quote_resp.json().get("quotes") or {}).get(sym, {})
+
+        trade_resp = _requests.get(
+            f"{_ALPACA_DATA_BASE}/v2/stocks/trades/latest",
+            params={"symbols": sym},
+            headers=headers,
+            timeout=_TIMEOUT,
+        )
+        trade_resp.raise_for_status()
+        t = (trade_resp.json().get("trades") or {}).get(sym, {})
+
         return {
-            "symbol": raw.get("symbol"),
-            "description": raw.get("description"),
-            "last": raw.get("last"),
-            "change": raw.get("change"),
-            "change_pct": raw.get("change_percentage"),
-            "bid": raw.get("bid"),
-            "ask": raw.get("ask"),
-            "volume": raw.get("volume"),
-            "high": raw.get("high"),
-            "low": raw.get("low"),
-            "open": raw.get("open"),
-            "prev_close": raw.get("prevclose"),
+            "symbol": sym,
+            "bid": q.get("bp"),
+            "ask": q.get("ap"),
+            "bid_size": q.get("bs"),
+            "ask_size": q.get("as"),
+            "last_price": t.get("p"),
+            "last_volume": t.get("s"),
+            "timestamp": q.get("t"),
         }
     except Exception as exc:
         return {"error": str(exc), "symbol": symbol}
 
 
-def tradier_option_expirations(symbol: str, include_all_roots: bool = True) -> list:
-    """Available option expiration dates for a symbol.
+def alpaca_bars(
+    symbol: str,
+    timeframe: str = "1Day",
+    start: str | None = None,
+    end: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """OHLCV bars for a stock symbol via Alpaca.
 
     Args:
-        symbol: Stock ticker, e.g. AAPL.
-        include_all_roots: If True, include non-standard expirations (weekly, mini, etc.).
+        symbol: Stock or ETF ticker, e.g. AAPL.
+        timeframe: One of 1Min, 5Min, 15Min, 1Hour, 1Day, 1Week, 1Month (default 1Day).
+        start: Start date/time in ISO 8601 format (optional).
+        end: End date/time in ISO 8601 format (optional).
+        limit: Max bars to return (default 100).
 
     Returns:
-        Sorted list of YYYY-MM-DD strings.
+        List of {timestamp, open, high, low, close, volume} dicts.
     """
     try:
-        headers = _tradier_headers()
+        headers = _alpaca_headers()
     except RuntimeError as exc:
         return [{"error": str(exc)}]
     try:
+        sym = symbol.upper()
+        params: dict = {"symbols": sym, "timeframe": timeframe, "limit": limit}
+        if start:
+            params["start"] = start
+        if end:
+            params["end"] = end
         resp = _requests.get(
-            f"{_tradier_base()}/markets/options/expirations",
-            params={"symbol": symbol.upper(), "includeAllRoots": str(include_all_roots).lower()},
+            f"{_ALPACA_DATA_BASE}/v2/stocks/bars",
+            params=params,
             headers=headers,
             timeout=_TIMEOUT,
         )
         resp.raise_for_status()
-        data = resp.json()
-        raw = (data.get("expirations") or {}).get("date", [])
-        if isinstance(raw, str):
-            raw = [raw]
-        return sorted(raw) if raw else []
+        bars = (resp.json().get("bars") or {}).get(sym, [])
+        return [
+            {
+                "timestamp": b.get("t"),
+                "open": b.get("o"),
+                "high": b.get("h"),
+                "low": b.get("l"),
+                "close": b.get("c"),
+                "volume": b.get("v"),
+            }
+            for b in bars
+        ]
     except Exception as exc:
         return [{"error": str(exc), "symbol": symbol}]
 
 
-def tradier_option_chain(symbol: str, expiration: str, greeks: bool = True) -> list[dict]:
-    """Full option chain for a symbol and expiration date.
+def _alpaca_options_snapshots_all(symbol: str) -> list[dict]:
+    """Fetch all option snapshots for a symbol, paginating through all pages.
+
+    Returns the raw list of snapshot dicts from the Alpaca API (capped at 20 pages).
+    """
+    headers = _alpaca_headers()
+    sym = symbol.upper()
+    url = f"{_ALPACA_DATA_BASE}/v1beta1/options/snapshots/{sym}"
+    params: dict = {"feed": "indicative", "limit": 1000}
+    all_snapshots: list[dict] = []
+    for _ in range(20):
+        resp = _requests.get(url, params=params, headers=headers, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
+        snapshots = data.get("snapshots") or {}
+        for occ_sym, snap in snapshots.items():
+            snap["_occ"] = occ_sym
+            all_snapshots.append(snap)
+        next_token = data.get("next_page_token")
+        if not next_token:
+            break
+        params["page_token"] = next_token
+    return all_snapshots
+
+
+def alpaca_option_expirations(symbol: str) -> list:
+    """Available option expiration dates for a symbol via Alpaca.
+
+    Args:
+        symbol: Stock ticker, e.g. AAPL.
+
+    Returns:
+        Sorted list of unique YYYY-MM-DD expiration date strings.
+    """
+    try:
+        _alpaca_headers()  # validate config early
+    except RuntimeError as exc:
+        return [{"error": str(exc)}]
+    try:
+        snapshots = _alpaca_options_snapshots_all(symbol)
+        expirations: set[str] = set()
+        for snap in snapshots:
+            parsed = _parse_occ_symbol(snap.get("_occ", ""))
+            if parsed:
+                expirations.add(parsed["expiration_date"])
+        return sorted(expirations)
+    except Exception as exc:
+        return [{"error": str(exc), "symbol": symbol}]
+
+
+def alpaca_option_chain(symbol: str, expiration: str, greeks: bool = True) -> list[dict]:
+    """Full option chain for a symbol and expiration date via Alpaca.
 
     Args:
         symbol: Stock ticker, e.g. NVDA.
         expiration: Expiration date in YYYY-MM-DD format.
-        greeks: If True, include delta, gamma, theta, vega, rho, mid_iv, bid_iv, ask_iv.
+        greeks: If True, include delta, gamma, theta, vega, rho, mid_iv.
 
     Returns:
         List of option contracts sorted by strike ascending. Each dict has:
-        symbol, description, option_type (call/put), strike, expiration_date,
+        symbol, underlying, expiration_date, strike, option_type (call/put),
         last, bid, ask, volume, open_interest, greeks (if requested).
     """
     try:
-        headers = _tradier_headers()
+        _alpaca_headers()
     except RuntimeError as exc:
         return [{"error": str(exc)}]
     try:
-        resp = _requests.get(
-            f"{_tradier_base()}/markets/options/chains",
-            params={
-                "symbol": symbol.upper(),
-                "expiration": expiration,
-                "greeks": str(greeks).lower(),
-            },
-            headers=headers,
-            timeout=_TIMEOUT,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        raw = (data.get("options") or {}).get("option", [])
-        if isinstance(raw, dict):
-            raw = [raw]
-        if not raw:
-            return []
-        results = []
-        for c in raw:
+        snapshots = _alpaca_options_snapshots_all(symbol)
+        results: list[dict] = []
+        for snap in snapshots:
+            occ = snap.get("_occ", "")
+            parsed = _parse_occ_symbol(occ)
+            if not parsed or parsed["expiration_date"] != expiration:
+                continue
+            q = snap.get("latestQuote") or {}
+            tr = snap.get("latestTrade") or {}
             entry: dict = {
-                "symbol": c.get("symbol"),
-                "description": c.get("description"),
-                "option_type": c.get("option_type"),
-                "strike": c.get("strike"),
-                "expiration_date": c.get("expiration_date"),
-                "last": c.get("last"),
-                "bid": c.get("bid"),
-                "ask": c.get("ask"),
-                "volume": c.get("volume"),
-                "open_interest": c.get("open_interest"),
+                "symbol": occ,
+                "underlying": parsed["root"],
+                "expiration_date": parsed["expiration_date"],
+                "strike": parsed["strike"],
+                "option_type": parsed["option_type"],
+                "last": tr.get("p"),
+                "bid": q.get("bp"),
+                "ask": q.get("ap"),
+                "volume": tr.get("s"),
+                "open_interest": snap.get("openInterest"),
             }
-            if greeks and c.get("greeks"):
-                g = c["greeks"]
+            if greeks:
+                g = snap.get("greeks") or {}
                 entry["greeks"] = {
                     "delta": g.get("delta"),
                     "gamma": g.get("gamma"),
                     "theta": g.get("theta"),
                     "vega": g.get("vega"),
                     "rho": g.get("rho"),
-                    "mid_iv": g.get("mid_iv"),
-                    "bid_iv": g.get("bid_iv"),
-                    "ask_iv": g.get("ask_iv"),
+                    "mid_iv": snap.get("impliedVolatility"),
                 }
             results.append(entry)
         return sorted(results, key=lambda x: (x.get("strike") or 0))
@@ -1083,86 +1165,25 @@ def tradier_option_chain(symbol: str, expiration: str, greeks: bool = True) -> l
         return [{"error": str(exc), "symbol": symbol, "expiration": expiration}]
 
 
-def tradier_option_strikes(symbol: str, expiration: str) -> list:
-    """Available strike prices for a symbol and expiration date.
+def alpaca_option_strikes(symbol: str, expiration: str) -> list:
+    """Available strike prices for a symbol and expiration date via Alpaca.
 
     Args:
         symbol: Stock ticker, e.g. TSLA.
         expiration: Expiration date in YYYY-MM-DD format.
 
     Returns:
-        Sorted list of strike prices (floats).
+        Sorted list of unique strike prices (floats).
     """
     try:
-        headers = _tradier_headers()
+        _alpaca_headers()
     except RuntimeError as exc:
         return [{"error": str(exc)}]
     try:
-        resp = _requests.get(
-            f"{_tradier_base()}/markets/options/strikes",
-            params={"symbol": symbol.upper(), "expiration": expiration},
-            headers=headers,
-            timeout=_TIMEOUT,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        raw = (data.get("strikes") or {}).get("strike", [])
-        if isinstance(raw, (int, float)):
-            raw = [raw]
-        return sorted(float(s) for s in raw) if raw else []
+        chain = alpaca_option_chain(symbol, expiration, greeks=False)
+        if chain and "error" in chain[0]:
+            return chain
+        strikes = sorted({c["strike"] for c in chain if "strike" in c})
+        return strikes
     except Exception as exc:
         return [{"error": str(exc), "symbol": symbol, "expiration": expiration}]
-
-
-def tradier_historical_quotes(
-    symbol: str,
-    start: str,
-    end: str,
-    interval: str = "daily",
-) -> list[dict]:
-    """Historical OHLCV price data for a symbol.
-
-    Args:
-        symbol: Stock ticker, e.g. MSFT.
-        start: Start date YYYY-MM-DD.
-        end: End date YYYY-MM-DD.
-        interval: One of daily, weekly, monthly (default daily).
-
-    Returns:
-        List of {date, open, high, low, close, volume} dicts.
-        Returns error dict if the date range would produce more than 1000 candles.
-    """
-    from datetime import date as _date
-
-    try:
-        headers = _tradier_headers()
-    except RuntimeError as exc:
-        return [{"error": str(exc)}]
-    try:
-        start_d = _date.fromisoformat(start)
-        end_d = _date.fromisoformat(end)
-        days = (end_d - start_d).days
-        if interval == "daily" and days > 1000:
-            return [{"error": f"Date range of {days} days would produce >{1000} daily candles; narrow the range."}]
-        if interval == "weekly" and days > 7000:
-            return [{"error": f"Date range of {days} days would produce >{1000} weekly candles; narrow the range."}]
-
-        resp = _requests.get(
-            f"{_tradier_base()}/markets/history",
-            params={
-                "symbol": symbol.upper(),
-                "start": start,
-                "end": end,
-                "interval": interval,
-            },
-            headers=headers,
-            timeout=_TIMEOUT,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        raw = (data.get("history") or {}).get("day", [])
-        if isinstance(raw, dict):
-            raw = [raw]
-        return raw if raw else []
-    except Exception as exc:
-        return [{"error": str(exc), "symbol": symbol}]

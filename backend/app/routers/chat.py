@@ -622,13 +622,12 @@ TOOLS: list[dict] = [
             "required": ["ticker"],
         },
     },
-    # --- Tradier options data ---
+    # --- Alpaca market data + options ---
     {
-        "name": "tradier_quote",
+        "name": "alpaca_quote",
         "description": (
-            "Real-time market quote for a stock or ETF via Tradier. "
-            "Returns last price, bid/ask, day high/low, volume, and change. "
-            "Use when the user needs a live options-ready quote alongside chain data."
+            "Latest NBBO quote and last trade for a stock or ETF via Alpaca. "
+            "Returns bid, ask, last price, and sizes. Use for live price context alongside option chain data."
         ),
         "input_schema": {
             "type": "object",
@@ -639,9 +638,33 @@ TOOLS: list[dict] = [
         },
     },
     {
-        "name": "tradier_option_expirations",
+        "name": "alpaca_bars",
         "description": (
-            "List all available option expiration dates for a symbol. "
+            "OHLCV bars for a stock or ETF via Alpaca. "
+            "Use for price history, trend analysis, or backtesting. "
+            "timeframe: 1Min, 5Min, 15Min, 1Hour, 1Day, 1Week, 1Month."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "Stock or ETF ticker, e.g. MSFT"},
+                "timeframe": {
+                    "type": "string",
+                    "enum": ["1Min", "5Min", "15Min", "1Hour", "1Day", "1Week", "1Month"],
+                    "description": "Bar interval (default 1Day)",
+                    "default": "1Day",
+                },
+                "start": {"type": "string", "description": "Start date/time ISO 8601 (optional)"},
+                "end": {"type": "string", "description": "End date/time ISO 8601 (optional)"},
+                "limit": {"type": "integer", "description": "Max bars to return (default 100)"},
+            },
+            "required": ["symbol"],
+        },
+    },
+    {
+        "name": "alpaca_option_expirations",
+        "description": (
+            "List all available option expiration dates for a symbol via Alpaca. "
             "Call this first to discover valid expirations before pulling a full chain. "
             "Returns a sorted list of YYYY-MM-DD strings."
         ),
@@ -649,17 +672,12 @@ TOOLS: list[dict] = [
             "type": "object",
             "properties": {
                 "symbol": {"type": "string", "description": "Stock ticker, e.g. AAPL"},
-                "include_all_roots": {
-                    "type": "boolean",
-                    "description": "Include non-standard expirations (weekly, mini, etc.) — default true",
-                    "default": True,
-                },
             },
             "required": ["symbol"],
         },
     },
     {
-        "name": "tradier_option_chain",
+        "name": "alpaca_option_chain",
         "description": (
             "Full option chain (calls and puts) for a symbol and expiration date, with Greeks. "
             "Use for questions like 'show me the NVDA call chain for next Friday' or "
@@ -681,9 +699,9 @@ TOOLS: list[dict] = [
         },
     },
     {
-        "name": "tradier_option_strikes",
+        "name": "alpaca_option_strikes",
         "description": (
-            "List available strike prices for a symbol and expiration. "
+            "List available strike prices for a symbol and expiration via Alpaca. "
             "Use to find valid strikes before pulling a chain or quoting a specific contract."
         ),
         "input_schema": {
@@ -693,29 +711,6 @@ TOOLS: list[dict] = [
                 "expiration": {"type": "string", "description": "Expiration date YYYY-MM-DD"},
             },
             "required": ["symbol", "expiration"],
-        },
-    },
-    {
-        "name": "tradier_historical_quotes",
-        "description": (
-            "Historical OHLCV price data for a stock from Tradier. "
-            "Use for charts, trend analysis, or backtesting. "
-            "interval: daily, weekly, or monthly. Capped at 1000 daily candles per request."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "symbol": {"type": "string", "description": "Stock ticker, e.g. MSFT"},
-                "start": {"type": "string", "description": "Start date YYYY-MM-DD"},
-                "end": {"type": "string", "description": "End date YYYY-MM-DD"},
-                "interval": {
-                    "type": "string",
-                    "enum": ["daily", "weekly", "monthly"],
-                    "description": "Bar interval (default daily)",
-                    "default": "daily",
-                },
-            },
-            "required": ["symbol", "start", "end"],
         },
     },
     # --- Plaid bank tools ---
@@ -792,12 +787,12 @@ _PREDICTION_MARKET_TOOLS = {
     "polymarket_search", "polymarket_market",
     "kalshi_search", "kalshi_market",
 }
-_TRADIER_TOOLS = {
-    "tradier_quote",
-    "tradier_option_expirations",
-    "tradier_option_chain",
-    "tradier_option_strikes",
-    "tradier_historical_quotes",
+_ALPACA_TOOLS = {
+    "alpaca_quote",
+    "alpaca_bars",
+    "alpaca_option_expirations",
+    "alpaca_option_chain",
+    "alpaca_option_strikes",
 }
 
 
@@ -1036,39 +1031,37 @@ def _execute_prediction_market_tool(name: str, tool_input: dict) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _execute_tradier_tool(name: str, tool_input: dict) -> str:
-    """Execute a Tradier options/market-data tool. Returns JSON string."""
+def _execute_alpaca_tool(name: str, tool_input: dict) -> str:
+    """Execute an Alpaca market-data tool. Returns JSON string."""
     try:
-        if name == "tradier_quote":
-            result = market_data.tradier_quote(symbol=tool_input["symbol"])
-        elif name == "tradier_option_expirations":
-            result = market_data.tradier_option_expirations(
+        if name == "alpaca_quote":
+            result = market_data.alpaca_quote(symbol=tool_input["symbol"])
+        elif name == "alpaca_bars":
+            result = market_data.alpaca_bars(
                 symbol=tool_input["symbol"],
-                include_all_roots=tool_input.get("include_all_roots", True),
+                timeframe=tool_input.get("timeframe", "1Day"),
+                start=tool_input.get("start"),
+                end=tool_input.get("end"),
+                limit=tool_input.get("limit", 100),
             )
-        elif name == "tradier_option_chain":
-            result = market_data.tradier_option_chain(
+        elif name == "alpaca_option_expirations":
+            result = market_data.alpaca_option_expirations(symbol=tool_input["symbol"])
+        elif name == "alpaca_option_chain":
+            result = market_data.alpaca_option_chain(
                 symbol=tool_input["symbol"],
                 expiration=tool_input["expiration"],
                 greeks=tool_input.get("greeks", True),
             )
-        elif name == "tradier_option_strikes":
-            result = market_data.tradier_option_strikes(
+        elif name == "alpaca_option_strikes":
+            result = market_data.alpaca_option_strikes(
                 symbol=tool_input["symbol"],
                 expiration=tool_input["expiration"],
             )
-        elif name == "tradier_historical_quotes":
-            result = market_data.tradier_historical_quotes(
-                symbol=tool_input["symbol"],
-                start=tool_input["start"],
-                end=tool_input["end"],
-                interval=tool_input.get("interval", "daily"),
-            )
         else:
-            return json.dumps({"error": f"Unknown Tradier tool: {name}"})
+            return json.dumps({"error": f"Unknown Alpaca tool: {name}"})
         return json.dumps(result, default=str)
     except Exception as exc:
-        logger.exception("Tradier tool %s failed", name)
+        logger.exception("Alpaca tool %s failed", name)
         return json.dumps({"error": str(exc)})
 
 
@@ -1904,8 +1897,8 @@ async def _generate_turn(
                     result_content = await _execute_plaid_tool(tc["name"], tc["input"], user_id)
                 elif tc["name"] in _PREDICTION_MARKET_TOOLS:
                     result_content = _execute_prediction_market_tool(tc["name"], tc["input"])
-                elif tc["name"] in _TRADIER_TOOLS:
-                    result_content = _execute_tradier_tool(tc["name"], tc["input"])
+                elif tc["name"] in _ALPACA_TOOLS:
+                    result_content = _execute_alpaca_tool(tc["name"], tc["input"])
                 else:
                     result_content = _execute_snaptrade_tool(tc["name"], tc["input"], user_id)
                 _safe_end(
