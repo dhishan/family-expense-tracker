@@ -192,7 +192,7 @@ export default function Transactions() {
 
   const { data: pendingData } = useQuery({
     queryKey: ['plaid', 'pending'],
-    queryFn: () => plaidApi.listPending(1, 50),
+    queryFn: () => plaidApi.listPending(1, 200),
     enabled: !!user?.family_id,
     refetchInterval: 60_000,
   })
