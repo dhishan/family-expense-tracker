@@ -499,16 +499,25 @@ def list_pending_transactions(family_id: str, page: int = 1, page_size: int = 50
     from google.cloud import firestore  # type: ignore
 
     db = get_firestore_client()
-    base_query = (
-        db.collection(PLAID_PENDING_COLLECTION)
-        .where(filter=firestore.FieldFilter("family_id", "==", family_id))
-        .where(filter=firestore.FieldFilter("status", "==", "pending"))
-        .order_by("created_at", direction=firestore.Query.DESCENDING)
-    )
 
-    # Total count
-    count_agg = base_query.count()
-    count_result = count_agg.get()
+    def _build_query(sort_field: str):
+        return (
+            db.collection(PLAID_PENDING_COLLECTION)
+            .where(filter=firestore.FieldFilter("family_id", "==", family_id))
+            .where(filter=firestore.FieldFilter("status", "==", "pending"))
+            .order_by(sort_field, direction=firestore.Query.DESCENDING)
+        )
+
+    # Prefer sort by transaction date (recent purchases first). If the
+    # composite index hasn't finished building yet, fall back to created_at
+    # to keep the inbox functional.
+    try:
+        base_query = _build_query("date")
+        count_result = base_query.count().get()
+    except Exception:
+        base_query = _build_query("created_at")
+        count_result = base_query.count().get()
+
     total = count_result[0][0].value
 
     offset = (page - 1) * page_size

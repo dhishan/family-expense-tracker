@@ -36,11 +36,11 @@ install: ## Install all dependencies
 dev-native: ## Run backend + frontend natively (no Docker, requires venv)
 	@echo "Starting development servers..."
 	@trap 'kill 0' EXIT; \
-	(cd backend && . venv/bin/activate && python -m uvicorn app.main:app --reload --port 8000) & \
+	(cd backend && . .venv/bin/activate && python -m uvicorn app.main:app --reload --port 8000) & \
 	(cd frontend && npm run dev)
 
 dev-backend: ## Run only backend in development mode
-	cd backend && . venv/bin/activate && python -m uvicorn app.main:app --reload --port 8000
+	cd backend && . .venv/bin/activate && python -m uvicorn app.main:app --reload --port 8000
 
 dev-frontend: ## Run only frontend in development mode
 	cd frontend && npm run dev
@@ -296,6 +296,14 @@ mobile-build-android: ## Build Android APK via EAS cloud
 # EAS Update — over-the-air JS pushes (no rebuild, no cable)
 mobile-update: ## Push a JS-only update to the 'preview' branch (phones get it on next launch)
 	cd mobile && eas update --branch preview --message "$${MSG:-quick fix}"
+
+mobile-run-phone: ## Build + install a Release native build on a connected iPhone over USB (uses xctrace UDID; set DEVICE=<UDID> or pass DEVICE_NAME=<substring>)
+	@DEVICE_UDID=$${DEVICE:-$$(xcrun xctrace list devices 2>&1 | grep -i "$${DEVICE_NAME:-iPhone}" | grep -v Simulator | head -1 | sed -E 's/.*\(([0-9A-F-]{20,})\).*/\1/')}; \
+	if [ -z "$$DEVICE_UDID" ]; then echo "No matching connected iPhone found"; exit 1; fi; \
+	echo "Building to device $$DEVICE_UDID"; \
+	cd mobile && npx expo run:ios --device "$$DEVICE_UDID" --configuration Release
+
+.PHONY: mobile-run-phone
 
 mobile-update-prod: ## Push to 'production' branch (for when you ship to TestFlight / App Store)
 	cd mobile && eas update --branch production --message "$${MSG:-release}"

@@ -275,7 +275,7 @@ resource "google_firestore_index" "plaid_accounts_family_item" {
 }
 
 # plaid_pending_transactions: filter by family_id + status, order by created_at DESC.
-# Required by plaid_service.list_pending_transactions (family-scoped since Phase 3).
+# Legacy index (kept while we transition to date-based sort).
 resource "google_firestore_index" "plaid_pending_family_status_created" {
   project    = var.project_id
   database   = google_firestore_database.database.name
@@ -293,6 +293,32 @@ resource "google_firestore_index" "plaid_pending_family_status_created" {
 
   fields {
     field_path = "created_at"
+    order      = "DESCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
+
+# plaid_pending_transactions: filter by family_id + status, order by date DESC.
+# Required by plaid_service.list_pending_transactions to surface most-recent
+# purchases first (transaction date, not insertion time).
+resource "google_firestore_index" "plaid_pending_family_status_date" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "plaid_pending_transactions"
+
+  fields {
+    field_path = "family_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "status"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "date"
     order      = "DESCENDING"
   }
 
