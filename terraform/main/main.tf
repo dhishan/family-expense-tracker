@@ -79,7 +79,29 @@ resource "google_firestore_database" "database" {
   location_id = var.firestore_location
   type        = "FIRESTORE_NATIVE"
 
+  # Backup posture — added after task #27 introduced explicit budget_id
+  # pinning on expenses (lost data would mean lost financial records).
+  # PITR keeps 7 days of point-in-time recovery; ~10% storage cost
+  # overhead, negligible at this volume.
+  point_in_time_recovery_enablement = "POINT_IN_TIME_RECOVERY_ENABLED"
+
+  # Prevent accidental terraform-driven deletion of the DB itself.
+  # If you ever truly need to drop it, flip this to DELETE_PROTECTION_DISABLED
+  # in a separate apply first.
+  delete_protection_state = "DELETE_PROTECTION_ENABLED"
+
   depends_on = [google_project_service.firestore]
+}
+
+# Daily backup schedule — 35-day retention. Cumulative storage cost
+# negligible at our volume (<$1/month) and gives plenty of room to
+# discover a mistake before the oldest backup ages out.
+resource "google_firestore_backup_schedule" "daily" {
+  project   = var.project_id
+  database  = google_firestore_database.database.name
+  retention = "${35 * 24 * 60 * 60}s" # 35 days expressed in seconds
+
+  daily_recurrence {}
 }
 
 # Service account for Cloud Run
