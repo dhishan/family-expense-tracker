@@ -768,6 +768,7 @@ const snackStyles = StyleSheet.create({
 
 interface PendingReviewSectionProps {
   pendingItems: PendingTransaction[]
+  totalPending?: number
   onApprove: (item: PendingTransaction) => void
   onDiscard: (item: PendingTransaction) => void
   onSaveUncategorized: (item: PendingTransaction) => void
@@ -775,6 +776,7 @@ interface PendingReviewSectionProps {
 
 function PendingReviewSection({
   pendingItems,
+  totalPending,
   onApprove,
   onDiscard,
   onSaveUncategorized,
@@ -783,6 +785,14 @@ function PendingReviewSection({
 
   if (pendingItems.length === 0) return null
 
+  // Prefer the server's total (could be larger than locally rendered
+  // count if we paginate or optimistically discard items).
+  const totalShown = totalPending ?? pendingItems.length
+  const cappedAt = pendingItems.length < totalShown
+  const headerLabel = cappedAt
+    ? `${totalShown} transactions need review (showing ${pendingItems.length})`
+    : `${pendingItems.length} transaction${pendingItems.length !== 1 ? 's' : ''} need review`
+
   return (
     <View style={pendingStyles.container} testID="pending-review-section">
       <TouchableOpacity
@@ -790,9 +800,7 @@ function PendingReviewSection({
         onPress={() => setCollapsed((v) => !v)}
         testID="pending-review-header"
       >
-        <Text style={pendingStyles.headerText}>
-          🔔  {pendingItems.length} transaction{pendingItems.length !== 1 ? 's' : ''} need review
-        </Text>
+        <Text style={pendingStyles.headerText}>🔔  {headerLabel}</Text>
         <Text style={pendingStyles.toggleBtn}>{collapsed ? 'Show' : 'Hide'}</Text>
       </TouchableOpacity>
 
@@ -1034,7 +1042,11 @@ export default function TransactionsScreen() {
 
   const { data: pendingData } = useQuery({
     queryKey: ['plaid', 'pending'],
-    queryFn: () => plaidApi.listPending(1, 50),
+    // 200 is the backend cap; with the initial Plaid pull surfacing
+    // 300+ pending we'd previously show only the first 50 with no
+    // hint that more exist. A single 200-item fetch is still cheap
+    // and matches the "review inbox" mental model better.
+    queryFn: () => plaidApi.listPending(1, 200),
     enabled: !!user?.family_id,
   })
 
