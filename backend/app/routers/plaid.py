@@ -53,7 +53,7 @@ WEBHOOK_URL = "https://api.expense-tracker.blueelephants.org/api/v1/plaid/webhoo
 
 # Single unified OAuth redirect URI — whitelisted in the Plaid dashboard.
 # The backend endpoint reads ?client= to determine where to forward the user.
-PLAID_REDIRECT_URI = "https://api.expense-tracker.blueelephants.org/plaid/oauth"
+PLAID_REDIRECT_URI = "https://api.expense-tracker.blueelephants.org/api/v1/plaid/oauth"
 PLAID_REDIRECT_URI_WEB = f"{PLAID_REDIRECT_URI}?client=web"
 PLAID_REDIRECT_URI_MOBILE = f"{PLAID_REDIRECT_URI}?client=mobile"
 
