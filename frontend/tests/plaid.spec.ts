@@ -19,6 +19,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
 import * as https from 'https'
+import * as http from 'http'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATE_FILE = path.join(__dirname, '.test-state.json')
@@ -39,9 +40,11 @@ async function apiPost(urlPath: string, token: string, body?: object): Promise<u
   return new Promise((resolve, reject) => {
     const bodyStr = body ? JSON.stringify(body) : ''
     const u = new URL(urlPath.startsWith('http') ? urlPath : `${API}${urlPath}`)
-    const req = https.request(
+    const client = u.protocol === 'http:' ? http : https
+    const req = client.request(
       {
         hostname: u.hostname,
+        port: u.port || undefined,
         path: u.pathname + u.search,
         method: 'POST',
         headers: {
