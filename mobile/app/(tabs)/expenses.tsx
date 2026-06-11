@@ -54,10 +54,225 @@ interface ExpenseFormData {
   category: ExpenseCategory
   date: string
   beneficiary: string
+  budget_id: string | null
 }
+
+// ─── Budget dropdown picker (shared by Approve modal + Add/Edit modal) ────
+//
+// Touchable field that opens a bottom-sheet style modal listing every
+// family budget grouped by period, with live "X% used" inline. Replaces
+// the previous horizontal chip row that scaled badly past ~5 budgets.
+interface BudgetPickerProps {
+  budgets: BudgetStatus[]
+  selectedBudgetId: string | null
+  onSelect: (budgetId: string | null) => void
+  // Optional filter: when set, only budgets matching this category (or
+  // catch-all budgets with category=null) appear by default; user can
+  // toggle "Show all" to see every budget.
+  filterByCategory?: ExpenseCategory | null
+  testID?: string
+}
+
+function BudgetPicker({
+  budgets,
+  selectedBudgetId,
+  onSelect,
+  filterByCategory,
+  testID,
+}: BudgetPickerProps) {
+  const [open, setOpen] = useState(false)
+  const [showAll, setShowAll] = useState(false)
+
+  if (budgets.length === 0) return null
+
+  const selected = budgets.find((b) => b.budget.id === selectedBudgetId)
+
+  const visible = filterByCategory && !showAll
+    ? budgets.filter(
+        (b) => !b.budget.category || b.budget.category === filterByCategory,
+      )
+    : budgets
+
+  // Group by period for the picker list
+  const grouped: Record<string, BudgetStatus[]> = {}
+  for (const b of visible) {
+    const k = b.budget.period
+    if (!grouped[k]) grouped[k] = []
+    grouped[k].push(b)
+  }
+  const orderedPeriods = ['weekly', 'monthly', 'yearly']
+
+  const label = selected
+    ? selected.budget.name
+    : selectedBudgetId
+    ? '(deleted budget)'
+    : 'None — don\'t pin to a budget'
+
+  return (
+    <>
+      <TouchableOpacity
+        style={budgetPickerStyles.field}
+        onPress={() => setOpen(true)}
+        testID={testID ?? 'budget-picker-field'}
+      >
+        <Text style={budgetPickerStyles.fieldLabel} numberOfLines={1}>
+          {label}
+        </Text>
+        {selected ? (
+          <Text style={budgetPickerStyles.fieldMeta}>
+            {Math.round(selected.percentage_used)}% used
+          </Text>
+        ) : null}
+        <Text style={budgetPickerStyles.fieldChevron}>▾</Text>
+      </TouchableOpacity>
+
+      <Modal
+        visible={open}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setOpen(false)}
+      >
+        <View style={budgetPickerStyles.backdrop}>
+          <View style={budgetPickerStyles.sheet}>
+            <View style={budgetPickerStyles.sheetHeader}>
+              <Text style={budgetPickerStyles.sheetTitle}>Choose budget</Text>
+              {filterByCategory ? (
+                <TouchableOpacity onPress={() => setShowAll((v) => !v)}>
+                  <Text style={budgetPickerStyles.showAllText}>
+                    {showAll ? 'Show relevant' : 'Show all'}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity onPress={() => setOpen(false)}>
+                  <Text style={budgetPickerStyles.closeText}>Close</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <ScrollView style={{ maxHeight: 480 }}>
+              {/* None option always at top */}
+              <TouchableOpacity
+                style={budgetPickerStyles.row}
+                onPress={() => {
+                  onSelect(null)
+                  setOpen(false)
+                }}
+              >
+                <Text style={budgetPickerStyles.rowName}>None</Text>
+                {!selectedBudgetId ? (
+                  <Text style={budgetPickerStyles.rowCheck}>✓</Text>
+                ) : null}
+              </TouchableOpacity>
+              {orderedPeriods.map((p) => {
+                const items = grouped[p] ?? []
+                if (items.length === 0) return null
+                return (
+                  <View key={p}>
+                    <Text style={budgetPickerStyles.groupHeader}>
+                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                    </Text>
+                    {items.map((bs) => {
+                      const active = bs.budget.id === selectedBudgetId
+                      return (
+                        <TouchableOpacity
+                          key={bs.budget.id}
+                          style={budgetPickerStyles.row}
+                          onPress={() => {
+                            onSelect(bs.budget.id)
+                            setOpen(false)
+                          }}
+                          testID={`budget-picker-row-${bs.budget.id}`}
+                        >
+                          <View style={{ flex: 1 }}>
+                            <Text style={budgetPickerStyles.rowName}>
+                              {bs.budget.name}
+                            </Text>
+                            <Text
+                              style={[
+                                budgetPickerStyles.rowMeta,
+                                bs.is_over_budget && budgetPickerStyles.rowMetaOver,
+                              ]}
+                            >
+                              ${bs.spent.toFixed(0)} of ${bs.budget.amount.toFixed(0)}{' · '}
+                              {Math.round(bs.percentage_used)}% used
+                              {bs.budget.category ? ` · ${bs.budget.category}` : ''}
+                            </Text>
+                          </View>
+                          {active ? (
+                            <Text style={budgetPickerStyles.rowCheck}>✓</Text>
+                          ) : null}
+                        </TouchableOpacity>
+                      )
+                    })}
+                  </View>
+                )
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </>
+  )
+}
+
+const budgetPickerStyles = StyleSheet.create({
+  field: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    marginBottom: 16,
+  },
+  fieldLabel: { flex: 1, fontSize: 15, color: '#111827' },
+  fieldMeta: { fontSize: 12, color: '#6b7280', marginLeft: 8 },
+  fieldChevron: { fontSize: 14, color: '#6b7280', marginLeft: 8 },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingBottom: 24,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  sheetTitle: { fontSize: 16, fontWeight: '600', color: '#111827' },
+  showAllText: { fontSize: 14, color: '#2563eb' },
+  closeText: { fontSize: 14, color: '#6b7280' },
+  groupHeader: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  rowName: { fontSize: 15, color: '#111827', fontWeight: '500' },
+  rowMeta: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  rowMetaOver: { color: '#dc2626' },
+  rowCheck: { fontSize: 18, color: '#2563eb', marginLeft: 12 },
+})
 
 function defaultForm(): ExpenseFormData {
   return {
+    budget_id: null,
     amount: '',
     description: '',
     merchant: '',
@@ -334,76 +549,24 @@ function ApproveModal({
                 ))}
               </ScrollView>
 
-              {/* Budget picker */}
+              {/* Budget — dropdown picker (was chips) */}
               {budgets.length > 0 && (
                 <>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                    <Text style={[modalStyles.label, { flex: 1, marginBottom: 0 }]}>Budget</Text>
-                    <TouchableOpacity onPress={() => setShowAllBudgets((v) => !v)}>
-                      <Text style={approveStyles.showAllText}>
-                        {showAllBudgets ? 'Show relevant' : 'Show all'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    style={{ marginBottom: 16 }}
-                  >
-                    {/* None chip */}
-                    <TouchableOpacity
-                      style={[
-                        approveStyles.budgetChip,
-                        !budgetId && approveStyles.budgetChipActive,
-                      ]}
-                      onPress={() => handleBudgetSelect(null)}
-                      testID="approve-budget-none"
-                    >
-                      <Text
-                        style={[
-                          approveStyles.budgetChipName,
-                          !budgetId && approveStyles.budgetChipNameActive,
-                        ]}
-                      >
-                        None
-                      </Text>
-                    </TouchableOpacity>
-
-                    {sortedBudgets.map((bs) => {
-                      const active = budgetId === bs.budget.id
-                      const pct = Math.round(bs.percentage_used)
-                      return (
-                        <TouchableOpacity
-                          key={bs.budget.id}
-                          style={[
-                            approveStyles.budgetChip,
-                            active && approveStyles.budgetChipActive,
-                            bs.is_over_budget && approveStyles.budgetChipOver,
-                          ]}
-                          onPress={() => handleBudgetSelect(bs)}
-                          testID={`approve-budget-chip-${bs.budget.id}`}
-                        >
-                          <Text
-                            style={[
-                              approveStyles.budgetChipName,
-                              active && approveStyles.budgetChipNameActive,
-                            ]}
-                            numberOfLines={1}
-                          >
-                            {bs.budget.name}
-                          </Text>
-                          <Text
-                            style={[
-                              approveStyles.budgetChipMeta,
-                              active && approveStyles.budgetChipMetaActive,
-                            ]}
-                          >
-                            {pct}% used
-                          </Text>
-                        </TouchableOpacity>
-                      )
-                    })}
-                  </ScrollView>
+                  <Text style={modalStyles.label}>Budget</Text>
+                  <BudgetPicker
+                    budgets={budgets}
+                    selectedBudgetId={budgetId}
+                    onSelect={(id) => {
+                      const bs = budgets.find((b) => b.budget.id === id)
+                      if (bs) {
+                        handleBudgetSelect(bs)
+                      } else {
+                        handleBudgetSelect(null)
+                      }
+                    }}
+                    filterByCategory={category}
+                    testID="approve-budget-picker"
+                  />
                 </>
               )}
 
@@ -494,6 +657,7 @@ interface AddEditModalProps {
   onSave: (data: ExpenseCreate) => void
   isSaving: boolean
   familyMembers: { id: string; display_name: string }[]
+  budgets: BudgetStatus[]
 }
 
 function AddEditModal({
@@ -503,6 +667,7 @@ function AddEditModal({
   onSave,
   isSaving,
   familyMembers,
+  budgets,
 }: AddEditModalProps) {
   const [form, setForm] = useState<ExpenseFormData>(() =>
     editing
@@ -513,6 +678,7 @@ function AddEditModal({
           category: editing.category,
           date: editing.date,
           beneficiary: editing.beneficiary,
+          budget_id: (editing as Expense & { budget_id?: string | null }).budget_id ?? null,
         }
       : defaultForm()
   )
@@ -538,6 +704,7 @@ function AddEditModal({
       date: form.date,
       beneficiary: form.beneficiary || (familyMembers[0]?.id ?? ''),
       payment_method: 'other',
+      budget_id: form.budget_id,
     })
   }
 
@@ -653,6 +820,21 @@ function AddEditModal({
                     onChangeText={set('date')}
                     placeholder="YYYY-MM-DD"
                   />
+
+                  {budgets.length > 0 && (
+                    <>
+                      <Text style={modalStyles.label}>Budget</Text>
+                      <BudgetPicker
+                        budgets={budgets}
+                        selectedBudgetId={form.budget_id}
+                        onSelect={(id) =>
+                          setForm((prev) => ({ ...prev, budget_id: id }))
+                        }
+                        filterByCategory={form.category}
+                        testID="addedit-budget-picker"
+                      />
+                    </>
+                  )}
 
                   {familyMembers.length > 1 && (
                     <>
@@ -1040,6 +1222,16 @@ export default function TransactionsScreen() {
     enabled: !!user?.family_id,
   })
 
+  // Budgets are fetched at the parent so the AddEditModal can pre-fill
+  // its Budget dropdown without each child re-querying. ApproveModal also
+  // queries; React Query dedupes by key.
+  const { data: budgetsData } = useQuery({
+    queryKey: ['budgets', 'list'],
+    queryFn: budgetsApi.list,
+    enabled: !!user?.family_id,
+  })
+  const budgets: BudgetStatus[] = budgetsData?.budgets ?? []
+
   const { data: pendingData } = useQuery({
     queryKey: ['plaid', 'pending'],
     // 200 is the backend cap; with the initial Plaid pull surfacing
@@ -1304,6 +1496,7 @@ export default function TransactionsScreen() {
         onSave={handleSave}
         isSaving={createMutation.isPending || updateMutation.isPending}
         familyMembers={familyMembers}
+        budgets={budgets}
       />
 
       <ApproveModal
