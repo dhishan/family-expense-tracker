@@ -601,6 +601,7 @@ def sync_transactions(plaid_item_id: str) -> dict[str, Any]:
     removed_count = 0
     has_more = True
     iterations = 0
+    new_pending_rows: list[dict] = []  # {firestore_id, txn_doc} for budget suggestion
 
     while has_more and iterations < _SYNC_LOOP_CAP:
         iterations += 1
@@ -635,7 +636,9 @@ def sync_transactions(plaid_item_id: str) -> dict[str, Any]:
             if existing:
                 # Already in our system — skip to avoid duplicates.
                 continue
-            db.collection(PLAID_PENDING_COLLECTION).document().set(doc)
+            new_ref = db.collection(PLAID_PENDING_COLLECTION).document()
+            new_ref.set(doc)
+            new_pending_rows.append({"firestore_id": new_ref.id, "txn_doc": doc})
             added_count += 1
 
         # --- Process modified ---
@@ -683,6 +686,56 @@ def sync_transactions(plaid_item_id: str) -> dict[str, Any]:
 
     if iterations >= _SYNC_LOOP_CAP and has_more:
         logger.warning("sync_transactions: hit loop cap (%d) for item %s", _SYNC_LOOP_CAP, plaid_item_id)
+
+    # --- Budget suggestion (best-effort, never blocks sync) ---
+    try:
+        import asyncio
+        import concurrent.futures
+        from app.services.budget_service import BudgetService
+        from app.services.budget_suggester import suggest_budgets_for_batch
+
+        if new_pending_rows and family_id:
+            try:
+                budgets = asyncio.run(BudgetService().list(family_id))
+            except RuntimeError:
+                # Event loop already running — use a thread pool
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    budgets = ex.submit(asyncio.run, BudgetService().list(family_id)).result()
+            if budgets:
+                # Build transaction dicts from stored docs
+                txn_dicts = []
+                for row in new_pending_rows:
+                    d = row["txn_doc"]
+                    txn_dicts.append({
+                        "id": row["firestore_id"],
+                        "merchant_name": d.get("merchant_name"),
+                        "name": d.get("name"),
+                        "amount": d.get("amount", 0),
+                        "plaid_category": d.get("plaid_category"),
+                        "account_type": "",
+                        "account_name": d.get("account_name", ""),
+                        "date": d.get("date", ""),
+                    })
+                suggestions = suggest_budgets_for_batch(txn_dicts, budgets)
+                if suggestions:
+                    batch = db.batch()
+                    n_updated = 0
+                    for row in new_pending_rows:
+                        fs_id = row["firestore_id"]
+                        if fs_id in suggestions and suggestions[fs_id] is not None:
+                            ref = db.collection(PLAID_PENDING_COLLECTION).document(fs_id)
+                            batch.update(ref, {"suggested_budget_id": suggestions[fs_id]})
+                            n_updated += 1
+                    if n_updated:
+                        batch.commit()
+                        logger.info(
+                            "sync_transactions: wrote suggested_budget_id for %d/%d rows (item=%s)",
+                            n_updated, len(new_pending_rows), plaid_item_id,
+                        )
+    except Exception as suggest_exc:
+        logger.warning(
+            "sync_transactions: budget suggestion failed (non-fatal) — %s", suggest_exc
+        )
 
     # Persist cursor
     update_item_cursor(plaid_item_id, cursor, _now())

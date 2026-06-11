@@ -822,3 +822,128 @@ class TestExchangeAsync:
         assert "plaid_item_id" in result
         # sync_transactions may or may not have been called yet (it's a task),
         # but the endpoint must return without blocking on it.
+
+
+# ---------------------------------------------------------------------------
+# TestSyncTransactionsBudgetSuggestion
+# ---------------------------------------------------------------------------
+
+
+class TestSyncTransactionsBudgetSuggestion:
+    """Integration test: sync_transactions writes suggested_budget_id when
+    suggest_budgets_for_batch returns a non-empty result."""
+
+    def _make_plaid_txn(self, txn_id: str) -> MagicMock:
+        txn = MagicMock()
+        txn.transaction_id = txn_id
+        txn.account_id = "acct-001"
+        txn.merchant_name = "Starbucks"
+        txn.name = "STARBUCKS 1234"
+        txn.amount = 6.42
+        txn.iso_currency_code = "USD"
+        txn.date = "2026-06-10"
+        txn.authorized_date = "2026-06-10"
+        txn.pending = False
+        pfc = MagicMock()
+        pfc.to_dict.return_value = {"primary": "FOOD_AND_DRINK"}
+        pfc.primary = "FOOD_AND_DRINK"
+        txn.personal_finance_category = pfc
+        return txn
+
+    def test_writes_suggested_budget_id_on_added_txns(self):
+        """sync_transactions should batch-update suggested_budget_id after adding rows."""
+        from types import SimpleNamespace
+
+        ITEM_ID = "item-suggest-001"
+        FAMILY_ID = "fam-suggest"
+        BUDGET_ID = "bud-dining-001"
+
+        # --- Firestore mock ---
+        db = MagicMock()
+
+        # Item doc
+        item_data = {
+            "family_id": FAMILY_ID,
+            "connected_by_user_id": "user-1",
+            "plaid_access_token": "access-sandbox",
+            "plaid_item_id": ITEM_ID,
+            "institution_name": "Chase",
+            "cursor": None,
+            "status": "active",
+        }
+        item_snap = MagicMock()
+        item_snap.exists = True
+        item_snap.to_dict.return_value = item_data
+
+        # Account doc
+        acct_snap = MagicMock()
+        acct_snap.id = "acct-001"
+        acct_snap.to_dict.return_value = {
+            "account_id": "acct-001",
+            "name": "Checking",
+            "plaid_item_id": ITEM_ID,
+        }
+
+        # Firestore new doc reference
+        new_doc_ref = MagicMock()
+        new_doc_ref.id = "pending-doc-abc"
+
+        # Batch for budget suggestion write-back
+        batch_mock = MagicMock()
+
+        def collection_side_effect(name):
+            coll = MagicMock()
+            if name == "plaid_items":
+                coll.document.return_value.get.return_value = item_snap
+            elif name == "plaid_accounts":
+                coll.where.return_value.stream.return_value = iter([acct_snap])
+            elif name == "plaid_pending_transactions":
+                # No existing doc (no dedupe hit)
+                coll.where.return_value.where.return_value.limit.return_value.stream.return_value = iter([])
+                coll.document.return_value = new_doc_ref
+            return coll
+
+        db.collection.side_effect = collection_side_effect
+        db.batch.return_value = batch_mock
+
+        # --- Plaid client mock ---
+        plaid_txn = self._make_plaid_txn("plaid-txn-123")
+        resp_body = {
+            "added": [plaid_txn],
+            "modified": [],
+            "removed": [],
+            "next_cursor": "cursor-v2",
+            "has_more": False,
+        }
+        resp = MagicMock()
+        resp.to_dict.return_value = resp_body
+
+        # --- Budget mock ---
+        budget = SimpleNamespace(
+            id=BUDGET_ID,
+            name="Eating Out",
+            category="dining",
+            beneficiary=None,
+            amount=200.0,
+            period="monthly",
+        )
+
+        # suggest_budgets_for_batch returns a suggestion for the Firestore doc ID
+        suggestion_result = {"pending-doc-abc": BUDGET_ID}
+
+        with patch("app.services.plaid_service.get_firestore_client", return_value=db), \
+             patch("app.services.plaid_service._client") as mock_plaid_client, \
+             patch("app.services.plaid_service.update_item_cursor"), \
+             patch("app.services.budget_service.BudgetService.list", new=AsyncMock(return_value=[budget])), \
+             patch("app.services.budget_suggester.suggest_budgets_for_batch", return_value=suggestion_result):
+
+            mock_plaid_client.return_value.transactions_sync.return_value = resp
+            from app.services.plaid_service import sync_transactions
+            result = sync_transactions(ITEM_ID)
+
+        assert result["added"] == 1
+        # Verify batch.update was called with the suggested budget_id
+        batch_mock.update.assert_called_once()
+        update_call_args = batch_mock.update.call_args
+        assert update_call_args[0][1] == {"suggested_budget_id": BUDGET_ID}
+        batch_mock.commit.assert_called()
