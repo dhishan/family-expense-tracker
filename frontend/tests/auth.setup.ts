@@ -1,5 +1,6 @@
 import { test as setup, expect } from '@playwright/test'
 import * as https from 'https'
+import * as http from 'http'
 import * as fs from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
@@ -14,8 +15,15 @@ const API = process.env.API_URL || 'https://api.expense-tracker.blueelephants.or
 function get(url: string, token: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const u = new URL(url)
-    const req = https.request(
-      { hostname: u.hostname, path: u.pathname + u.search, method: 'GET', headers: { Authorization: `Bearer ${token}` } },
+    const client = u.protocol === 'http:' ? http : https
+    const req = client.request(
+      {
+        hostname: u.hostname,
+        port: u.port || undefined,
+        path: u.pathname + u.search,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      },
       (res) => {
         let data = ''
         res.on('data', (chunk) => (data += chunk))
