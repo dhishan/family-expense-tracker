@@ -45,9 +45,9 @@ class Settings(BaseSettings):
     kalshi_key_id: str = ""
     kalshi_private_key_b64: str = ""
 
-    # Tradier (options chain, Greeks, quotes)
-    tradier_token: str = ""
-    tradier_env: str = "sandbox"  # "sandbox" | "production"
+    # Alpaca (options data, market quotes, OHLCV bars)
+    apca_api_key_id: str = ""
+    apca_api_secret_key: str = ""
 
     # Cloudflare Access (gates the hosted /mcp endpoint in production)
     cf_access_team_domain: str = ""  # e.g. blueelephants.cloudflareaccess.com
