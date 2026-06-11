@@ -991,7 +991,7 @@ class TestCreateLinkTokenRedirectUri:
 
         req = captured["req"]
         assert req.redirect_uri == PLAID_REDIRECT_URI_MOBILE
-        assert req.redirect_uri == "expenses://plaid-oauth"
+        assert req.redirect_uri == "https://api.expense-tracker.blueelephants.org/plaid/oauth?client=mobile"
 
     def test_web_platform_uses_web_redirect_uri(self):
         from app.routers.plaid import PLAID_REDIRECT_URI_WEB
@@ -1001,7 +1001,7 @@ class TestCreateLinkTokenRedirectUri:
 
         req = captured["req"]
         assert req.redirect_uri == PLAID_REDIRECT_URI_WEB
-        assert req.redirect_uri == "https://ui.expense-tracker.blueelephants.org/plaid-oauth-return"
+        assert req.redirect_uri == "https://api.expense-tracker.blueelephants.org/plaid/oauth?client=web"
 
     def test_default_platform_is_mobile(self):
         """When no platform is specified the default should be mobile."""

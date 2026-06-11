@@ -51,10 +51,15 @@ settings = get_settings()
 
 WEBHOOK_URL = "https://api.expense-tracker.blueelephants.org/api/v1/plaid/webhook"
 
-# OAuth redirect URIs — both must be whitelisted in the Plaid dashboard under
-# Team -> API -> Allowed redirect URIs before they will be accepted.
-PLAID_REDIRECT_URI_WEB = "https://ui.expense-tracker.blueelephants.org/plaid-oauth-return"
-PLAID_REDIRECT_URI_MOBILE = "expenses://plaid-oauth"
+# Single unified OAuth redirect URI — whitelisted in the Plaid dashboard.
+# The backend endpoint reads ?client= to determine where to forward the user.
+PLAID_REDIRECT_URI = "https://api.expense-tracker.blueelephants.org/plaid/oauth"
+PLAID_REDIRECT_URI_WEB = f"{PLAID_REDIRECT_URI}?client=web"
+PLAID_REDIRECT_URI_MOBILE = f"{PLAID_REDIRECT_URI}?client=mobile"
+
+# Final destinations after the backend relay
+_WEB_OAUTH_RETURN = "https://ui.expense-tracker.blueelephants.org/plaid-oauth-return"
+_MOBILE_OAUTH_RETURN = "expenses://plaid-oauth"
 
 # ---------------------------------------------------------------------------
 # Request / response models
