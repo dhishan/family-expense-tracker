@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     kalshi_key_id: str = ""
     kalshi_private_key_b64: str = ""
 
+    # Tradier (options chain, Greeks, quotes)
+    tradier_token: str = ""
+    tradier_env: str = "sandbox"  # "sandbox" | "production"
+
     # Cloudflare Access (gates the hosted /mcp endpoint in production)
     cf_access_team_domain: str = ""  # e.g. blueelephants.cloudflareaccess.com
     cf_access_aud: str = ""          # Application AUD tag

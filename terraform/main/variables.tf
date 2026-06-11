@@ -176,3 +176,17 @@ variable "kalshi_private_key_b64" {
   sensitive   = true
   default     = ""
 }
+
+# --- Tradier (options data) ---
+variable "tradier_token" {
+  description = "Tradier API bearer token (from brokerage.tradier.com or sandbox.tradier.com)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "tradier_env" {
+  description = "Tradier environment: sandbox | production"
+  type        = string
+  default     = "sandbox"
+}

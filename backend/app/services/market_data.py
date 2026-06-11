@@ -912,3 +912,257 @@ def _normalize_kalshi(m: dict) -> dict:
         "close_time": m.get("close_time") or m.get("closeTime"),
         "status": m.get("status"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Tradier — options chains, Greeks, quotes, price history
+# ---------------------------------------------------------------------------
+
+import requests as _requests  # noqa: E402
+
+
+def _tradier_base() -> str:
+    """Return the Tradier base URL based on environment setting."""
+    settings = get_settings()
+    if settings.tradier_env == "production":
+        return "https://api.tradier.com/v1"
+    return "https://sandbox.tradier.com/v1"
+
+
+def _tradier_headers() -> dict:
+    """Return Authorization and Accept headers for Tradier. Raises RuntimeError if unconfigured."""
+    token = get_settings().tradier_token
+    if not token:
+        raise RuntimeError("Tradier not configured; set TRADIER_TOKEN")
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+
+
+def tradier_quote(symbol: str) -> dict:
+    """Current market quote for a symbol.
+
+    Args:
+        symbol: Stock or ETF ticker, e.g. AAPL.
+
+    Returns:
+        Dict with symbol, last, change, change_pct, bid, ask, volume,
+        high, low, open, prev_close, description.
+    """
+    try:
+        headers = _tradier_headers()
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+    try:
+        resp = _requests.get(
+            f"{_tradier_base()}/markets/quotes",
+            params={"symbols": symbol.upper()},
+            headers=headers,
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        raw = (data.get("quotes") or {}).get("quote", {})
+        # quote may be a list (multi-symbol) or a dict (single symbol)
+        if isinstance(raw, list):
+            raw = raw[0] if raw else {}
+        return {
+            "symbol": raw.get("symbol"),
+            "description": raw.get("description"),
+            "last": raw.get("last"),
+            "change": raw.get("change"),
+            "change_pct": raw.get("change_percentage"),
+            "bid": raw.get("bid"),
+            "ask": raw.get("ask"),
+            "volume": raw.get("volume"),
+            "high": raw.get("high"),
+            "low": raw.get("low"),
+            "open": raw.get("open"),
+            "prev_close": raw.get("prevclose"),
+        }
+    except Exception as exc:
+        return {"error": str(exc), "symbol": symbol}
+
+
+def tradier_option_expirations(symbol: str, include_all_roots: bool = True) -> list:
+    """Available option expiration dates for a symbol.
+
+    Args:
+        symbol: Stock ticker, e.g. AAPL.
+        include_all_roots: If True, include non-standard expirations (weekly, mini, etc.).
+
+    Returns:
+        Sorted list of YYYY-MM-DD strings.
+    """
+    try:
+        headers = _tradier_headers()
+    except RuntimeError as exc:
+        return [{"error": str(exc)}]
+    try:
+        resp = _requests.get(
+            f"{_tradier_base()}/markets/options/expirations",
+            params={"symbol": symbol.upper(), "includeAllRoots": str(include_all_roots).lower()},
+            headers=headers,
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        raw = (data.get("expirations") or {}).get("date", [])
+        if isinstance(raw, str):
+            raw = [raw]
+        return sorted(raw) if raw else []
+    except Exception as exc:
+        return [{"error": str(exc), "symbol": symbol}]
+
+
+def tradier_option_chain(symbol: str, expiration: str, greeks: bool = True) -> list[dict]:
+    """Full option chain for a symbol and expiration date.
+
+    Args:
+        symbol: Stock ticker, e.g. NVDA.
+        expiration: Expiration date in YYYY-MM-DD format.
+        greeks: If True, include delta, gamma, theta, vega, rho, mid_iv, bid_iv, ask_iv.
+
+    Returns:
+        List of option contracts sorted by strike ascending. Each dict has:
+        symbol, description, option_type (call/put), strike, expiration_date,
+        last, bid, ask, volume, open_interest, greeks (if requested).
+    """
+    try:
+        headers = _tradier_headers()
+    except RuntimeError as exc:
+        return [{"error": str(exc)}]
+    try:
+        resp = _requests.get(
+            f"{_tradier_base()}/markets/options/chains",
+            params={
+                "symbol": symbol.upper(),
+                "expiration": expiration,
+                "greeks": str(greeks).lower(),
+            },
+            headers=headers,
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        raw = (data.get("options") or {}).get("option", [])
+        if isinstance(raw, dict):
+            raw = [raw]
+        if not raw:
+            return []
+        results = []
+        for c in raw:
+            entry: dict = {
+                "symbol": c.get("symbol"),
+                "description": c.get("description"),
+                "option_type": c.get("option_type"),
+                "strike": c.get("strike"),
+                "expiration_date": c.get("expiration_date"),
+                "last": c.get("last"),
+                "bid": c.get("bid"),
+                "ask": c.get("ask"),
+                "volume": c.get("volume"),
+                "open_interest": c.get("open_interest"),
+            }
+            if greeks and c.get("greeks"):
+                g = c["greeks"]
+                entry["greeks"] = {
+                    "delta": g.get("delta"),
+                    "gamma": g.get("gamma"),
+                    "theta": g.get("theta"),
+                    "vega": g.get("vega"),
+                    "rho": g.get("rho"),
+                    "mid_iv": g.get("mid_iv"),
+                    "bid_iv": g.get("bid_iv"),
+                    "ask_iv": g.get("ask_iv"),
+                }
+            results.append(entry)
+        return sorted(results, key=lambda x: (x.get("strike") or 0))
+    except Exception as exc:
+        return [{"error": str(exc), "symbol": symbol, "expiration": expiration}]
+
+
+def tradier_option_strikes(symbol: str, expiration: str) -> list:
+    """Available strike prices for a symbol and expiration date.
+
+    Args:
+        symbol: Stock ticker, e.g. TSLA.
+        expiration: Expiration date in YYYY-MM-DD format.
+
+    Returns:
+        Sorted list of strike prices (floats).
+    """
+    try:
+        headers = _tradier_headers()
+    except RuntimeError as exc:
+        return [{"error": str(exc)}]
+    try:
+        resp = _requests.get(
+            f"{_tradier_base()}/markets/options/strikes",
+            params={"symbol": symbol.upper(), "expiration": expiration},
+            headers=headers,
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        raw = (data.get("strikes") or {}).get("strike", [])
+        if isinstance(raw, (int, float)):
+            raw = [raw]
+        return sorted(float(s) for s in raw) if raw else []
+    except Exception as exc:
+        return [{"error": str(exc), "symbol": symbol, "expiration": expiration}]
+
+
+def tradier_historical_quotes(
+    symbol: str,
+    start: str,
+    end: str,
+    interval: str = "daily",
+) -> list[dict]:
+    """Historical OHLCV price data for a symbol.
+
+    Args:
+        symbol: Stock ticker, e.g. MSFT.
+        start: Start date YYYY-MM-DD.
+        end: End date YYYY-MM-DD.
+        interval: One of daily, weekly, monthly (default daily).
+
+    Returns:
+        List of {date, open, high, low, close, volume} dicts.
+        Returns error dict if the date range would produce more than 1000 candles.
+    """
+    from datetime import date as _date
+
+    try:
+        headers = _tradier_headers()
+    except RuntimeError as exc:
+        return [{"error": str(exc)}]
+    try:
+        start_d = _date.fromisoformat(start)
+        end_d = _date.fromisoformat(end)
+        days = (end_d - start_d).days
+        if interval == "daily" and days > 1000:
+            return [{"error": f"Date range of {days} days would produce >{1000} daily candles; narrow the range."}]
+        if interval == "weekly" and days > 7000:
+            return [{"error": f"Date range of {days} days would produce >{1000} weekly candles; narrow the range."}]
+
+        resp = _requests.get(
+            f"{_tradier_base()}/markets/history",
+            params={
+                "symbol": symbol.upper(),
+                "start": start,
+                "end": end,
+                "interval": interval,
+            },
+            headers=headers,
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        raw = (data.get("history") or {}).get("day", [])
+        if isinstance(raw, dict):
+            raw = [raw]
+        return raw if raw else []
+    except Exception as exc:
+        return [{"error": str(exc), "symbol": symbol}]

@@ -622,6 +622,102 @@ TOOLS: list[dict] = [
             "required": ["ticker"],
         },
     },
+    # --- Tradier options data ---
+    {
+        "name": "tradier_quote",
+        "description": (
+            "Real-time market quote for a stock or ETF via Tradier. "
+            "Returns last price, bid/ask, day high/low, volume, and change. "
+            "Use when the user needs a live options-ready quote alongside chain data."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "Stock or ETF ticker, e.g. NVDA"},
+            },
+            "required": ["symbol"],
+        },
+    },
+    {
+        "name": "tradier_option_expirations",
+        "description": (
+            "List all available option expiration dates for a symbol. "
+            "Call this first to discover valid expirations before pulling a full chain. "
+            "Returns a sorted list of YYYY-MM-DD strings."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "Stock ticker, e.g. AAPL"},
+                "include_all_roots": {
+                    "type": "boolean",
+                    "description": "Include non-standard expirations (weekly, mini, etc.) — default true",
+                    "default": True,
+                },
+            },
+            "required": ["symbol"],
+        },
+    },
+    {
+        "name": "tradier_option_chain",
+        "description": (
+            "Full option chain (calls and puts) for a symbol and expiration date, with Greeks. "
+            "Use for questions like 'show me the NVDA call chain for next Friday' or "
+            "'what is the implied volatility on AAPL 200-strike calls'. "
+            "Returns contracts sorted by strike with delta, gamma, theta, vega, rho, and IV."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "Stock ticker, e.g. NVDA"},
+                "expiration": {"type": "string", "description": "Expiration date YYYY-MM-DD"},
+                "greeks": {
+                    "type": "boolean",
+                    "description": "Include Greeks (delta, gamma, theta, vega, rho, IV) — default true",
+                    "default": True,
+                },
+            },
+            "required": ["symbol", "expiration"],
+        },
+    },
+    {
+        "name": "tradier_option_strikes",
+        "description": (
+            "List available strike prices for a symbol and expiration. "
+            "Use to find valid strikes before pulling a chain or quoting a specific contract."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "Stock ticker, e.g. TSLA"},
+                "expiration": {"type": "string", "description": "Expiration date YYYY-MM-DD"},
+            },
+            "required": ["symbol", "expiration"],
+        },
+    },
+    {
+        "name": "tradier_historical_quotes",
+        "description": (
+            "Historical OHLCV price data for a stock from Tradier. "
+            "Use for charts, trend analysis, or backtesting. "
+            "interval: daily, weekly, or monthly. Capped at 1000 daily candles per request."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "Stock ticker, e.g. MSFT"},
+                "start": {"type": "string", "description": "Start date YYYY-MM-DD"},
+                "end": {"type": "string", "description": "End date YYYY-MM-DD"},
+                "interval": {
+                    "type": "string",
+                    "enum": ["daily", "weekly", "monthly"],
+                    "description": "Bar interval (default daily)",
+                    "default": "daily",
+                },
+            },
+            "required": ["symbol", "start", "end"],
+        },
+    },
     # --- Plaid bank tools ---
     {
         "name": "bank_accounts",
@@ -695,6 +791,13 @@ _PREDICTION_MARKET_TOOLS = {
     "manifold_search", "manifold_market",
     "polymarket_search", "polymarket_market",
     "kalshi_search", "kalshi_market",
+}
+_TRADIER_TOOLS = {
+    "tradier_quote",
+    "tradier_option_expirations",
+    "tradier_option_chain",
+    "tradier_option_strikes",
+    "tradier_historical_quotes",
 }
 
 
@@ -930,6 +1033,42 @@ def _execute_prediction_market_tool(name: str, tool_input: dict) -> str:
         return json.dumps(result, default=str)
     except Exception as exc:
         logger.exception("Prediction market tool %s failed", name)
+        return json.dumps({"error": str(exc)})
+
+
+def _execute_tradier_tool(name: str, tool_input: dict) -> str:
+    """Execute a Tradier options/market-data tool. Returns JSON string."""
+    try:
+        if name == "tradier_quote":
+            result = market_data.tradier_quote(symbol=tool_input["symbol"])
+        elif name == "tradier_option_expirations":
+            result = market_data.tradier_option_expirations(
+                symbol=tool_input["symbol"],
+                include_all_roots=tool_input.get("include_all_roots", True),
+            )
+        elif name == "tradier_option_chain":
+            result = market_data.tradier_option_chain(
+                symbol=tool_input["symbol"],
+                expiration=tool_input["expiration"],
+                greeks=tool_input.get("greeks", True),
+            )
+        elif name == "tradier_option_strikes":
+            result = market_data.tradier_option_strikes(
+                symbol=tool_input["symbol"],
+                expiration=tool_input["expiration"],
+            )
+        elif name == "tradier_historical_quotes":
+            result = market_data.tradier_historical_quotes(
+                symbol=tool_input["symbol"],
+                start=tool_input["start"],
+                end=tool_input["end"],
+                interval=tool_input.get("interval", "daily"),
+            )
+        else:
+            return json.dumps({"error": f"Unknown Tradier tool: {name}"})
+        return json.dumps(result, default=str)
+    except Exception as exc:
+        logger.exception("Tradier tool %s failed", name)
         return json.dumps({"error": str(exc)})
 
 
@@ -1765,6 +1904,8 @@ async def _generate_turn(
                     result_content = await _execute_plaid_tool(tc["name"], tc["input"], user_id)
                 elif tc["name"] in _PREDICTION_MARKET_TOOLS:
                     result_content = _execute_prediction_market_tool(tc["name"], tc["input"])
+                elif tc["name"] in _TRADIER_TOOLS:
+                    result_content = _execute_tradier_tool(tc["name"], tc["input"])
                 else:
                     result_content = _execute_snaptrade_tool(tc["name"], tc["input"], user_id)
                 _safe_end(

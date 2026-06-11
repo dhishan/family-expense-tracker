@@ -431,6 +431,41 @@ resource "google_secret_manager_secret_version" "kalshi_private_key_b64" {
   secret_data = coalesce(var.kalshi_private_key_b64, "not-configured")
 }
 
+# --- Tradier (options data) ---
+resource "google_secret_manager_secret" "tradier_token" {
+  secret_id = "${var.backend_service_name}-tradier-token"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "tradier_token" {
+  secret      = google_secret_manager_secret.tradier_token.id
+  secret_data = coalesce(var.tradier_token, "not-configured")
+}
+
+resource "google_secret_manager_secret" "tradier_env" {
+  secret_id = "${var.backend_service_name}-tradier-env"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "tradier_env" {
+  secret      = google_secret_manager_secret.tradier_env.id
+  secret_data = var.tradier_env
+}
+
 # Cloud Run service for backend
 resource "google_cloud_run_service" "backend" {
   name     = var.backend_service_name
@@ -638,6 +673,26 @@ resource "google_cloud_run_service" "backend" {
           }
         }
 
+        env {
+          name = "TRADIER_TOKEN"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.tradier_token.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "TRADIER_ENV"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.tradier_env.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
         resources {
           limits = {
             cpu    = "1000m"
@@ -706,6 +761,8 @@ resource "google_cloud_run_service" "backend" {
     google_secret_manager_secret_version.plaid_env,
     google_secret_manager_secret_version.kalshi_key_id,
     google_secret_manager_secret_version.kalshi_private_key_b64,
+    google_secret_manager_secret_version.tradier_token,
+    google_secret_manager_secret_version.tradier_env,
   ]
 }
 

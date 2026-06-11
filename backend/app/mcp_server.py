@@ -495,6 +495,63 @@ def kalshi_market(ticker: str) -> dict:
     return market_data.kalshi_market(ticker=ticker)
 
 
+# ---- Tradier options tools -------------------------------------------------
+
+
+@mcp.tool()
+def tradier_quote(symbol: str) -> dict:
+    """Real-time market quote for a stock or ETF.
+
+    Returns last price, bid/ask, day high/low, volume, change, and description.
+    Use alongside option chain data for context on the underlying price.
+    """
+    return market_data.tradier_quote(symbol=symbol)
+
+
+@mcp.tool()
+def tradier_option_expirations(symbol: str, include_all_roots: bool = True) -> list:
+    """List all available option expiration dates for a symbol.
+
+    Call this first to discover valid expirations before pulling a chain.
+    Returns a sorted list of YYYY-MM-DD strings.
+    """
+    return market_data.tradier_option_expirations(symbol=symbol, include_all_roots=include_all_roots)
+
+
+@mcp.tool()
+def tradier_option_chain(symbol: str, expiration: str, greeks: bool = True) -> list:
+    """Full option chain (calls and puts) for a symbol and expiration date.
+
+    Returns contracts sorted by strike with delta, gamma, theta, vega, rho,
+    and implied volatility. Use for 'show me the NVDA call chain' or IV queries.
+    """
+    return market_data.tradier_option_chain(symbol=symbol, expiration=expiration, greeks=greeks)
+
+
+@mcp.tool()
+def tradier_option_strikes(symbol: str, expiration: str) -> list:
+    """List available strike prices for a symbol and expiration.
+
+    Use to find valid strikes before pulling a full chain or quoting a specific contract.
+    """
+    return market_data.tradier_option_strikes(symbol=symbol, expiration=expiration)
+
+
+@mcp.tool()
+def tradier_historical_quotes(
+    symbol: str,
+    start: str,
+    end: str,
+    interval: str = "daily",
+) -> list:
+    """Historical OHLCV price data for a stock from Tradier.
+
+    interval: daily, weekly, or monthly. Capped at 1000 daily candles per request.
+    Use for price trend analysis alongside options data.
+    """
+    return market_data.tradier_historical_quotes(symbol=symbol, start=start, end=end, interval=interval)
+
+
 # ---- Expense + budget tools ------------------------------------------------
 
 
