@@ -53,13 +53,17 @@ WEBHOOK_URL = "https://api.expense-tracker.blueelephants.org/api/v1/plaid/webhoo
 
 # Single unified OAuth redirect URI — whitelisted in the Plaid dashboard.
 # The backend endpoint reads ?client= to determine where to forward the user.
-PLAID_REDIRECT_URI = "https://api.expense-tracker.blueelephants.org/api/v1/plaid/oauth"
-PLAID_REDIRECT_URI_WEB = f"{PLAID_REDIRECT_URI}?client=web"
-PLAID_REDIRECT_URI_MOBILE = f"{PLAID_REDIRECT_URI}?client=mobile"
+# Plaid rejects query strings in whitelisted redirect_uris ("redirect_uri
+# cannot include query"). So instead of one URI with ?client=… we use:
+#   - Web: directly point at the SPA route, no backend relay needed
+#   - Mobile: point at the backend relay, which 302s to expenses://
+# Two URIs to whitelist in the Plaid dashboard.
+PLAID_REDIRECT_URI_WEB = "https://ui.expense-tracker.blueelephants.org/plaid-oauth-return"
+PLAID_REDIRECT_URI_MOBILE = "https://api.expense-tracker.blueelephants.org/api/v1/plaid/oauth"
 
 # Final destinations after the backend relay
-_WEB_OAUTH_RETURN = "https://ui.expense-tracker.blueelephants.org/plaid-oauth-return"
-_MOBILE_OAUTH_RETURN = "expenses://plaid-oauth"
+# (Final destinations are now baked into PLAID_REDIRECT_URI_WEB /
+# PLAID_REDIRECT_URI_MOBILE and the relay handler directly.)
 
 # ---------------------------------------------------------------------------
 # Request / response models
@@ -148,31 +152,21 @@ def _require_family_id(user: User) -> str:
 
 @router.get("/oauth")
 async def plaid_oauth_relay(request: Request):
-    """Relay endpoint that Plaid redirects to after OAuth bank login.
+    """Mobile-only relay. Plaid redirects here after OAuth bank login; we
+    302 to the mobile app's deep link. Web clients get redirect_uri set
+    directly to the SPA route — they never touch this endpoint.
 
-    Plaid appends its own query params (oauth_state_id, etc.) to the redirect_uri
-    we supplied when creating the link token. We embedded ?client=web|mobile in
-    that URI so we know which final destination to forward to:
-      - client=web    -> frontend /plaid-oauth-return (SPA route)
-      - client=mobile -> expenses:// deep link
-
-    No authentication: this is called from the bank's domain with no user session.
+    No authentication: this is called from the bank's domain with no user
+    session.
     """
     from fastapi.responses import RedirectResponse
+    from urllib.parse import urlencode
 
     params = dict(request.query_params)
-    client = params.pop("client", "mobile")  # default to mobile if omitted
-
-    # Forward all remaining Plaid params (oauth_state_id, ...) to the final destination
-    from urllib.parse import urlencode
     qs = urlencode(params) if params else ""
+    target = f"expenses://plaid-oauth?{qs}" if qs else "expenses://plaid-oauth"
 
-    if client == "web":
-        target = f"{_WEB_OAUTH_RETURN}?{qs}" if qs else _WEB_OAUTH_RETURN
-    else:
-        target = f"{_MOBILE_OAUTH_RETURN}?{qs}" if qs else _MOBILE_OAUTH_RETURN
-
-    logger.info("plaid_oauth_relay client=%s -> %s", client, target)
+    logger.info("plaid_oauth_relay -> %s", target)
     return RedirectResponse(
         url=target,
         status_code=302,
