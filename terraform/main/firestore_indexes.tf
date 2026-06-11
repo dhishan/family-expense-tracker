@@ -154,6 +154,37 @@ resource "google_firestore_index" "expenses_category_family_date" {
   depends_on = [google_firestore_database.database]
 }
 
+# Index for "spending pinned to a specific budget" queries —
+# expense_service.get_spending_for_budget filters by
+# (family_id, budget_id, date range). Required after task #27 added
+# explicit budget_id pinning on expenses. Without this index, the
+# pinned-query branch throws FailedPrecondition and the parent
+# list_with_status() try/except silently empties the budget list on
+# the client. Mitigated in app code with a try/except until the index
+# finishes building.
+resource "google_firestore_index" "expenses_family_budget_date" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "expenses"
+
+  fields {
+    field_path = "family_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "budget_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "date"
+    order      = "ASCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
+
 # Index for querying budgets by family.
 #
 # This index serves all `budgets` queries regardless of the `period` value

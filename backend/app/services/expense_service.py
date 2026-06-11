@@ -272,19 +272,33 @@ class ExpenseService:
         end_dt = datetime.combine(end_date, datetime.max.time())
         total = 0.0
 
-        # Part 1 — explicitly pinned expenses (only when we have a budget_id to pin to)
+        # Part 1 — explicitly pinned expenses (only when we have a budget_id to pin to).
+        # We catch FailedPrecondition (missing composite index) so the function
+        # degrades gracefully until the index finishes building. Without this
+        # guard, the parent list_with_status() try/except swallowed the error
+        # and dropped ALL budgets from the response, producing an empty budgets
+        # list on the client.
         if budget_id:
-            pinned_query = (
-                self.collection
-                .where(filter=FieldFilter("family_id", "==", family_id))
-                .where(filter=FieldFilter("budget_id", "==", budget_id))
-                .where(filter=FieldFilter("date", ">=", start_dt))
-                .where(filter=FieldFilter("date", "<=", end_dt))
-            )
-            if beneficiary:
-                pinned_query = pinned_query.where(filter=FieldFilter("beneficiary", "==", beneficiary))
-            for doc in pinned_query.stream():
-                total += doc.to_dict().get("amount", 0)
+            try:
+                pinned_query = (
+                    self.collection
+                    .where(filter=FieldFilter("family_id", "==", family_id))
+                    .where(filter=FieldFilter("budget_id", "==", budget_id))
+                    .where(filter=FieldFilter("date", ">=", start_dt))
+                    .where(filter=FieldFilter("date", "<=", end_dt))
+                )
+                if beneficiary:
+                    pinned_query = pinned_query.where(filter=FieldFilter("beneficiary", "==", beneficiary))
+                for doc in pinned_query.stream():
+                    total += doc.to_dict().get("amount", 0)
+            except Exception as e:
+                # Index missing or other Firestore error — log + continue with
+                # only the fallback query. Until anyone actually pins an
+                # expense to this budget, the pinned sum is 0 anyway.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Pinned-budget query failed (likely missing composite index): %s", e
+                )
 
         # Part 2 — unpinned expenses that match by category (fallback / legacy)
         fallback_query = (
