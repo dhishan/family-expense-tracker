@@ -18,5 +18,15 @@ module.exports = function (api) {
       ['babel-preset-expo', { jsxImportSource: 'nativewind' }],
       'nativewind/babel',
     ],
+    plugins: [
+      // Reanimated 3 REQUIRES this plugin and it MUST be the last entry
+      // in the plugins array. Without it, worklet objects get compiled
+      // as broken Hermes bytecode — Debug builds appear to work because
+      // the JS engine interprets the source at runtime, but Release
+      // builds crash on first JS event-loop tick with a SIGSEGV in
+      // Hermes during initial runtime setup (debugJavaScript). Was
+      // missing since the original mobile app scaffold.
+      'react-native-reanimated/plugin',
+    ],
   }
 }
