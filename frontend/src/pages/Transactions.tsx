@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useRef, useEffect } from 'react'
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import { useForm } from 'react-hook-form'
 import toast from 'react-hot-toast'
@@ -190,12 +190,25 @@ export default function Transactions() {
     staleTime: 5 * 60 * 1000,
   })
 
-  const { data: pendingData } = useQuery({
+  const PENDING_PAGE_SIZE = 50
+  const {
+    data: pendingData,
+    fetchNextPage: fetchNextPending,
+    hasNextPage: hasMorePending,
+    isFetchingNextPage: isFetchingMorePending,
+  } = useInfiniteQuery({
     queryKey: ['plaid', 'pending'],
-    queryFn: () => plaidApi.listPending(1, 200),
+    queryFn: ({ pageParam = 1 }) => plaidApi.listPending(pageParam, PENDING_PAGE_SIZE),
     enabled: !!user?.family_id,
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((n, p) => n + p.pending.length, 0)
+      return loaded < lastPage.total ? allPages.length + 1 : undefined
+    },
     refetchInterval: 60_000,
   })
+  const pendingTotal = pendingData?.pages[0]?.total ?? 0
+  const allPending = pendingData?.pages.flatMap((p) => p.pending) ?? []
 
   const { data: budgetsData } = useQuery({
     queryKey: ['budgets', 'list'],
@@ -205,9 +218,24 @@ export default function Transactions() {
   })
   const budgets: BudgetStatus[] = budgetsData?.budgets ?? []
 
-  const visiblePending = (pendingData?.pending ?? []).filter(
+  const visiblePending = allPending.filter(
     (tx) => !optimisticallyDiscarded.has(tx.id)
   )
+
+  // Infinite-scroll sentinel
+  const loadMoreRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const el = loadMoreRef.current
+    if (!el || !hasMorePending) return
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !isFetchingMorePending) fetchNextPending()
+      },
+      { rootMargin: '200px' }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [hasMorePending, isFetchingMorePending, fetchNextPending])
 
   const pastMerchants = Array.from(
     new Set(
@@ -442,7 +470,7 @@ export default function Transactions() {
             <div className="flex items-center gap-2">
               <span className="text-amber-600">🔔</span>
               <span className="font-semibold text-amber-900">
-                {visiblePending.length} transaction{visiblePending.length !== 1 ? 's' : ''} need review
+                {pendingTotal} transaction{pendingTotal !== 1 ? 's' : ''} need review
               </span>
             </div>
             <button
@@ -468,6 +496,11 @@ export default function Transactions() {
                   onDiscardClick={handleDiscard}
                 />
               ))}
+              {hasMorePending && (
+                <div ref={loadMoreRef} className="py-3 text-center text-sm text-amber-700">
+                  {isFetchingMorePending ? 'Loading more…' : 'Scroll for more'}
+                </div>
+              )}
             </div>
           )}
         </div>
