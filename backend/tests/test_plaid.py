@@ -947,3 +947,69 @@ class TestSyncTransactionsBudgetSuggestion:
         update_call_args = batch_mock.update.call_args
         assert update_call_args[0][1] == {"suggested_budget_id": BUDGET_ID}
         batch_mock.commit.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# OAuth redirect_uri tests
+# ---------------------------------------------------------------------------
+
+
+class TestCreateLinkTokenRedirectUri:
+    """Verify that the correct redirect_uri is passed to Plaid based on platform."""
+
+    def _call_create_link_token(self, platform: str, captured: dict):
+        """Invoke create_link_token with a mocked Plaid client and capture the request."""
+        import asyncio
+        from app.routers.plaid import create_link_token, LinkTokenRequest
+
+        user = _make_user()
+
+        # Mock response
+        mock_resp = MagicMock()
+        mock_resp.to_dict.return_value = {
+            "link_token": "link-sandbox-test-token",
+            "expiration": "2026-06-11T00:00:00Z",
+        }
+
+        def fake_link_token_create(req):
+            captured["req"] = req
+            return mock_resp
+
+        with (
+            patch("app.routers.plaid._plaid_client") as mock_client,
+            patch("app.routers.plaid._require_family_id", return_value="fam-001"),
+        ):
+            mock_client.return_value.link_token_create.side_effect = fake_link_token_create
+            body = LinkTokenRequest(platform=platform)
+            asyncio.run(create_link_token(body=body, current_user=user))
+
+    def test_mobile_platform_uses_mobile_redirect_uri(self):
+        from app.routers.plaid import PLAID_REDIRECT_URI_MOBILE
+
+        captured: dict = {}
+        self._call_create_link_token("mobile", captured)
+
+        req = captured["req"]
+        assert req.redirect_uri == PLAID_REDIRECT_URI_MOBILE
+        assert req.redirect_uri == "expenses://plaid-oauth"
+
+    def test_web_platform_uses_web_redirect_uri(self):
+        from app.routers.plaid import PLAID_REDIRECT_URI_WEB
+
+        captured: dict = {}
+        self._call_create_link_token("web", captured)
+
+        req = captured["req"]
+        assert req.redirect_uri == PLAID_REDIRECT_URI_WEB
+        assert req.redirect_uri == "https://ui.expense-tracker.blueelephants.org/plaid-oauth-return"
+
+    def test_default_platform_is_mobile(self):
+        """When no platform is specified the default should be mobile."""
+        from app.routers.plaid import PLAID_REDIRECT_URI_MOBILE, LinkTokenRequest
+
+        body = LinkTokenRequest()
+        assert body.platform == "mobile"
+
+        captured: dict = {}
+        self._call_create_link_token("mobile", captured)
+        assert captured["req"].redirect_uri == PLAID_REDIRECT_URI_MOBILE

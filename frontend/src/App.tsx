@@ -10,6 +10,7 @@ import Budgets from './pages/Budgets'
 import Settings from './pages/Settings'
 import Investments from './pages/Investments'
 import Chat from './pages/Chat'
+import PlaidOAuthReturn from './pages/PlaidOAuthReturn'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, user, family, setFamily, setFamilyMembers } = useAuthStore()
@@ -61,6 +62,10 @@ function App() {
         <Route path="investments" element={<Investments />} />
         <Route path="chat" element={<Chat />} />
       </Route>
+      {/* OAuth return route — must be outside ProtectedRoute so Plaid can redirect
+          here before the user's session is fully restored. PlaidOAuthReturn itself
+          reads from sessionStorage and navigates to /settings after exchange. */}
+      <Route path="/plaid-oauth-return" element={<PlaidOAuthReturn />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

@@ -1,10 +1,38 @@
 import { useEffect } from 'react'
-import { ActivityIndicator, View } from 'react-native'
+import { ActivityIndicator, Linking, View } from 'react-native'
 import { Stack, router } from 'expo-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { StatusBar } from 'expo-status-bar'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useAuthStore } from '@/store/auth'
+import { create, open } from 'react-native-plaid-link-sdk'
 import '../global.css'
+
+const PLAID_LINK_TOKEN_KEY = 'plaid_link_token'
+
+/**
+ * Resume a Plaid OAuth flow when the app is opened via the expenses://plaid-oauth deep link.
+ * The bank redirected to our backend relay, which forwarded here.
+ * We restore the saved link_token, re-create the Plaid session, and open it.
+ */
+async function handlePlaidOAuthDeepLink(url: string): Promise<void> {
+  if (!url.startsWith('expenses://plaid-oauth')) return
+  const token = await AsyncStorage.getItem(PLAID_LINK_TOKEN_KEY)
+  if (!token) return
+  create({ token })
+  open({
+    onSuccess: async (success: { publicToken: string }) => {
+      try {
+        await AsyncStorage.removeItem(PLAID_LINK_TOKEN_KEY)
+        const { plaidApi } = await import('@/services/api')
+        await plaidApi.exchangePublicToken(success.publicToken)
+      } catch {
+        // exchange error — user will see the connection as missing and can retry
+      }
+    },
+    onExit: () => {},
+  })
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,6 +49,19 @@ export default function RootLayout() {
   useEffect(() => {
     loadToken()
   }, [loadToken])
+
+  // Handle Plaid OAuth deep links (expenses://plaid-oauth?oauth_state_id=...)
+  useEffect(() => {
+    // App already open — foreground URL events
+    const sub = Linking.addEventListener('url', ({ url }) => {
+      void handlePlaidOAuthDeepLink(url)
+    })
+    // App launched cold from the deep link
+    Linking.getInitialURL().then((url) => {
+      if (url) void handlePlaidOAuthDeepLink(url)
+    })
+    return () => sub.remove()
+  }, [])
 
   // Route based on auth state once loadToken finishes. While it runs we
   // show a loading view so the user doesn't briefly see empty tab content.

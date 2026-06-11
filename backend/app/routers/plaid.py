@@ -51,6 +51,11 @@ settings = get_settings()
 
 WEBHOOK_URL = "https://api.expense-tracker.blueelephants.org/api/v1/plaid/webhook"
 
+# OAuth redirect URIs — both must be whitelisted in the Plaid dashboard under
+# Team -> API -> Allowed redirect URIs before they will be accepted.
+PLAID_REDIRECT_URI_WEB = "https://ui.expense-tracker.blueelephants.org/plaid-oauth-return"
+PLAID_REDIRECT_URI_MOBILE = "expenses://plaid-oauth"
+
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
@@ -59,6 +64,7 @@ WEBHOOK_URL = "https://api.expense-tracker.blueelephants.org/api/v1/plaid/webhoo
 class LinkTokenRequest(BaseModel):
     products: list[str] = ["transactions"]
     country_codes: list[str] = ["US"]
+    platform: str = "mobile"  # "web" | "mobile"
 
 
 class ExchangeRequest(BaseModel):
@@ -131,6 +137,45 @@ def _require_family_id(user: User) -> str:
 
 
 # ---------------------------------------------------------------------------
+# OAuth relay endpoint — no auth required
+# ---------------------------------------------------------------------------
+
+
+@router.get("/oauth")
+async def plaid_oauth_relay(request: Request):
+    """Relay endpoint that Plaid redirects to after OAuth bank login.
+
+    Plaid appends its own query params (oauth_state_id, etc.) to the redirect_uri
+    we supplied when creating the link token. We embedded ?client=web|mobile in
+    that URI so we know which final destination to forward to:
+      - client=web    -> frontend /plaid-oauth-return (SPA route)
+      - client=mobile -> expenses:// deep link
+
+    No authentication: this is called from the bank's domain with no user session.
+    """
+    from fastapi.responses import RedirectResponse
+
+    params = dict(request.query_params)
+    client = params.pop("client", "mobile")  # default to mobile if omitted
+
+    # Forward all remaining Plaid params (oauth_state_id, ...) to the final destination
+    from urllib.parse import urlencode
+    qs = urlencode(params) if params else ""
+
+    if client == "web":
+        target = f"{_WEB_OAUTH_RETURN}?{qs}" if qs else _WEB_OAUTH_RETURN
+    else:
+        target = f"{_MOBILE_OAUTH_RETURN}?{qs}" if qs else _MOBILE_OAUTH_RETURN
+
+    logger.info("plaid_oauth_relay client=%s -> %s", client, target)
+    return RedirectResponse(
+        url=target,
+        status_code=302,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Connection flow
 # ---------------------------------------------------------------------------
 
@@ -157,6 +202,8 @@ async def create_link_token(
     products = [product_map.get(p, Products(p)) for p in body.products]
     country_codes = [CountryCode(c) for c in body.country_codes]
 
+    redirect_uri = PLAID_REDIRECT_URI_WEB if body.platform == "web" else PLAID_REDIRECT_URI_MOBILE
+
     req = LinkTokenCreateRequest(
         user=LinkTokenCreateRequestUser(client_user_id=current_user.id),
         client_name="Family Expense Tracker",
@@ -164,6 +211,7 @@ async def create_link_token(
         country_codes=country_codes,
         language="en",
         webhook=WEBHOOK_URL,
+        redirect_uri=redirect_uri,
     )
     try:
         resp = client.link_token_create(req)

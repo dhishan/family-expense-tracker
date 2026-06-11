@@ -289,8 +289,10 @@ export interface HoldingGroup {
 
 // Plaid API
 export const plaidApi = {
-  createLinkToken: async (): Promise<{ link_token: string; expiration: string }> => {
-    const response = await api.post<{ link_token: string; expiration: string }>('/plaid/link-token')
+  createLinkToken: async (opts?: { platform?: 'web' | 'mobile' }): Promise<{ link_token: string; expiration: string }> => {
+    const response = await api.post<{ link_token: string; expiration: string }>('/plaid/link-token', {
+      platform: opts?.platform ?? 'web',
+    })
     return response.data
   },
 

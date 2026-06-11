@@ -13,10 +13,13 @@ import {
 import { router } from 'expo-router'
 import Constants from 'expo-constants'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useAuthStore } from '@/store/auth'
 import { authApi, plaidApi } from '@/services/api'
 import { create, open } from 'react-native-plaid-link-sdk'
 import type { PlaidItem } from '@/types'
+
+const PLAID_LINK_TOKEN_KEY = 'plaid_link_token'
 
 function formatTimeAgo(iso: string | null): string {
   if (!iso) return 'never'
@@ -188,11 +191,14 @@ export default function SettingsScreen() {
   const handleConnectBank = async () => {
     try {
       setConnectingBank(true)
-      const { link_token } = await plaidApi.createLinkToken()
+      const { link_token } = await plaidApi.createLinkToken({ platform: 'mobile' })
+      // Persist token so the OAuth resume handler can retrieve it after the deep link fires
+      await AsyncStorage.setItem(PLAID_LINK_TOKEN_KEY, link_token)
       create({ token: link_token })
       open({
         onSuccess: async (success: { publicToken: string }) => {
           try {
+            await AsyncStorage.removeItem(PLAID_LINK_TOKEN_KEY)
             await plaidApi.exchangePublicToken(success.publicToken)
             queryClient.invalidateQueries({ queryKey: ['plaid', 'items'] })
             queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
@@ -201,7 +207,7 @@ export default function SettingsScreen() {
           }
         },
         onExit: (_exit: unknown) => {
-          // user dismissed
+          // user dismissed — keep token in storage in case they resume via OAuth
         },
       })
     } catch {

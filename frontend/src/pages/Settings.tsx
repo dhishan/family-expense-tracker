@@ -123,7 +123,11 @@ function ConnectedAccounts() {
 
   const handleConnectBank = async () => {
     try {
-      const { link_token } = await plaidApi.createLinkToken()
+      const { link_token } = await plaidApi.createLinkToken({ platform: 'web' })
+      // Persist across the OAuth redirect — bank will bounce back to /plaid-oauth-return
+      if (user?.id) {
+        sessionStorage.setItem(`plaid_link_token_${user.id}`, link_token)
+      }
       setLinkToken(link_token)
     } catch {
       toast.error('Failed to start bank connection')
