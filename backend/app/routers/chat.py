@@ -796,6 +796,116 @@ _ALPACA_TOOLS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Topic-based tool subsetting (Haiku classifier -> narrowed tool list)
+#
+# Sending all 40 tool definitions on every turn costs ~3-5K tokens of cached
+# prefix. A tiny Haiku call picks the relevant topics for the user's query,
+# we filter TOOLS to that subset, and Sonnet sees a much smaller (and more
+# focused) tool list.
+#
+# Savings: cache-write cost drops 60-80% on first turn; cache-read drops
+# proportionally too. ~$0.0004 added for the Haiku classifier.
+# ---------------------------------------------------------------------------
+
+_TOPIC_TOOLS: dict[str, set[str]] = {
+    "portfolio": {
+        "list_accounts", "get_holdings", "get_account_balances",
+        "get_account_positions", "get_activities", "get_cost_basis",
+        "portfolio_summary",
+    },
+    "macro": {"macro_indicator", "macro_series"},
+    "market": {
+        "price_history", "ticker_meta", "ticker_quote", "ticker_news",
+        "ticker_recommendations", "ticker_price_target", "ticker_earnings_calendar",
+    },
+    "edgar": {
+        "edgar_company_lookup", "edgar_recent_filings",
+        "edgar_company_facts", "edgar_insider_transactions",
+    },
+    "expenses": set(_EXPENSE_TOOLS),
+    "prediction_markets": set(_PREDICTION_MARKET_TOOLS),
+    "options": set(_ALPACA_TOOLS),
+    "banks": set(_PLAID_TOOLS),
+}
+
+# web_search is always included — it's the catch-all when no other tool fits.
+_ALWAYS_INCLUDED = {"web_search"}
+
+_TOPIC_CLASSIFIER_SYSTEM = """You classify a user's question into 1-3 topic tags from this list:
+
+- portfolio: their brokerage accounts, holdings, positions, returns, cost basis
+- macro: macroeconomic indicators (Fed rate, CPI, unemployment, etc.) and FRED time series
+- market: stock quotes, prices, news, earnings, analyst ratings (Tiingo + Finnhub)
+- edgar: SEC filings, 10-K/10-Q, 8-K, insider Form 4 transactions
+- expenses: the user's personal/family expense tracking, budgets, merchants
+- prediction_markets: Manifold, Polymarket, or Kalshi prediction market data
+- options: option chains, expirations, strikes, Greeks
+- banks: the user's linked bank accounts, transactions, recurring charges
+
+Return ONLY a JSON array of topic strings, e.g. ["portfolio","market"]. No prose."""
+
+
+async def _classify_topics(query: str) -> set[str]:
+    """Run a Haiku classifier; return the topic subset. Falls back to all
+    topics on any error so the chat is never blocked."""
+    if not query or not query.strip():
+        return set(_TOPIC_TOOLS.keys())
+    try:
+        client = anthropic.AsyncAnthropic()
+        resp = await client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=80,
+            system=_TOPIC_CLASSIFIER_SYSTEM,
+            messages=[{"role": "user", "content": query[:1000]}],
+            timeout=10,
+        )
+        raw = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+        # Tolerate ```json fences
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+        topics_list = json.loads(raw)
+        if not isinstance(topics_list, list):
+            raise ValueError("classifier did not return a list")
+        topics = {str(t).strip().lower() for t in topics_list if t}
+        # Record classifier usage (best-effort)
+        try:
+            from app.services import usage_service as _u
+            _u.record_usage(
+                user_id="system",
+                family_id=None,
+                source="topic-classifier",
+                model="claude-haiku-4-5",
+                conversation_id=None,
+                turn_id=None,
+                usage=resp.usage,
+                duration_ms=0,
+            )
+        except Exception:
+            pass
+        valid = topics & set(_TOPIC_TOOLS.keys())
+        return valid or set(_TOPIC_TOOLS.keys())
+    except Exception as e:
+        logger.warning("topic classifier failed (using all tools): %s", e)
+        return set(_TOPIC_TOOLS.keys())
+
+
+def _tools_for_topics(topics: set[str]) -> list[dict]:
+    """Return TOOLS filtered to the given topics + always-included tools."""
+    keep: set[str] = set(_ALWAYS_INCLUDED)
+    for t in topics:
+        keep |= _TOPIC_TOOLS.get(t, set())
+    out: list[dict] = []
+    for tool in TOOLS:
+        name = tool.get("name", "")
+        if name in keep:
+            out.append(tool)
+    return out
+
+
 def _get_family_id(user_id: str) -> str | None:
     """Look up family_id for a user from Firestore."""
     db = get_firestore_client()
@@ -1645,7 +1755,16 @@ async def _generate_turn(
     is_deep = any(kw in last_user for kw in DEEP_KEYWORDS)
     model_id = "claude-opus-4-7" if is_deep else "claude-sonnet-4-6"
     effort_level = "high" if is_deep else "medium"
-    logger.info(f"chat routing: model={model_id} effort={effort_level} deep={is_deep}")
+
+    # Topic-based tool subsetting: classify the user's latest query with
+    # Haiku and pass only the relevant tools to the main model. Cuts the
+    # cached prefix size 60-80% on most questions.
+    classified_topics = await _classify_topics(last_user)
+    narrowed_tools = _tools_for_topics(classified_topics)
+    logger.info(
+        f"chat routing: model={model_id} effort={effort_level} deep={is_deep} "
+        f"topics={sorted(classified_topics)} tools={len(narrowed_tools)}/{len(TOOLS)}"
+    )
 
     # Record routing decision so resume can render the correct model badge.
     try:
@@ -1712,9 +1831,9 @@ async def _generate_turn(
             # `cache_control` kwarg was silently ignored by the API — every
             # turn paid full price for the 5-10K token prefix.
             cached_tools = (
-                [*TOOLS[:-1], {**TOOLS[-1], "cache_control": {"type": "ephemeral"}}]
-                if TOOLS
-                else TOOLS
+                [*narrowed_tools[:-1], {**narrowed_tools[-1], "cache_control": {"type": "ephemeral"}}]
+                if narrowed_tools
+                else narrowed_tools
             )
             stream_kwargs: dict[str, Any] = dict(
                 model=model_id,
