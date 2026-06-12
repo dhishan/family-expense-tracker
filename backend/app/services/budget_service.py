@@ -186,6 +186,14 @@ class BudgetService:
         period = BudgetPeriod(budget.period)
         period_start, period_end = self._get_period_dates(period, reference_date=reference_date)
 
+        # Normalize the budget's beneficiary before passing it down.
+        # A budget with beneficiary in {None, "", "family", "Family"} is
+        # family-wide and should count every member's spending, not filter
+        # for expenses whose beneficiary string literally equals "family".
+        bud_beneficiary = budget.beneficiary
+        if bud_beneficiary in (None, "", "family", "Family"):
+            bud_beneficiary = None
+
         # Get spending
         expense_service = get_expense_service()
         spent = await expense_service.get_spending_for_budget(
@@ -193,7 +201,7 @@ class BudgetService:
             start_date=period_start,
             end_date=period_end,
             category=budget.category,
-            beneficiary=budget.beneficiary,
+            beneficiary=bud_beneficiary,
             budget_id=budget.id,
         )
 
