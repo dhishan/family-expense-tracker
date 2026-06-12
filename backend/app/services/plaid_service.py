@@ -143,6 +143,58 @@ _ENV_MAP = {
 }
 
 
+# Aggregator merchants whose raw bank string is "<TAG> <RESTAURANT>".
+# Plaid's resolver picks the wrong half — it returns the restaurant name
+# (or a mangled slice of it) as merchant_name, dropping the aggregator.
+# That makes the user see "Theyellow" / "Habit" / "Nikkei" rather than
+# "DoorDash – Theyellow" etc. Normalizing here makes the inbox readable.
+_AGGREGATOR_PATTERNS: list[tuple[str, str]] = [
+    # (substring trigger inside name, pretty label)
+    ("DD *DOORDASH",   "DoorDash"),
+    ("DOORDASH*",      "DoorDash"),
+    ("UBER *EATS",     "Uber Eats"),
+    ("UBER EATS*",     "Uber Eats"),
+    ("UBER   *EATS",   "Uber Eats"),
+    ("GH*GRUBHUB",     "Grubhub"),
+    ("GRUBHUB*",       "Grubhub"),
+    ("POSTMATES*",     "Postmates"),
+    ("INSTACART*",     "Instacart"),
+    ("CAVIAR*",        "Caviar"),
+    ("UBER   *TRIP",   "Uber"),
+    ("UBER *TRIP",     "Uber"),
+    ("LYFT *RIDE",     "Lyft"),
+    ("PAYPAL *",       "PayPal"),
+    ("SQ *",           "Square"),
+    ("TST* ",          "Toast"),
+]
+
+
+def _normalize_merchant_name(merchant: str | None, raw_name: str | None) -> str | None:
+    """If the bank charge name matches a known aggregator (DoorDash, Uber Eats,
+    Grubhub, Square, Toast, PayPal, etc.), return "<Aggregator> – <merchant>"
+    so the inbox surfaces the real source of the charge instead of just a
+    mangled restaurant name.
+
+    Falls through to the original merchant when no aggregator pattern matches.
+    """
+    if not raw_name:
+        return merchant
+    upper_name = str(raw_name).upper()
+    for trigger, label in _AGGREGATOR_PATTERNS:
+        if trigger.upper() in upper_name:
+            # Already prefixed (idempotent — safe to call repeatedly)
+            if merchant and merchant.startswith(f"{label} – "):
+                return merchant
+            # Merchant is just the aggregator name itself (Plaid couldn't
+            # resolve the restaurant) — keep it as-is, don't "DoorDash – DoorDash"
+            if merchant and merchant.strip().lower() == label.strip().lower():
+                return label
+            if merchant:
+                return f"{label} – {merchant}"
+            return label
+    return merchant
+
+
 @lru_cache()
 def _client() -> plaid_api.PlaidApi:
     """Build and memoize a configured PlaidApi instance.
@@ -443,6 +495,8 @@ def _txn_to_doc(txn: Any, family_id: str, connected_by_user_id: str, plaid_item_
     if auth_date is not None and not isinstance(auth_date, str):
         auth_date = str(auth_date)
 
+    raw_merchant = _get(txn, "merchant_name")
+    raw_name = _get(txn, "name")
     return {
         "family_id": family_id,
         "connected_by_user_id": connected_by_user_id,
@@ -451,8 +505,8 @@ def _txn_to_doc(txn: Any, family_id: str, connected_by_user_id: str, plaid_item_
         "account_id": _get(txn, "account_id"),
         "account_name": account_name,
         "institution_name": institution_name,
-        "merchant_name": _get(txn, "merchant_name"),
-        "name": _get(txn, "name"),
+        "merchant_name": _normalize_merchant_name(raw_merchant, raw_name),
+        "name": raw_name,
         "amount": float(amount),
         "iso_currency_code": _get(txn, "iso_currency_code"),
         "date": txn_date,
