@@ -1706,15 +1706,26 @@ async def _generate_turn(
             in_text_block = False
             current_text_content: list[str] = []
 
+            # Prompt caching: attach cache_control to the LAST block of each
+            # cacheable section. Subsequent turns read the (system + tools)
+            # prefix at ~10% of normal input cost. The previous top-level
+            # `cache_control` kwarg was silently ignored by the API — every
+            # turn paid full price for the 5-10K token prefix.
+            cached_tools = (
+                [*TOOLS[:-1], {**TOOLS[-1], "cache_control": {"type": "ephemeral"}}]
+                if TOOLS
+                else TOOLS
+            )
             stream_kwargs: dict[str, Any] = dict(
                 model=model_id,
                 max_tokens=16000,
-                # Prompt caching: system + tools never change between turns
-                # of the agentic loop. Auto-caches the last cacheable block,
-                # so subsequent turns read the (system + tools) prefix at
-                # ~10% of normal input cost.
-                cache_control={"type": "ephemeral"},
-                system=[{"type": "text", "text": SYSTEM_PROMPT}],
+                system=[
+                    {
+                        "type": "text",
+                        "text": SYSTEM_PROMPT,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
                 thinking={"type": "adaptive"},
                 output_config={"effort": effort_level},
                 # Server-side context compaction (Anthropic beta). When the
@@ -1724,7 +1735,7 @@ async def _generate_turn(
                 # 4-5 tool-heavy turns blow past the 30K input TPM limit.
                 betas=["compact-2026-01-12"],
                 context_management={"edits": [{"type": "compact_20260112"}]},
-                tools=TOOLS,
+                tools=cached_tools,
                 messages=msgs,
             )
             if server_container_id:
