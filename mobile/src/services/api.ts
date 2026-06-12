@@ -178,6 +178,14 @@ export const budgetsApi = {
     const response = await api.get<BudgetStatus>(`/budgets/${budgetId}/status`)
     return response.data
   },
+
+  listTransactions: async (
+    budgetId: string,
+    scope: 'current' | 'all' = 'current',
+  ): Promise<{ expenses: Expense[]; total: number }> => {
+    const response = await api.get(`/budgets/${budgetId}/transactions`, { params: { scope } })
+    return response.data
+  },
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────

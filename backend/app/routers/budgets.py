@@ -109,6 +109,33 @@ async def get_budget_status(
     return status
 
 
+@router.get("/{budget_id}/transactions")
+async def list_budget_transactions(
+    budget_id: str,
+    scope: str = "current",  # "current" | "all"
+    current_user: User = Depends(get_current_user),
+):
+    """List all expenses that count toward this budget.
+
+    scope=current → only the current period (default)
+    scope=all     → since budget.start_date (for rollover-inclusive view)
+    """
+    if not current_user.family_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You must be part of a family to view budgets",
+        )
+    budget_service = get_budget_service()
+    items = await budget_service.list_expenses_for_budget(
+        budget_id=budget_id,
+        family_id=current_user.family_id,
+        scope=scope,
+    )
+    if items is None:
+        raise HTTPException(status_code=404, detail="Budget not found")
+    return {"expenses": items, "total": len(items)}
+
+
 @router.put("/{budget_id}", response_model=BudgetResponse)
 async def update_budget(
     budget_id: str,

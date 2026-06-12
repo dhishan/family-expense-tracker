@@ -17,6 +17,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { budgetsApi } from '@/services/api'
 import { useAuthStore } from '@/store/auth'
 import type {
+  Budget,
   BudgetCreate,
   BudgetStatus,
   BudgetPeriod,
@@ -347,6 +348,8 @@ const modalStyles = StyleSheet.create({
 export default function BudgetsScreen() {
   const [showModal, setShowModal] = useState(false)
   const [editingBudget, setEditingBudget] = useState<BudgetStatus | null>(null)
+  const [viewingTxBudget, setViewingTxBudget] = useState<Budget | null>(null)
+  const [txScope, setTxScope] = useState<'current' | 'all'>('current')
   const { user, familyMembers } = useAuthStore()
   const queryClient = useQueryClient()
 
@@ -430,7 +433,12 @@ export default function BudgetsScreen() {
             const pct = Math.min(item.percentage_used, 100)
             const over = item.is_over_budget
             return (
-              <View style={[styles.budgetCard, over && styles.budgetCardOver]}>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => setViewingTxBudget(item.budget)}
+                style={[styles.budgetCard, over && styles.budgetCardOver]}
+                testID={`budget-card-${item.budget.id}`}
+              >
                 <View style={styles.budgetTop}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.budgetName}>{item.budget.name}</Text>
@@ -441,7 +449,8 @@ export default function BudgetsScreen() {
                   </View>
                   <View style={styles.budgetActions}>
                     <TouchableOpacity
-                      onPress={() => {
+                      onPress={(e) => {
+                        e.stopPropagation?.()
                         setEditingBudget(item)
                         setShowModal(true)
                       }}
@@ -450,7 +459,10 @@ export default function BudgetsScreen() {
                       <Text style={styles.actionEdit}>Edit</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      onPress={() => handleDelete(item.budget.id)}
+                      onPress={(e) => {
+                        e.stopPropagation?.()
+                        handleDelete(item.budget.id)
+                      }}
                       style={styles.actionBtn}
                     >
                       <Text style={styles.actionDelete}>Del</Text>
@@ -486,7 +498,7 @@ export default function BudgetsScreen() {
                       : ''}
                   </Text>
                 </View>
-              </View>
+              </TouchableOpacity>
             )
           }}
         />
@@ -503,7 +515,97 @@ export default function BudgetsScreen() {
         isSaving={createMutation.isPending || updateMutation.isPending}
         familyMembers={familyMembers.map((m) => ({ id: m.id, display_name: m.display_name }))}
       />
+
+      <BudgetTxModal
+        budget={viewingTxBudget}
+        scope={txScope}
+        onScopeChange={setTxScope}
+        onClose={() => { setViewingTxBudget(null); setTxScope('current') }}
+      />
     </View>
+  )
+}
+
+interface BudgetTxModalProps {
+  budget: Budget | null
+  scope: 'current' | 'all'
+  onScopeChange: (s: 'current' | 'all') => void
+  onClose: () => void
+}
+
+function BudgetTxModal({ budget, scope, onScopeChange, onClose }: BudgetTxModalProps) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['budgets', 'transactions', budget?.id, scope],
+    queryFn: () => budgetsApi.listTransactions(budget!.id, scope),
+    enabled: !!budget,
+    staleTime: 30_000,
+  })
+  const total = (data?.expenses ?? []).reduce((s, e) => s + e.amount, 0)
+  return (
+    <Modal
+      visible={!!budget}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <View style={{ flex: 1, backgroundColor: '#fff' }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, paddingTop: 56, borderBottomWidth: 1, borderBottomColor: '#e5e7eb' }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 16, fontWeight: '600', color: '#111827' }}>{budget?.name ?? ''}</Text>
+            <Text style={{ fontSize: 12, color: '#6b7280', textTransform: 'capitalize' }}>
+              {budget?.period ?? ''} · transactions
+            </Text>
+          </View>
+          <TouchableOpacity onPress={onClose}>
+            <Text style={{ fontSize: 14, color: '#2563eb' }}>Close</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' }}>
+          <TouchableOpacity
+            onPress={() => onScopeChange('current')}
+            style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4, backgroundColor: scope === 'current' ? '#2563eb' : 'transparent' }}
+          >
+            <Text style={{ fontSize: 12, color: scope === 'current' ? '#fff' : '#6b7280' }}>This period</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => onScopeChange('all')}
+            style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4, backgroundColor: scope === 'all' ? '#2563eb' : 'transparent' }}
+          >
+            <Text style={{ fontSize: 12, color: scope === 'all' ? '#fff' : '#6b7280' }}>Since start</Text>
+          </TouchableOpacity>
+          <Text style={{ marginLeft: 'auto', fontSize: 12, color: '#6b7280' }}>
+            {data?.total ?? 0} txns · {fmtUSD(total)}
+          </Text>
+        </View>
+        {isLoading ? (
+          <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 40 }} />
+        ) : !data || data.expenses.length === 0 ? (
+          <Text style={{ textAlign: 'center', color: '#6b7280', marginTop: 40 }}>
+            No transactions for this budget yet.
+          </Text>
+        ) : (
+          <FlatList
+            data={data.expenses}
+            keyExtractor={(e) => e.id}
+            renderItem={({ item }) => (
+              <View style={{ paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f3f4f6', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <View style={{ flex: 1, marginRight: 12 }}>
+                  <Text style={{ fontSize: 14, color: '#111827' }} numberOfLines={1}>
+                    {item.merchant || item.description || item.category}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                    {item.date.slice(0, 10)}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#111827' }}>
+                  {fmtUSD(item.amount)}
+                </Text>
+              </View>
+            )}
+          />
+        )}
+      </View>
+    </Modal>
   )
 }
 

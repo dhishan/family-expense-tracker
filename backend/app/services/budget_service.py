@@ -288,6 +288,94 @@ class BudgetService:
         total_past_budget = budget.amount * periods_elapsed
         return max(0.0, total_past_budget - past_spent)
 
+    async def list_expenses_for_budget(
+        self,
+        budget_id: str,
+        family_id: str,
+        scope: str = "current",
+        reference_date: Optional[date] = None,
+    ) -> Optional[List[dict]]:
+        """All expenses that count toward this budget.
+
+        scope='current' → current period only (matches the budget card's spent number)
+        scope='all'     → since budget.start_date (the full rollover-inclusive view)
+        """
+        budget = await self.get(budget_id, family_id)
+        if not budget:
+            return None
+
+        if scope == "all":
+            start = budget.start_date
+            _, end = self._get_period_dates(BudgetPeriod(budget.period), reference_date=reference_date)
+        else:
+            start, end = self._get_period_dates(BudgetPeriod(budget.period), reference_date=reference_date)
+
+        bud_beneficiary = budget.beneficiary
+        if bud_beneficiary in (None, "", "family", "Family"):
+            bud_beneficiary = None
+
+        from datetime import datetime as _dt
+        start_dt = _dt.combine(start, _dt.min.time())
+        end_dt = _dt.combine(end, _dt.max.time())
+
+        # Mirror get_spending_for_budget's two-source union (pinned + category fallback)
+        # but return the actual docs rather than just summing amounts.
+        seen: set[str] = set()
+        items: list[dict] = []
+
+        # Pinned
+        try:
+            pinned_query = (
+                self.db.collection("expenses")
+                .where(filter=FieldFilter("family_id", "==", family_id))
+                .where(filter=FieldFilter("budget_id", "==", budget_id))
+                .where(filter=FieldFilter("date", ">=", start_dt))
+                .where(filter=FieldFilter("date", "<=", end_dt))
+            )
+            if bud_beneficiary:
+                pinned_query = pinned_query.where(filter=FieldFilter("beneficiary", "==", bud_beneficiary))
+            for doc in pinned_query.stream():
+                if doc.id in seen:
+                    continue
+                d = doc.to_dict() or {}
+                d["id"] = doc.id
+                items.append(d)
+                seen.add(doc.id)
+        except Exception:
+            pass
+
+        # Category fallback (unpinned only — pinned ones were captured above)
+        fallback_query = (
+            self.db.collection("expenses")
+            .where(filter=FieldFilter("family_id", "==", family_id))
+            .where(filter=FieldFilter("date", ">=", start_dt))
+            .where(filter=FieldFilter("date", "<=", end_dt))
+        )
+        if budget.category:
+            fallback_query = fallback_query.where(filter=FieldFilter("category", "==", budget.category))
+        if bud_beneficiary:
+            fallback_query = fallback_query.where(filter=FieldFilter("beneficiary", "==", bud_beneficiary))
+        for doc in fallback_query.stream():
+            d = doc.to_dict() or {}
+            if d.get("budget_id"):
+                continue  # pinned to some budget — only the pinned query above counts these
+            if doc.id in seen:
+                continue
+            d["id"] = doc.id
+            items.append(d)
+            seen.add(doc.id)
+
+        # Newest first; serialize datetimes as iso strings
+        def _ser(v):
+            if hasattr(v, "isoformat"):
+                return v.isoformat()
+            return v
+        items.sort(key=lambda x: x.get("date") or "", reverse=True)
+        for d in items:
+            for k in list(d.keys()):
+                d[k] = _ser(d[k])
+        return items
+
     async def list_with_status(self, family_id: str, reference_date: Optional[date] = None) -> List[BudgetStatus]:
         """List all budgets with their current status.
 

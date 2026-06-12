@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import toast from 'react-hot-toast'
+import { format } from 'date-fns'
 import { PlusIcon, PencilIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { budgetsApi } from '../services/api'
 import { useAuthStore } from '../store/auth'
@@ -20,6 +21,8 @@ interface BudgetFormData {
 export default function Budgets() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null)
+  const [viewingTxBudget, setViewingTxBudget] = useState<Budget | null>(null)
+  const [txScope, setTxScope] = useState<'current' | 'all'>('current')
 
   const { user, familyMembers, family } = useAuthStore()
   const queryClient = useQueryClient()
@@ -252,6 +255,14 @@ export default function Budgets() {
                   </p>
                 </div>
               )}
+
+              <button
+                type="button"
+                onClick={() => setViewingTxBudget(status.budget)}
+                className="mt-4 w-full text-sm text-primary-600 hover:text-primary-700 font-medium text-left"
+              >
+                View transactions →
+              </button>
             </div>
           ))}
         </div>
@@ -417,6 +428,89 @@ export default function Budgets() {
           </div>
         </div>
       )}
+
+      {viewingTxBudget && (
+        <BudgetTxModal
+          budget={viewingTxBudget}
+          scope={txScope}
+          onScopeChange={setTxScope}
+          onClose={() => { setViewingTxBudget(null); setTxScope('current') }}
+        />
+      )}
+    </div>
+  )
+}
+
+interface BudgetTxModalProps {
+  budget: Budget
+  scope: 'current' | 'all'
+  onScopeChange: (s: 'current' | 'all') => void
+  onClose: () => void
+}
+
+function BudgetTxModal({ budget, scope, onScopeChange, onClose }: BudgetTxModalProps) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['budgets', 'transactions', budget.id, scope],
+    queryFn: () => budgetsApi.listTransactions(budget.id, scope),
+    staleTime: 30_000,
+  })
+  const total = (data?.expenses ?? []).reduce((s, e) => s + e.amount, 0)
+  return (
+    <div className="fixed inset-0 z-50 flex" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      <div
+        className="relative ml-auto h-full w-full sm:w-[28rem] bg-white shadow-xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 shrink-0">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">{budget.name}</h2>
+            <p className="text-xs text-gray-500 capitalize">{budget.period} • transactions</p>
+          </div>
+          <button onClick={onClose} className="p-1 text-gray-500 hover:text-gray-700" aria-label="Close">
+            <XMarkIcon className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 text-xs">
+          <button
+            onClick={() => onScopeChange('current')}
+            className={`px-2 py-1 rounded ${scope === 'current' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+          >
+            This period
+          </button>
+          <button
+            onClick={() => onScopeChange('all')}
+            className={`px-2 py-1 rounded ${scope === 'all' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+          >
+            Since start
+          </button>
+          <div className="ml-auto text-gray-500">{data?.total ?? 0} txns · ${total.toFixed(2)}</div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {isLoading ? (
+            <div className="p-6 text-center text-sm text-gray-500">Loading…</div>
+          ) : !data || data.expenses.length === 0 ? (
+            <div className="p-6 text-center text-sm text-gray-500">No transactions for this budget yet.</div>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {data.expenses.map((e) => (
+                <li key={e.id} className="px-4 py-3 flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-gray-900 truncate">
+                      {e.merchant || e.description || CATEGORY_INFO[e.category as ExpenseCategory]?.label || e.category}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {format(new Date(e.date + 'T00:00:00'), 'MMM d')}
+                      {e.merchant && e.description ? ` · ${e.description}` : ''}
+                    </p>
+                  </div>
+                  <span className="text-sm font-medium text-gray-900 shrink-0">${e.amount.toFixed(2)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

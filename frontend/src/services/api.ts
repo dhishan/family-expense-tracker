@@ -204,6 +204,14 @@ export const budgetsApi = {
   delete: async (budgetId: string): Promise<void> => {
     await api.delete(`/budgets/${budgetId}`)
   },
+
+  listTransactions: async (
+    budgetId: string,
+    scope: 'current' | 'all' = 'current',
+  ): Promise<{ expenses: Expense[]; total: number }> => {
+    const response = await api.get(`/budgets/${budgetId}/transactions`, { params: { scope } })
+    return response.data
+  },
 }
 
 // Notifications API
