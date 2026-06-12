@@ -266,6 +266,29 @@ export interface PendingApproveSplit {
   tags?: string[]
 }
 
+// Merchant auto-rule types
+export interface MerchantRule {
+  id: string
+  merchant_name: string
+  category: string
+  budget_id: string | null
+  beneficiary: string
+  applied_count: number
+  last_applied_at: string | null
+  created_at: string
+}
+
+export interface MerchantRuleCreate {
+  merchant_name: string
+  category: string
+  budget_id?: string | null
+  beneficiary: string
+}
+
+export interface MerchantRulesResponse {
+  rules: MerchantRule[]
+}
+
 // Auth types
 export interface AuthResponse {
   access_token: string

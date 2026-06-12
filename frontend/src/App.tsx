@@ -11,6 +11,7 @@ import Settings from './pages/Settings'
 import Investments from './pages/Investments'
 import Chat from './pages/Chat'
 import PlaidOAuthReturn from './pages/PlaidOAuthReturn'
+import AutoRules from './pages/AutoRules'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, user, family, setFamily, setFamilyMembers } = useAuthStore()
@@ -59,6 +60,7 @@ function App() {
         <Route path="transactions" element={<Transactions />} />
         <Route path="budgets" element={<Budgets />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="settings/auto-rules" element={<AutoRules />} />
         <Route path="investments" element={<Investments />} />
         <Route path="chat" element={<Chat />} />
       </Route>

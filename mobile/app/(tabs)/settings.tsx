@@ -331,6 +331,20 @@ export default function SettingsScreen() {
         )}
       </View>
 
+      {/* Automation */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Automation</Text>
+        <TouchableOpacity
+          style={styles.linkRow}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          onPress={() => router.push('/auto-rules' as any)}
+          testID="auto-rules-link"
+        >
+          <Text style={styles.linkText}>Auto-Rules</Text>
+          <Text style={styles.linkArrow}>→</Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Links */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>More</Text>

@@ -24,6 +24,8 @@ import type {
   PendingListResponse,
   ApproveSplitPayload,
   ApproveSplitResponse,
+  MerchantRule,
+  MerchantRuleCreate,
 } from '../types'
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
@@ -489,6 +491,24 @@ export const plaidApi = {
       payload
     )
     return response.data
+  },
+}
+
+// ─── Merchant Auto-Rules ──────────────────────────────────────────────────────
+
+export const rulesApi = {
+  list: async (): Promise<MerchantRule[]> => {
+    const response = await api.get<{ rules: MerchantRule[] }>('/rules/merchant')
+    return response.data.rules
+  },
+
+  create: async (data: MerchantRuleCreate): Promise<MerchantRule> => {
+    const response = await api.post<MerchantRule>('/rules/merchant', data)
+    return response.data
+  },
+
+  delete: async (ruleId: string): Promise<void> => {
+    await api.delete(`/rules/merchant/${ruleId}`)
   },
 }
 

@@ -817,6 +817,26 @@ export default function Settings() {
         </div>
       )}
 
+      {/* Auto-rules link (only show if user is in a family) */}
+      {family && (
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Auto-categorization Rules</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Automatically categorize future transactions from known merchants.
+              </p>
+            </div>
+            <a
+              href="/settings/auto-rules"
+              className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 whitespace-nowrap"
+            >
+              Manage rules
+            </a>
+          </div>
+        </div>
+      )}
+
       {/* Connected Accounts (only show if user is in a family) */}
       {family && <ConnectedAccounts />}
 

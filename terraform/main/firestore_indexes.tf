@@ -370,3 +370,23 @@ resource "google_firestore_index" "notifications_user_unread" {
 
   depends_on = [google_firestore_database.database]
 }
+
+# merchant_rules: lookup / list by family, ordered by merchant name.
+# Required by rule_service.list_rules and rule_service.find_match.
+resource "google_firestore_index" "merchant_rules_family_merchant" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "merchant_rules"
+
+  fields {
+    field_path = "family_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "merchant_name"
+    order      = "ASCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}

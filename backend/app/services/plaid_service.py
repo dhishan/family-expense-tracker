@@ -659,6 +659,105 @@ def sync_transactions(plaid_item_id: str) -> dict[str, Any]:
             if existing:
                 # Already in our system — skip to avoid duplicates.
                 continue
+
+            # --- Merchant rule auto-apply (non-income only) ---
+            if not doc.get("is_income"):
+                try:
+                    from app.services import rule_service as _rule_svc
+                    from app.models.expense import ExpenseCreate, ExpenseCategory, PaymentMethod
+                    from app.services.expense_service import ExpenseService
+                    from app.models.user import User as _User
+                    from datetime import date as _date
+
+                    rule = _rule_svc.find_match(family_id, doc.get("merchant_name"))
+                    if rule:
+                        # Build a synthetic User for expense_service.create
+                        synthetic_user = _User(
+                            id=connected_by_user_id,
+                            email="",
+                            display_name="",
+                            family_id=family_id,
+                            created_at=datetime.now(timezone.utc),
+                            updated_at=datetime.now(timezone.utc),
+                        )
+                        raw_amount = doc.get("amount", 0.0)
+                        amount = abs(float(raw_amount))
+                        date_str = doc.get("date") or doc.get("authorized_date")
+                        try:
+                            txn_date = _date.fromisoformat(str(date_str)) if date_str else _date.today()
+                        except (ValueError, TypeError):
+                            txn_date = _date.today()
+                        try:
+                            category = ExpenseCategory(rule["category"])
+                        except ValueError:
+                            category = ExpenseCategory.OTHER
+
+                        expense_create = ExpenseCreate(
+                            amount=amount if amount > 0 else 0.01,
+                            currency=doc.get("iso_currency_code") or "USD",
+                            date=txn_date,
+                            description=(
+                                doc.get("merchant_name")
+                                or doc.get("name")
+                                or "Bank transaction"
+                            ),
+                            merchant=doc.get("merchant_name"),
+                            payment_method=PaymentMethod.CREDIT,
+                            category=category,
+                            beneficiary=rule.get("beneficiary") or connected_by_user_id,
+                            tags=[],
+                            budget_id=rule.get("budget_id"),
+                        )
+
+                        import asyncio, concurrent.futures
+                        svc = ExpenseService()
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                                    expense = ex.submit(asyncio.run, svc.create(expense_create, synthetic_user)).result()
+                            else:
+                                expense = asyncio.run(svc.create(expense_create, synthetic_user))
+                        except RuntimeError:
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                                expense = ex.submit(asyncio.run, svc.create(expense_create, synthetic_user)).result()
+
+                        # Write Plaid metadata onto the created expense
+                        try:
+                            db.collection("expenses").document(expense.id).update({
+                                "source": "plaid",
+                                "plaid_transaction_id": txn_id,
+                                "auto_rule_id": rule["id"],
+                            })
+                        except Exception:
+                            pass
+
+                        # Mark as a synthetic pending doc (approved=auto) for
+                        # _find_pending_by_plaid_txn_id dedup to work on future syncs.
+                        auto_doc = dict(doc)
+                        auto_doc["status"] = "approved"
+                        auto_doc["expense_id"] = expense.id
+                        auto_doc["auto_approved"] = True
+                        auto_doc["approved_at"] = _now()
+                        auto_doc["approved_by"] = connected_by_user_id
+                        new_ref = db.collection(PLAID_PENDING_COLLECTION).document()
+                        new_ref.set(auto_doc)
+                        # Record that the rule was applied
+                        _rule_svc.record_applied(rule["id"])
+
+                        added_count += 1
+                        logger.info(
+                            "sync_transactions: auto-applied rule %s for merchant=%s txn=%s expense=%s",
+                            rule["id"], doc.get("merchant_name"), txn_id, expense.id,
+                        )
+                        continue  # skip creating a pending row
+                except Exception as rule_exc:
+                    # Rule failure is non-fatal — fall through to normal pending row
+                    logger.warning(
+                        "sync_transactions: rule apply failed for txn=%s (falling back to pending): %s",
+                        txn_id, rule_exc,
+                    )
+
             new_ref = db.collection(PLAID_PENDING_COLLECTION).document()
             new_ref.set(doc)
             new_pending_rows.append({"firestore_id": new_ref.id, "txn_doc": doc})

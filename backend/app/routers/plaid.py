@@ -96,6 +96,7 @@ class ApproveRequest(BaseModel):
     tags: Optional[list[str]] = None
     is_income_override: bool = False     # True when user explicitly approves an income row
     budget_id: Optional[str] = None     # Explicitly pin this expense to a budget
+    save_as_rule: bool = False           # If True, save a merchant rule after approving
 
 
 # ---------------------------------------------------------------------------
@@ -745,6 +746,7 @@ async def _approve_pending(
     override_tags: list[str] | None = None,
     is_income_override: bool = False,
     override_budget_id: str | None = None,
+    save_as_rule: bool = False,
 ) -> dict:
     """Shared logic for approve and save-uncategorized."""
     if not current_user.family_id:
@@ -844,6 +846,27 @@ async def _approve_pending(
     except Exception:
         logger.warning("Could not write plaid metadata onto expense %s", expense.id)
 
+    # Optionally save a merchant rule for future auto-categorisation
+    if save_as_rule and not is_income_override:
+        merchant_for_rule = (
+            override_merchant
+            if override_merchant is not None
+            else pending.get("merchant_name")
+        )
+        if merchant_for_rule:
+            try:
+                from app.services import rule_service as _rule_svc
+                _rule_svc.create(
+                    family_id=current_user.family_id,
+                    user_id=current_user.id,
+                    merchant_name=merchant_for_rule,
+                    category=category.value,
+                    budget_id=override_budget_id or None,
+                    beneficiary=beneficiary if beneficiary != current_user.id else None,
+                )
+            except Exception:
+                logger.warning("Could not save merchant rule for %s", merchant_for_rule)
+
     # Mark pending as approved (record who approved it for audit)
     plaid_service.update_pending_status(
         pending_id,
@@ -875,6 +898,7 @@ async def approve_pending(
         override_tags=body.tags,
         is_income_override=body.is_income_override,
         override_budget_id=body.budget_id,
+        save_as_rule=body.save_as_rule,
     )
 
 

@@ -322,6 +322,26 @@ export interface ApproveSplitResponse {
   pending_id: string
 }
 
+// Merchant auto-rules — mirrored from frontend/src/types/index.ts
+export interface MerchantRule {
+  id: string
+  family_id: string
+  merchant: string
+  category: ExpenseCategory
+  budget_id: string | null
+  beneficiary: string | null
+  applied_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface MerchantRuleCreate {
+  merchant: string
+  category: ExpenseCategory
+  budget_id?: string | null
+  beneficiary?: string | null
+}
+
 // Category display info
 export const CATEGORY_INFO: Record<
   ExpenseCategory,

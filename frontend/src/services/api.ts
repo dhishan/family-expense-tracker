@@ -20,6 +20,9 @@ import type {
   PlaidItemsResponse,
   PendingListResponse,
   PendingApproveSplit,
+  MerchantRule,
+  MerchantRuleCreate,
+  MerchantRulesResponse,
 } from '../types'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -369,6 +372,23 @@ export const plaidApi = {
   approveSplit: async (id: string, payload: PendingApproveSplit): Promise<{ expense_ids: string[]; pending_id: string }> => {
     const response = await api.post<{ expense_ids: string[]; pending_id: string }>(`/plaid/pending/${id}/approve-split`, payload)
     return response.data
+  },
+}
+
+// Rules API
+export const rulesApi = {
+  list: async (): Promise<MerchantRulesResponse> => {
+    const response = await api.get<MerchantRulesResponse>('/rules/merchant')
+    return response.data
+  },
+
+  create: async (rule: MerchantRuleCreate): Promise<MerchantRule> => {
+    const response = await api.post<MerchantRule>('/rules/merchant', rule)
+    return response.data
+  },
+
+  delete: async (id: string): Promise<void> => {
+    await api.delete(`/rules/merchant/${id}`)
   },
 }
 
