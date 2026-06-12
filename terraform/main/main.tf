@@ -736,7 +736,11 @@ resource "google_cloud_run_service" "backend" {
         # disconnect-survival behavior the mobile app needs.
         "autoscaling.knative.dev/minScale"        = "1"
         "autoscaling.knative.dev/maxScale"        = "10"
-        "run.googleapis.com/cpu-throttling"       = "false"
+        # 2026-06-12: flipped to true to cut cost (~$50/mo always-allocated
+        # vs ~$6-9/mo throttled). Trade-off accepted: background chat
+        # generation throttles when no request is in flight (app backgrounded
+        # mid-turn); the durable-turn store makes this recoverable on reopen.
+        "run.googleapis.com/cpu-throttling"       = "true"
         # Force a new revision on every TF apply so :latest image is re-pulled.
         "client.knative.dev/user-image-sha" = "deployed-${formatdate("YYYYMMDDhhmm", timestamp())}"
       }
