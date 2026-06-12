@@ -674,8 +674,8 @@ def sync_transactions(plaid_item_id: str) -> dict[str, Any]:
                         # Build a synthetic User for expense_service.create
                         synthetic_user = _User(
                             id=connected_by_user_id,
-                            email="",
-                            display_name="",
+                            email="auto-rule@plaid.internal",
+                            display_name="Auto Rule",
                             family_id=family_id,
                             created_at=datetime.now(timezone.utc),
                             updated_at=datetime.now(timezone.utc),
