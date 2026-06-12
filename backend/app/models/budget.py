@@ -19,6 +19,7 @@ class BudgetBase(BaseModel):
     period: BudgetPeriod = BudgetPeriod.MONTHLY
     category: Optional[str] = Field(None, description="Category to track, null for all")
     beneficiary: Optional[str] = Field(None, description="User ID, 'family', or null for all")
+    rollover_enabled: bool = Field(True, description="Carry unused budget forward to the next period (uncapped, cumulative)")
 
 
 class BudgetCreate(BudgetBase):
@@ -33,6 +34,7 @@ class BudgetUpdate(BaseModel):
     period: Optional[BudgetPeriod] = None
     category: Optional[str] = None
     beneficiary: Optional[str] = None
+    rollover_enabled: Optional[bool] = None
 
 
 class Budget(BudgetBase):
@@ -57,6 +59,7 @@ class BudgetResponse(BaseModel):
     period: str
     category: Optional[str]
     beneficiary: Optional[str]
+    rollover_enabled: bool = True
     start_date: date
     created_by: str
     created_at: datetime
@@ -66,12 +69,14 @@ class BudgetResponse(BaseModel):
 class BudgetStatus(BaseModel):
     """Budget status with spending info."""
     budget: BudgetResponse
-    spent: float
-    remaining: float
-    percentage_used: float
-    is_over_budget: bool
+    spent: float                                    # spent in the current period
+    remaining: float                                # effective_amount - spent (can be negative if over)
+    percentage_used: float                          # spent / effective_amount
+    is_over_budget: bool                            # spent > effective_amount
     period_start: date
     period_end: date
+    rollover_amount: float = 0.0                    # carry-over from prior periods (0 when disabled)
+    effective_amount: float = 0.0                   # budget.amount + rollover_amount
 
 
 class BudgetListResponse(BaseModel):

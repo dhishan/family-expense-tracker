@@ -14,6 +14,7 @@ interface BudgetFormData {
   period: BudgetPeriod
   category: string
   beneficiary: string
+  rollover_enabled: boolean
 }
 
 export default function Budgets() {
@@ -70,6 +71,7 @@ export default function Budgets() {
       period: 'monthly',
       category: '',
       beneficiary: '',
+      rollover_enabled: true,
     },
   })
 
@@ -80,6 +82,7 @@ export default function Budgets() {
       period: formData.period,
       category: formData.category || undefined,
       beneficiary: formData.beneficiary || undefined,
+      rollover_enabled: formData.rollover_enabled,
     }
 
     if (editingBudget) {
@@ -97,6 +100,7 @@ export default function Budgets() {
       period: budget.period,
       category: budget.category || '',
       beneficiary: budget.beneficiary || '',
+      rollover_enabled: budget.rollover_enabled ?? true,
     })
   }
 
@@ -108,6 +112,7 @@ export default function Budgets() {
       period: 'monthly',
       category: '',
       beneficiary: '',
+      rollover_enabled: true,
     })
     setShowAddModal(true)
   }
@@ -194,7 +199,12 @@ export default function Budgets() {
                     ${status.spent.toFixed(2)} spent
                   </span>
                   <span className="font-medium text-gray-900">
-                    ${status.budget.amount.toFixed(2)}
+                    ${(status.effective_amount ?? status.budget.amount).toFixed(2)}
+                    {status.rollover_amount && status.rollover_amount > 0 ? (
+                      <span className="ml-1 text-emerald-600 text-xs font-normal">
+                        (+${status.rollover_amount.toFixed(2)} rolled over)
+                      </span>
+                    ) : null}
                   </span>
                 </div>
                 <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
@@ -362,6 +372,22 @@ export default function Budgets() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    {...register('rollover_enabled')}
+                    className="mt-0.5 h-4 w-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                  />
+                  <span className="text-sm">
+                    <span className="font-medium text-gray-700">Roll over unused budget</span>
+                    <span className="block text-xs text-gray-500">
+                      Anything you don't spend this period carries forward and increases next period's limit. Cumulative, no cap.
+                    </span>
+                  </span>
+                </label>
               </div>
 
               <div className="flex gap-3 pt-4">

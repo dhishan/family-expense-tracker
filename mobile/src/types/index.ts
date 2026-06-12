@@ -125,6 +125,7 @@ export interface Budget {
   period: BudgetPeriod
   category: string | null
   beneficiary: string | null
+  rollover_enabled?: boolean
   start_date: string
   created_by: string
   created_at: string
@@ -137,6 +138,7 @@ export interface BudgetCreate {
   period: BudgetPeriod
   category?: string
   beneficiary?: string
+  rollover_enabled?: boolean
   start_date?: string
 }
 
@@ -146,6 +148,7 @@ export interface BudgetUpdate {
   period?: BudgetPeriod
   category?: string
   beneficiary?: string
+  rollover_enabled?: boolean
 }
 
 export interface BudgetStatus {
@@ -156,6 +159,8 @@ export interface BudgetStatus {
   is_over_budget: boolean
   period_start: string
   period_end: string
+  rollover_amount?: number
+  effective_amount?: number
 }
 
 export interface BudgetListResponse {

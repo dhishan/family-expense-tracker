@@ -47,10 +47,11 @@ interface BudgetFormData {
   period: BudgetPeriod
   category: string
   beneficiary: string
+  rollover_enabled: boolean
 }
 
 function defaultForm(): BudgetFormData {
-  return { name: '', amount: '', period: 'monthly', category: '', beneficiary: '' }
+  return { name: '', amount: '', period: 'monthly', category: '', beneficiary: '', rollover_enabled: true }
 }
 
 interface BudgetModalProps {
@@ -78,6 +79,7 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
         period: editing.budget.period,
         category: editing.budget.category ?? '',
         beneficiary: editing.budget.beneficiary ?? '',
+        rollover_enabled: editing.budget.rollover_enabled ?? true,
       })
     } else {
       setForm(defaultForm())
@@ -103,6 +105,7 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
       period: form.period,
       category: form.category.trim() || undefined,
       beneficiary: form.beneficiary.trim() || undefined,
+      rollover_enabled: form.rollover_enabled,
     })
   }
 
@@ -258,6 +261,30 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+            </View>
+
+            <View style={{ marginBottom: 16 }}>
+              <TouchableOpacity
+                onPress={() => setForm((prev) => ({ ...prev, rollover_enabled: !prev.rollover_enabled }))}
+                style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}
+              >
+                <View
+                  style={{
+                    width: 22, height: 22, borderRadius: 4, borderWidth: 1,
+                    borderColor: form.rollover_enabled ? '#2563eb' : '#d1d5db',
+                    backgroundColor: form.rollover_enabled ? '#2563eb' : '#fff',
+                    alignItems: 'center', justifyContent: 'center', marginTop: 2,
+                  }}
+                >
+                  {form.rollover_enabled && <Text style={{ color: '#fff', fontWeight: '700' }}>✓</Text>}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#374151' }}>Roll over unused budget</Text>
+                  <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                    Anything unspent carries forward, cumulative, no cap.
+                  </Text>
+                </View>
+              </TouchableOpacity>
             </View>
           </ScrollView>
         </View>
@@ -452,7 +479,12 @@ export default function BudgetsScreen() {
                       ? `${fmtUSD(Math.abs(item.remaining))} over`
                       : `${fmtUSD(item.remaining)} left`}
                   </Text>
-                  <Text style={styles.budgetTotal}>{fmtUSD(item.budget.amount)} total</Text>
+                  <Text style={styles.budgetTotal}>
+                    {fmtUSD(item.effective_amount ?? item.budget.amount)} total
+                    {item.rollover_amount && item.rollover_amount > 0
+                      ? `  (+${fmtUSD(item.rollover_amount)} rolled over)`
+                      : ''}
+                  </Text>
                 </View>
               </View>
             )

@@ -246,7 +246,10 @@ export default function Dashboard() {
                       : (summary?.total_amount ?? 0))
                   : null
 
-                const displayLimit = budgetView === 'monthly' ? monthlyLimit : status.budget.amount
+                const rolloverAmt = status.rollover_amount ?? 0
+                const effectiveAmt = status.effective_amount ?? status.budget.amount
+                const periodLimit = effectiveAmt  // includes any rollover
+                const displayLimit = budgetView === 'monthly' ? monthlyLimit : periodLimit
                 const displaySpent = budgetView === 'monthly' ? (monthlySpent ?? 0) : status.spent
                 const displayPct = displayLimit > 0 ? (displaySpent / displayLimit) * 100 : 0
                 const isOver = displaySpent > displayLimit
@@ -279,6 +282,11 @@ export default function Dashboard() {
                       </div>
                       <span className={isOver ? 'text-red-600' : 'text-gray-600'}>
                         ${displaySpent.toFixed(2)} / ${displayLimit.toFixed(2)}
+                        {budgetView === 'period' && rolloverAmt > 0 && (
+                          <span className="text-emerald-600 ml-1">
+                            (+${rolloverAmt.toFixed(2)} rolled over)
+                          </span>
+                        )}
                       </span>
                     </div>
                     <div className="h-2 bg-gray-100 rounded-full overflow-hidden">

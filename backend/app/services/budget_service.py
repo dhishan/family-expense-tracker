@@ -194,7 +194,7 @@ class BudgetService:
         if bud_beneficiary in (None, "", "family", "Family"):
             bud_beneficiary = None
 
-        # Get spending
+        # Get spending in the current period
         expense_service = get_expense_service()
         spent = await expense_service.get_spending_for_budget(
             family_id=family_id,
@@ -205,18 +205,86 @@ class BudgetService:
             budget_id=budget.id,
         )
 
-        remaining = budget.amount - spent
-        percentage_used = (spent / budget.amount * 100) if budget.amount > 0 else 0
+        # Compute cumulative rollover from prior periods (when enabled).
+        rollover_amount = await self._compute_rollover(
+            budget=budget,
+            current_period_start=period_start,
+            family_id=family_id,
+            bud_beneficiary=bud_beneficiary,
+        )
+
+        effective_amount = budget.amount + rollover_amount
+        remaining = effective_amount - spent
+        percentage_used = (spent / effective_amount * 100) if effective_amount > 0 else 0
 
         return BudgetStatus(
             budget=budget,
             spent=spent,
             remaining=remaining,
             percentage_used=round(percentage_used, 2),
-            is_over_budget=spent > budget.amount,
+            is_over_budget=spent > effective_amount,
             period_start=period_start,
             period_end=period_end,
+            rollover_amount=round(rollover_amount, 2),
+            effective_amount=round(effective_amount, 2),
         )
+
+    def _count_periods(self, period: BudgetPeriod, start: date, current_period_start: date) -> int:
+        """Count complete elapsed periods between budget.start_date and the
+        current period's start. Returns 0 if start_date is after current."""
+        if current_period_start <= start:
+            return 0
+        if period == BudgetPeriod.WEEKLY:
+            return max(0, (current_period_start - start).days // 7)
+        elif period == BudgetPeriod.YEARLY:
+            return max(0, current_period_start.year - start.year)
+        else:  # MONTHLY
+            return max(0, (current_period_start.year - start.year) * 12 + (current_period_start.month - start.month))
+
+    async def _compute_rollover(
+        self,
+        *,
+        budget,
+        current_period_start: date,
+        family_id: str,
+        bud_beneficiary: Optional[str],
+    ) -> float:
+        """Cumulative uncapped rollover: unused budget from all prior periods
+        since budget.start_date carries forward.
+
+        Implementation note: we compute it as
+            total_past_budget = budget.amount * periods_elapsed
+            past_spent        = single Firestore range query
+            rollover          = max(0, total_past_budget - past_spent)
+
+        This is a single Firestore read regardless of how many periods have
+        elapsed. Tradeoff: a "$150 over in week 3, $0 spent in weeks 4-10"
+        pattern shows up as one combined deficit/surplus rather than per-week
+        crediting back the overspend. For v1 this is acceptable; we can move
+        to per-period bucketing later if anyone complains.
+        """
+        if not getattr(budget, "rollover_enabled", True):
+            return 0.0
+        periods_elapsed = self._count_periods(
+            BudgetPeriod(budget.period), budget.start_date, current_period_start
+        )
+        if periods_elapsed <= 0:
+            return 0.0
+
+        from datetime import timedelta as _td
+        past_end = current_period_start - _td(days=1)
+
+        expense_service = get_expense_service()
+        past_spent = await expense_service.get_spending_for_budget(
+            family_id=family_id,
+            start_date=budget.start_date,
+            end_date=past_end,
+            category=budget.category,
+            beneficiary=bud_beneficiary,
+            budget_id=budget.id,
+        )
+        total_past_budget = budget.amount * periods_elapsed
+        return max(0.0, total_past_budget - past_spent)
 
     async def list_with_status(self, family_id: str, reference_date: Optional[date] = None) -> List[BudgetStatus]:
         """List all budgets with their current status."""
