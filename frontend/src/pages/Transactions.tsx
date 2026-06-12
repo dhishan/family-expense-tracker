@@ -169,6 +169,7 @@ export default function Transactions() {
   const [approveBudgetId, setApproveBudgetId] = useState<string | undefined>(undefined)
   const [splitMode, setSplitMode] = useState(false)
   const [splits, setSplits] = useState<SplitRow[]>([])
+  const [splitUnit, setSplitUnit] = useState<'$' | '%'>('$')
 
   // Discard undo buffer: map id -> { tx, timerId }
   const discardBuffer = useRef<Map<string, { tx: PendingTransaction; timerId: ReturnType<typeof setTimeout> }>>(new Map())
@@ -451,11 +452,22 @@ export default function Transactions() {
     const tagsArr = data.tags
       ? data.tags.split(',').map((t) => t.trim()).filter(Boolean)
       : []
+    // In % mode, the row's `amount` holds a percent (0-100); convert to dollars
+    // using the transaction total. In $ mode, it already holds dollars.
+    const toDollars = (raw: string): number => {
+      const n = parseFloat(raw) || 0
+      return splitUnit === '%' ? (n / 100) * splitTotalAmount : n
+    }
+    // Round each split to cents; allocate any rounding remainder to the last row.
+    const rawDollars = splits.map((r) => toDollars(r.amount))
+    const rounded = rawDollars.map((v) => Math.round(v * 100) / 100)
+    const remainder = Math.round((splitTotalAmount - rounded.reduce((s, v) => s + v, 0)) * 100) / 100
+    if (rounded.length > 0) rounded[rounded.length - 1] = Math.round((rounded[rounded.length - 1] + remainder) * 100) / 100
     approveSplitMutation.mutate({
       id: approvingTx.id,
       payload: {
-        splits: splits.map((r) => ({
-          amount: parseFloat(r.amount),
+        splits: splits.map((r, i) => ({
+          amount: rounded[i],
           category: r.category,
           budget_id: r.budget_id || null,
           beneficiary: r.beneficiary,
@@ -470,13 +482,15 @@ export default function Transactions() {
   }
 
   // Helpers for split mode
-  const allocatedTotal = splits.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0)
   const splitTotalAmount = (() => {
     const v = parseFloat(String(watchApprove('amount')))
     return isNaN(v) ? Math.abs(approvingTx?.amount ?? 0) : v
   })()
+  const allocatedTotal = splits.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0)
+  // In % mode, allocations sum to 100; in $ mode, to splitTotalAmount.
+  const allocationTarget = splitUnit === '%' ? 100 : splitTotalAmount
   const splitAllocationOk =
-    Math.abs(allocatedTotal - splitTotalAmount) < 0.01 &&
+    Math.abs(allocatedTotal - allocationTarget) < 0.01 &&
     splits.length > 0 &&
     splits.every((r) => parseFloat(r.amount) > 0)
 
@@ -490,7 +504,7 @@ export default function Transactions() {
 
   const addSplitRow = () => {
     const prev = splits[splits.length - 1]
-    const remaining = Math.max(0, splitTotalAmount - allocatedTotal)
+    const remaining = Math.max(0, allocationTarget - allocatedTotal)
     setSplits((s) => [
       ...s,
       {
@@ -500,6 +514,23 @@ export default function Transactions() {
         beneficiary: prev?.beneficiary ?? getValuesApprove('beneficiary'),
       },
     ])
+  }
+
+  const toggleSplitUnit = (next: '$' | '%') => {
+    if (next === splitUnit) return
+    if (splitTotalAmount > 0) {
+      setSplits((prev) =>
+        prev.map((r) => {
+          const v = parseFloat(r.amount) || 0
+          if (next === '%') {
+            return { ...r, amount: ((v / splitTotalAmount) * 100).toFixed(2) }
+          } else {
+            return { ...r, amount: ((v / 100) * splitTotalAmount).toFixed(2) }
+          }
+        })
+      )
+    }
+    setSplitUnit(next)
   }
 
   const enterSplitMode = () => {
@@ -1055,19 +1086,24 @@ export default function Transactions() {
                 </datalist>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Payment method</label>
-                <select
-                  {...registerApprove('payment_method')}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                >
-                  {(Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[]).map((pm) => (
-                    <option key={pm} value={pm}>
-                      {PAYMENT_METHOD_LABELS[pm]}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <details className="group">
+                <summary className="cursor-pointer text-sm text-gray-500 hover:text-gray-700 select-none">
+                  Advanced
+                </summary>
+                <div className="mt-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Payment method</label>
+                  <select
+                    {...registerApprove('payment_method')}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  >
+                    {(Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[]).map((pm) => (
+                      <option key={pm} value={pm}>
+                        {PAYMENT_METHOD_LABELS[pm]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </details>
 
               {!splitMode && (
                 <div>
@@ -1152,23 +1188,43 @@ export default function Transactions() {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-gray-700">Splits</span>
-                    <button
-                      type="button"
-                      onClick={exitSplitMode}
-                      className="text-xs text-primary-600 hover:text-primary-700 underline"
-                    >
-                      Use a single budget
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <div className="inline-flex rounded-md border border-gray-300 overflow-hidden text-xs">
+                        <button
+                          type="button"
+                          onClick={() => toggleSplitUnit('$')}
+                          className={`px-2 py-0.5 ${splitUnit === '$' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600'}`}
+                        >
+                          $ Amount
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleSplitUnit('%')}
+                          className={`px-2 py-0.5 ${splitUnit === '%' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600'}`}
+                        >
+                          % Percent
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={exitSplitMode}
+                        className="text-xs text-primary-600 hover:text-primary-700 underline"
+                      >
+                        Use a single budget
+                      </button>
+                    </div>
                   </div>
 
                   <div className="space-y-2">
                     {splits.map((row, idx) => (
                       <div key={idx} className="border border-gray-200 rounded-lg p-3 space-y-2 bg-gray-50">
                         <div className="flex items-center gap-2">
-                          <div className="w-28 shrink-0">
-                            <label className="block text-xs text-gray-500 mb-0.5">Amount</label>
+                          <div className="w-32 shrink-0">
+                            <label className="block text-xs text-gray-500 mb-0.5">
+                              {splitUnit === '%' ? 'Percent' : 'Amount'}
+                            </label>
                             <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden bg-white">
-                              <span className="px-2 text-gray-500 text-sm">$</span>
+                              {splitUnit === '$' && <span className="px-2 text-gray-500 text-sm">$</span>}
                               <input
                                 type="number"
                                 step="0.01"
@@ -1178,7 +1234,13 @@ export default function Transactions() {
                                 className="flex-1 py-1.5 pr-2 text-sm focus:outline-none w-16"
                                 placeholder="0.00"
                               />
+                              {splitUnit === '%' && <span className="px-2 text-gray-500 text-sm">%</span>}
                             </div>
+                            {splitUnit === '%' && splitTotalAmount > 0 && (
+                              <p className="text-[10px] text-gray-500 mt-0.5">
+                                ≈ ${(((parseFloat(row.amount) || 0) / 100) * splitTotalAmount).toFixed(2)}
+                              </p>
+                            )}
                           </div>
                           <div className="flex-1 min-w-0">
                             <label className="block text-xs text-gray-500 mb-0.5">Budget</label>
@@ -1259,7 +1321,9 @@ export default function Transactions() {
 
                   {/* Allocated indicator */}
                   <div className={`flex items-center gap-1 text-sm font-medium ${splitAllocationOk ? 'text-green-600' : 'text-red-600'}`}>
-                    Allocated: ${allocatedTotal.toFixed(2)} / ${splitTotalAmount.toFixed(2)}
+                    {splitUnit === '%'
+                      ? `Allocated: ${allocatedTotal.toFixed(2)}% / 100.00%`
+                      : `Allocated: $${allocatedTotal.toFixed(2)} / $${splitTotalAmount.toFixed(2)}`}
                     {splitAllocationOk && ' ✓'}
                   </div>
                 </div>

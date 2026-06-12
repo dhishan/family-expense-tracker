@@ -359,9 +359,11 @@ function ApproveModal({
   const [budgetId, setBudgetId] = useState<string | null>(null)
   // Track if the user manually changed category so budget auto-fill doesn't fight them
   const [categoryManuallySet, setCategoryManuallySet] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   // Split mode
   const [splitMode, setSplitMode] = useState(false)
   const [splits, setSplits] = useState<SplitRow[]>([])
+  const [splitUnit, setSplitUnit] = useState<'$' | '%'>('$')
   const splitKeyRef = useRef(0)
 
   const { data: budgetsData } = useQuery({
@@ -495,17 +497,31 @@ function ApproveModal({
       return
     }
     const allocated = splits.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
-    if (Math.abs(allocated - totalAmt) > 0.01) {
+    const target = splitUnit === '%' ? 100 : totalAmt
+    if (Math.abs(allocated - target) > 0.01) {
       Alert.alert(
         'Validation',
-        `Allocated ${fmtUSD(allocated)} doesn't match total ${fmtUSD(totalAmt)}.`
+        splitUnit === '%'
+          ? `Allocated ${allocated.toFixed(2)}% must equal 100%.`
+          : `Allocated ${fmtUSD(allocated)} doesn't match total ${fmtUSD(totalAmt)}.`
       )
       return
     }
+    // Convert % rows to $ at submit; allocate any rounding remainder to the last row.
+    const toDollars = (raw: string): number => {
+      const n = parseFloat(raw) || 0
+      return splitUnit === '%' ? (n / 100) * totalAmt : n
+    }
+    const rawDollars = splits.map((r) => toDollars(r.amount))
+    const rounded = rawDollars.map((v) => Math.round(v * 100) / 100)
+    const remainder = Math.round((totalAmt - rounded.reduce((s, v) => s + v, 0)) * 100) / 100
+    if (rounded.length > 0) {
+      rounded[rounded.length - 1] = Math.round((rounded[rounded.length - 1] + remainder) * 100) / 100
+    }
     const tagsArr = tags.split(',').map((t) => t.trim()).filter(Boolean)
     onApproveSplit?.({
-      splits: splits.map((r) => ({
-        amount: parseFloat(r.amount),
+      splits: splits.map((r, i) => ({
+        amount: rounded[i],
         category: r.category,
         budget_id: r.budget_id,
         beneficiary: r.beneficiary || null,
@@ -548,8 +564,27 @@ function ApproveModal({
   // Derived split validity
   const totalAmt = parseFloat(amount) || 0
   const allocated = splits.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
-  const splitIsBalanced = Math.abs(allocated - totalAmt) <= 0.01
+  const allocationTarget = splitUnit === '%' ? 100 : totalAmt
+  const splitIsBalanced = Math.abs(allocated - allocationTarget) <= 0.01
   const splitAllPositive = splits.every((r) => (parseFloat(r.amount) || 0) > 0)
+
+  const toggleSplitUnit = (next: '$' | '%') => {
+    if (next === splitUnit) return
+    if (totalAmt > 0) {
+      setSplits((prev) =>
+        prev.map((r) => {
+          const v = parseFloat(r.amount) || 0
+          return {
+            ...r,
+            amount: next === '%'
+              ? ((v / totalAmt) * 100).toFixed(2)
+              : ((v / 100) * totalAmt).toFixed(2),
+          }
+        })
+      )
+    }
+    setSplitUnit(next)
+  }
   const splitDisabled = splitMode && (splits.length < 2 || !splitIsBalanced || !splitAllPositive)
 
   // Filter budgets: show those whose category matches current category, or has no category.
@@ -650,7 +685,23 @@ function ApproveModal({
                 </TouchableOpacity>
               ) : (
                 <View style={splitStyles.splitsSection}>
-                  <Text style={modalStyles.label}>Splits</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text style={modalStyles.label}>Splits</Text>
+                    <View style={splitStyles.unitToggle}>
+                      <TouchableOpacity
+                        onPress={() => toggleSplitUnit('$')}
+                        style={[splitStyles.unitBtn, splitUnit === '$' && splitStyles.unitBtnActive]}
+                      >
+                        <Text style={[splitStyles.unitBtnText, splitUnit === '$' && splitStyles.unitBtnTextActive]}>$ Amount</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => toggleSplitUnit('%')}
+                        style={[splitStyles.unitBtn, splitUnit === '%' && splitStyles.unitBtnActive]}
+                      >
+                        <Text style={[splitStyles.unitBtnText, splitUnit === '%' && splitStyles.unitBtnTextActive]}>% Percent</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
                   {splits.map((row, idx) => (
                     <SplitCard
                       key={row.key}
@@ -661,6 +712,8 @@ function ApproveModal({
                       onUpdate={updateSplit}
                       onRemove={removeSplit}
                       canRemove={splits.length > 2}
+                      unit={splitUnit}
+                      totalAmt={totalAmt}
                     />
                   ))}
                   <TouchableOpacity
@@ -678,7 +731,9 @@ function ApproveModal({
                         splitIsBalanced ? splitStyles.allocOk : splitStyles.allocBad,
                       ]}
                     >
-                      Allocated {fmtUSD(allocated)} / {fmtUSD(totalAmt)}
+                      {splitUnit === '%'
+                        ? `Allocated ${allocated.toFixed(2)}% / 100.00%`
+                        : `Allocated ${fmtUSD(allocated)} / ${fmtUSD(totalAmt)}`}
                       {splitIsBalanced ? '  ✓' : ''}
                     </Text>
                   </View>
@@ -720,33 +775,46 @@ function ApproveModal({
                 testID="approve-merchant-input"
               />
 
-              <Text style={modalStyles.label}>Payment method</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={{ marginBottom: 16 }}
+              <TouchableOpacity
+                onPress={() => setShowAdvanced((v) => !v)}
+                style={{ marginBottom: 8 }}
+                testID="approve-advanced-toggle"
               >
-                {PAYMENT_METHODS.map((pm) => (
-                  <TouchableOpacity
-                    key={pm.value}
-                    style={[
-                      modalStyles.chip,
-                      paymentMethod === pm.value && modalStyles.chipActive,
-                    ]}
-                    onPress={() => setPaymentMethod(pm.value)}
-                    testID={`approve-pm-chip-${pm.value}`}
+                <Text style={{ fontSize: 13, color: '#6b7280' }}>
+                  {showAdvanced ? '▾ Advanced' : '▸ Advanced'}
+                </Text>
+              </TouchableOpacity>
+              {showAdvanced && (
+                <>
+                  <Text style={modalStyles.label}>Payment method</Text>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={{ marginBottom: 16 }}
                   >
-                    <Text
-                      style={[
-                        modalStyles.chipText,
-                        paymentMethod === pm.value && modalStyles.chipTextActive,
-                      ]}
-                    >
-                      {pm.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+                    {PAYMENT_METHODS.map((pm) => (
+                      <TouchableOpacity
+                        key={pm.value}
+                        style={[
+                          modalStyles.chip,
+                          paymentMethod === pm.value && modalStyles.chipActive,
+                        ]}
+                        onPress={() => setPaymentMethod(pm.value)}
+                        testID={`approve-pm-chip-${pm.value}`}
+                      >
+                        <Text
+                          style={[
+                            modalStyles.chipText,
+                            paymentMethod === pm.value && modalStyles.chipTextActive,
+                          ]}
+                        >
+                          {pm.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </>
+              )}
 
               {/* Budget and For — hidden in split mode */}
               {!splitMode && budgets.length > 0 && (
@@ -852,6 +920,8 @@ interface SplitCardProps {
   onUpdate: (key: number, changes: Partial<SplitRow>) => void
   onRemove: (key: number) => void
   canRemove: boolean
+  unit: '$' | '%'
+  totalAmt: number
 }
 
 function SplitCard({
@@ -862,6 +932,8 @@ function SplitCard({
   onUpdate,
   onRemove,
   canRemove,
+  unit,
+  totalAmt,
 }: SplitCardProps) {
   const handleBudgetSelect = (id: string | null) => {
     const bs = id ? budgets.find((b) => b.budget.id === id) : null
@@ -890,9 +962,9 @@ function SplitCard({
         )}
       </View>
 
-      {/* Amount */}
-      <View style={[modalStyles.amountRow, { marginBottom: 12 }]}>
-        <Text style={modalStyles.dollar}>$</Text>
+      {/* Amount or Percent */}
+      <View style={[modalStyles.amountRow, { marginBottom: unit === '%' && totalAmt > 0 ? 4 : 12 }]}>
+        {unit === '$' && <Text style={modalStyles.dollar}>$</Text>}
         <TextInput
           style={[modalStyles.amountInput, { fontSize: 18 }]}
           value={row.amount}
@@ -901,7 +973,13 @@ function SplitCard({
           placeholder="0.00"
           testID={`split-amount-${index}`}
         />
+        {unit === '%' && <Text style={modalStyles.dollar}>%</Text>}
       </View>
+      {unit === '%' && totalAmt > 0 && (
+        <Text style={{ fontSize: 11, color: '#6b7280', marginBottom: 12 }}>
+          ≈ {fmtUSD(((parseFloat(row.amount) || 0) / 100) * totalAmt)}
+        </Text>
+      )}
 
       {/* Budget */}
       <BudgetPicker
@@ -982,6 +1060,18 @@ const splitStyles = StyleSheet.create({
     marginBottom: 12,
   },
   addSplitText: { fontSize: 14, color: '#6b7280' },
+  unitToggle: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 6,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  unitBtn: { paddingHorizontal: 8, paddingVertical: 4, backgroundColor: '#fff' },
+  unitBtnActive: { backgroundColor: '#2563eb' },
+  unitBtnText: { fontSize: 11, color: '#6b7280' },
+  unitBtnTextActive: { color: '#fff', fontWeight: '600' },
   allocBar: {
     paddingVertical: 8,
     paddingHorizontal: 12,
