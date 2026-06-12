@@ -15,13 +15,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.services import pricing
+from app.services.firestore import get_firestore_client
 
 logger = logging.getLogger(__name__)
 
 
 def _db():
-    """Lazy import to avoid circular imports and ease testing."""
-    from app.services.firestore import get_firestore_client
     return get_firestore_client()
 
 

@@ -28,6 +28,9 @@ plaid-python>=29.0.0
 # LLM portfolio analysis
 anthropic>=0.107.0
 
+# Cost computation (import-only, hot path stays on AsyncAnthropic)
+litellm>=1.40.0
+
 # Observability
 langfuse>=3.0
 

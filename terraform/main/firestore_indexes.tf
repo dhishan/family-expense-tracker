@@ -390,3 +390,46 @@ resource "google_firestore_index" "merchant_rules_family_merchant" {
 
   depends_on = [google_firestore_database.database]
 }
+
+# usage_events: query by user + time (list recent events for a user)
+resource "google_firestore_index" "usage_events_user_created" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "usage_events"
+
+  fields {
+    field_path = "user_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "created_at"
+    order      = "DESCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
+
+# usage_events: query by user + source + time (breakdown by source)
+resource "google_firestore_index" "usage_events_user_source_created" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "usage_events"
+
+  fields {
+    field_path = "user_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "source"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "created_at"
+    order      = "DESCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
