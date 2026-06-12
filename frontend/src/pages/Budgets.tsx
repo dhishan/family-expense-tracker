@@ -493,20 +493,29 @@ function BudgetTxModal({ budget, scope, onScopeChange, onClose }: BudgetTxModalP
             <div className="p-6 text-center text-sm text-gray-500">No transactions for this budget yet.</div>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {data.expenses.map((e) => (
-                <li key={e.id} className="px-4 py-3 flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-gray-900 truncate">
-                      {e.merchant || e.description || CATEGORY_INFO[e.category as ExpenseCategory]?.label || e.category}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      {format(new Date(e.date + 'T00:00:00'), 'MMM d')}
-                      {e.merchant && e.description ? ` · ${e.description}` : ''}
-                    </p>
-                  </div>
-                  <span className="text-sm font-medium text-gray-900 shrink-0">${e.amount.toFixed(2)}</span>
-                </li>
-              ))}
+              {data.expenses.map((e) => {
+                // Backend returns date as a full ISO string (e.g. 2026-06-11T00:00:00+00:00).
+                // Slice to the YYYY-MM-DD portion before re-parsing as local-midnight.
+                const datePart = (e.date || '').slice(0, 10)
+                let dateLabel = ''
+                try {
+                  dateLabel = datePart ? format(new Date(datePart + 'T00:00:00'), 'MMM d') : ''
+                } catch { /* leave blank */ }
+                return (
+                  <li key={e.id} className="px-4 py-3 flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-gray-900 truncate">
+                        {e.merchant || e.description || CATEGORY_INFO[e.category as ExpenseCategory]?.label || e.category}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {dateLabel}
+                        {e.merchant && e.description ? ` · ${e.description}` : ''}
+                      </p>
+                    </div>
+                    <span className="text-sm font-medium text-gray-900 shrink-0">${e.amount.toFixed(2)}</span>
+                  </li>
+                )
+              })}
             </ul>
           )}
         </div>
