@@ -301,6 +301,27 @@ export interface PendingListResponse {
   page_size: number
 }
 
+export interface ApproveSplitItem {
+  amount: number
+  category: string
+  budget_id: string | null
+  beneficiary: string | null
+}
+
+export interface ApproveSplitPayload {
+  splits: ApproveSplitItem[]
+  merchant: string
+  date: string
+  payment_method: string
+  description?: string
+  tags?: string[]
+}
+
+export interface ApproveSplitResponse {
+  expense_ids: string[]
+  pending_id: string
+}
+
 // Category display info
 export const CATEGORY_INFO: Record<
   ExpenseCategory,

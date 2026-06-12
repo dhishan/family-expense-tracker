@@ -15,7 +15,7 @@ import {
 import { expensesApi, plaidApi, budgetsApi } from '../services/api'
 import { useAuthStore } from '../store/auth'
 import { CATEGORY_INFO, PAYMENT_METHOD_LABELS } from '../types'
-import type { ExpenseCreate, ExpenseCategory, PaymentMethod, Expense, PendingTransaction, BudgetStatus, PendingListResponse } from '../types'
+import type { ExpenseCreate, ExpenseCategory, PaymentMethod, Expense, PendingTransaction, BudgetStatus, PendingListResponse, PendingApproveSplit } from '../types'
 import QuickAddStrip from '../components/QuickAddStrip'
 
 interface EditFormData {
@@ -37,6 +37,13 @@ interface ApproveFormData {
   beneficiary: string
   tags: string
   budget_id?: string
+}
+
+interface SplitRow {
+  amount: string
+  category: ExpenseCategory
+  budget_id: string
+  beneficiary: string
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +167,8 @@ export default function Transactions() {
   const [page, setPage] = useState(1)
   const [pendingHidden, setPendingHidden] = useState(false)
   const [approveBudgetId, setApproveBudgetId] = useState<string | undefined>(undefined)
+  const [splitMode, setSplitMode] = useState(false)
+  const [splits, setSplits] = useState<SplitRow[]>([])
 
   // Discard undo buffer: map id -> { tx, timerId }
   const discardBuffer = useRef<Map<string, { tx: PendingTransaction; timerId: ReturnType<typeof setTimeout> }>>(new Map())
@@ -312,6 +321,34 @@ export default function Transactions() {
     onError: () => toast.error('Failed to approve transaction'),
   })
 
+  const approveSplitMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: PendingApproveSplit }) =>
+      plaidApi.approveSplit(id, payload),
+    onSuccess: (_data, vars) => {
+      queryClient.setQueryData(
+        ['plaid', 'pending'],
+        (old: { pages: PendingListResponse[]; pageParams: number[] } | undefined) => {
+          if (!old) return old
+          return {
+            ...old,
+            pages: old.pages.map((p) => ({
+              ...p,
+              pending: p.pending.filter((t) => t.id !== vars.id),
+              total: Math.max(0, p.total - 1),
+            })),
+          }
+        }
+      )
+      queryClient.invalidateQueries({ queryKey: ['expenses'] })
+      const n = vars.payload.splits.length
+      setApprovingTx(null)
+      setSplitMode(false)
+      setSplits([])
+      toast.success(`Transaction split into ${n} expense${n !== 1 ? 's' : ''}`)
+    },
+    onError: () => toast.error('Failed to split transaction'),
+  })
+
   const saveUncategorizedMutation = useMutation({
     mutationFn: plaidApi.saveUncategorized,
     onSuccess: () => {
@@ -340,6 +377,8 @@ export default function Transactions() {
     handleSubmit: handleApproveSubmit,
     reset: resetApprove,
     setValue: setValueApprove,
+    getValues: getValuesApprove,
+    watch: watchApprove,
   } = useForm<ApproveFormData>()
 
   const onEditSubmit = (data: EditFormData) => {
@@ -364,6 +403,8 @@ export default function Transactions() {
     setApprovingIsIncome(tx.is_income === true)
     setIncomeConfirmed(false)
     setApproveBudgetId(tx.suggested_budget_id ?? undefined)
+    setSplitMode(false)
+    setSplits([])
     const dateStr = tx.date || tx.authorized_date || ''
     resetApprove({
       amount: Math.abs(tx.amount),
@@ -403,6 +444,87 @@ export default function Transactions() {
         budget_id: approveBudgetId || undefined,
       },
     })
+  }
+
+  const onApproveSplitSubmit = (data: ApproveFormData) => {
+    if (!approvingTx) return
+    const tagsArr = data.tags
+      ? data.tags.split(',').map((t) => t.trim()).filter(Boolean)
+      : []
+    approveSplitMutation.mutate({
+      id: approvingTx.id,
+      payload: {
+        splits: splits.map((r) => ({
+          amount: parseFloat(r.amount),
+          category: r.category,
+          budget_id: r.budget_id || null,
+          beneficiary: r.beneficiary,
+        })),
+        merchant: data.merchant || undefined,
+        date: data.date || undefined,
+        payment_method: data.payment_method || undefined,
+        description: data.description || undefined,
+        tags: tagsArr,
+      },
+    })
+  }
+
+  // Helpers for split mode
+  const allocatedTotal = splits.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0)
+  const splitTotalAmount = (() => {
+    const v = parseFloat(String(watchApprove('amount')))
+    return isNaN(v) ? Math.abs(approvingTx?.amount ?? 0) : v
+  })()
+  const splitAllocationOk =
+    Math.abs(allocatedTotal - splitTotalAmount) < 0.01 &&
+    splits.length > 0 &&
+    splits.every((r) => parseFloat(r.amount) > 0)
+
+  const updateSplitRow = (idx: number, patch: Partial<SplitRow>) => {
+    setSplits((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
+  }
+
+  const removeSplitRow = (idx: number) => {
+    setSplits((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  const addSplitRow = () => {
+    const prev = splits[splits.length - 1]
+    const remaining = Math.max(0, splitTotalAmount - allocatedTotal)
+    setSplits((s) => [
+      ...s,
+      {
+        amount: remaining > 0 ? remaining.toFixed(2) : '',
+        category: prev?.category ?? (getValuesApprove('category') as ExpenseCategory),
+        budget_id: prev?.budget_id ?? approveBudgetId ?? '',
+        beneficiary: prev?.beneficiary ?? getValuesApprove('beneficiary'),
+      },
+    ])
+  }
+
+  const enterSplitMode = () => {
+    const currentAmount = parseFloat(String(getValuesApprove('amount'))) || Math.abs(approvingTx?.amount ?? 0)
+    setSplits([
+      {
+        amount: currentAmount.toFixed(2),
+        category: getValuesApprove('category') as ExpenseCategory,
+        budget_id: approveBudgetId ?? '',
+        beneficiary: getValuesApprove('beneficiary'),
+      },
+    ])
+    setSplitMode(true)
+  }
+
+  const exitSplitMode = () => {
+    // Restore top-level fields from first split if available
+    if (splits.length > 0) {
+      const first = splits[0]
+      setValueApprove('category', first.category)
+      setValueApprove('beneficiary', first.beneficiary)
+      setApproveBudgetId(first.budget_id || undefined)
+    }
+    setSplitMode(false)
+    setSplits([])
   }
 
   const handleDiscard = (tx: PendingTransaction) => {
@@ -875,7 +997,7 @@ export default function Transactions() {
               </div>
             )}
 
-            <form onSubmit={handleApproveSubmit(onApproveSubmit)} className="p-4 space-y-4">
+            <form onSubmit={handleApproveSubmit(splitMode ? onApproveSplitSubmit : onApproveSubmit)} className="p-4 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
                 <input
@@ -884,7 +1006,17 @@ export default function Transactions() {
                   {...registerApprove('amount', { required: true, min: 0.01 })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2"
                   placeholder="0.00"
+                  readOnly={splitMode}
                 />
+                {!splitMode && (
+                  <button
+                    type="button"
+                    onClick={enterSplitMode}
+                    className="mt-1.5 text-xs text-primary-600 hover:text-primary-700 underline"
+                  >
+                    Split across budgets
+                  </button>
+                )}
               </div>
 
               <div>
@@ -937,22 +1069,24 @@ export default function Transactions() {
                 </select>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Category *</label>
-                <select
-                  {...registerApprove('category', { required: true })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                >
-                  {categories.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {CATEGORY_INFO[cat as ExpenseCategory]?.label || cat.charAt(0).toUpperCase() + cat.slice(1)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {!splitMode && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Category *</label>
+                  <select
+                    {...registerApprove('category', { required: !splitMode })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  >
+                    {categories.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {CATEGORY_INFO[cat as ExpenseCategory]?.label || cat.charAt(0).toUpperCase() + cat.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-              {/* Budget picker */}
-              {budgets.length > 0 && (
+              {/* Budget picker — single mode only */}
+              {!splitMode && budgets.length > 0 && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Budget</label>
                   <select
@@ -996,20 +1130,140 @@ export default function Transactions() {
                 </div>
               )}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">For</label>
-                <select
-                  {...registerApprove('beneficiary')}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                >
-                  <option value="family">Entire Family</option>
-                  {familyMembers.map((member) => (
-                    <option key={member.id} value={member.id}>
-                      {member.display_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {!splitMode && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">For</label>
+                  <select
+                    {...registerApprove('beneficiary')}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  >
+                    <option value="family">Entire Family</option>
+                    {familyMembers.map((member) => (
+                      <option key={member.id} value={member.id}>
+                        {member.display_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Split mode UI */}
+              {splitMode && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700">Splits</span>
+                    <button
+                      type="button"
+                      onClick={exitSplitMode}
+                      className="text-xs text-primary-600 hover:text-primary-700 underline"
+                    >
+                      Use a single budget
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {splits.map((row, idx) => (
+                      <div key={idx} className="border border-gray-200 rounded-lg p-3 space-y-2 bg-gray-50">
+                        <div className="flex items-center gap-2">
+                          <div className="w-28 shrink-0">
+                            <label className="block text-xs text-gray-500 mb-0.5">Amount</label>
+                            <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden bg-white">
+                              <span className="px-2 text-gray-500 text-sm">$</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0.01"
+                                value={row.amount}
+                                onChange={(e) => updateSplitRow(idx, { amount: e.target.value })}
+                                className="flex-1 py-1.5 pr-2 text-sm focus:outline-none w-16"
+                                placeholder="0.00"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <label className="block text-xs text-gray-500 mb-0.5">Budget</label>
+                            <select
+                              value={row.budget_id}
+                              onChange={(e) => {
+                                const id = e.target.value
+                                const b = budgets.find((bs) => bs.budget.id === id)?.budget
+                                updateSplitRow(idx, {
+                                  budget_id: id,
+                                  ...(b?.category ? { category: b.category as ExpenseCategory } : {}),
+                                  ...(b?.beneficiary ? { beneficiary: b.beneficiary } : {}),
+                                })
+                              }}
+                              className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white"
+                            >
+                              <option value="">None</option>
+                              {(() => {
+                                const periodOrder: Record<string, number> = { weekly: 0, monthly: 1, yearly: 2 }
+                                const groups: Record<string, BudgetStatus[]> = { weekly: [], monthly: [], yearly: [] }
+                                budgets
+                                  .slice()
+                                  .sort((a, b) => (periodOrder[a.budget.period] ?? 3) - (periodOrder[b.budget.period] ?? 3))
+                                  .forEach((bs) => {
+                                    const p = bs.budget.period
+                                    if (groups[p]) groups[p].push(bs)
+                                  })
+                                return (['weekly', 'monthly', 'yearly'] as const)
+                                  .filter((p) => groups[p].length > 0)
+                                  .map((p) => (
+                                    <optgroup key={p} label={p.charAt(0).toUpperCase() + p.slice(1)}>
+                                      {groups[p].map((bs) => (
+                                        <option key={bs.budget.id} value={bs.budget.id}>
+                                          {bs.budget.name}
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                  ))
+                              })()}
+                            </select>
+                          </div>
+                          {splits.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeSplitRow(idx)}
+                              className="mt-4 text-gray-400 hover:text-red-500 shrink-0"
+                            >
+                              <XMarkIcon className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-0.5">For</label>
+                          <select
+                            value={row.beneficiary}
+                            onChange={(e) => updateSplitRow(idx, { beneficiary: e.target.value })}
+                            className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white"
+                          >
+                            <option value="family">Entire Family</option>
+                            {familyMembers.map((member) => (
+                              <option key={member.id} value={member.id}>
+                                {member.display_name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={addSplitRow}
+                    className="flex items-center gap-1 text-sm text-primary-600 hover:text-primary-700"
+                  >
+                    <span className="text-lg leading-none">⊕</span> Add another split
+                  </button>
+
+                  {/* Allocated indicator */}
+                  <div className={`flex items-center gap-1 text-sm font-medium ${splitAllocationOk ? 'text-green-600' : 'text-red-600'}`}>
+                    Allocated: ${allocatedTotal.toFixed(2)} / ${splitTotalAmount.toFixed(2)}
+                    {splitAllocationOk && ' ✓'}
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Tags</label>
@@ -1024,17 +1278,23 @@ export default function Transactions() {
               <div className="flex gap-3 pt-4">
                 <button
                   type="button"
-                  onClick={() => setApprovingTx(null)}
+                  onClick={() => { setApprovingTx(null); setSplitMode(false); setSplits([]) }}
                   className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={approveMutation.isPending}
+                  disabled={
+                    splitMode
+                      ? (!splitAllocationOk || approveSplitMutation.isPending)
+                      : approveMutation.isPending
+                  }
                   className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
                 >
-                  {approveMutation.isPending ? 'Approving...' : 'Approve'}
+                  {splitMode
+                    ? (approveSplitMutation.isPending ? 'Saving...' : 'Save splits')
+                    : (approveMutation.isPending ? 'Approving...' : 'Approve')}
                 </button>
               </div>
             </form>

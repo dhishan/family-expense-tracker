@@ -19,7 +19,7 @@ import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tansta
 import { expensesApi, plaidApi, budgetsApi } from '@/services/api'
 import { useAuthStore } from '@/store/auth'
 import { CATEGORY_INFO } from '@/types'
-import type { ExpenseCategory, ExpenseCreate, Expense, PendingTransaction, PaymentMethod, BudgetStatus } from '@/types'
+import type { ExpenseCategory, ExpenseCreate, Expense, PendingTransaction, PaymentMethod, BudgetStatus, ApproveSplitPayload } from '@/types'
 
 const CATEGORY_EMOJI: Record<string, string> = {
   groceries: '🛒',
@@ -302,6 +302,14 @@ function derivePaymentMethod(accountType?: string | null): PaymentMethod {
 
 // ─── Approve modal (for Plaid pending approval) ────────────────────────────────
 
+interface SplitRow {
+  key: number
+  amount: string
+  category: ExpenseCategory
+  budget_id: string | null
+  beneficiary: string
+}
+
 interface ApproveEdits {
   amount: number
   date: string
@@ -324,6 +332,8 @@ interface ApproveModalProps {
   currentUserId: string
   // Account type for payment method derivation
   accountType?: string | null
+  onApproveSplit?: (payload: ApproveSplitPayload) => void
+  isApprovingSplit?: boolean
 }
 
 function ApproveModal({
@@ -335,6 +345,8 @@ function ApproveModal({
   familyMembers,
   currentUserId,
   accountType,
+  onApproveSplit,
+  isApprovingSplit = false,
 }: ApproveModalProps) {
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState('')
@@ -347,6 +359,10 @@ function ApproveModal({
   const [budgetId, setBudgetId] = useState<string | null>(null)
   // Track if the user manually changed category so budget auto-fill doesn't fight them
   const [categoryManuallySet, setCategoryManuallySet] = useState(false)
+  // Split mode
+  const [splitMode, setSplitMode] = useState(false)
+  const [splits, setSplits] = useState<SplitRow[]>([])
+  const splitKeyRef = useRef(0)
 
   const { data: budgetsData } = useQuery({
     queryKey: ['budgets', 'list'],
@@ -380,6 +396,8 @@ function ApproveModal({
         setBeneficiary(currentUserId)
       }
       setCategoryManuallySet(false)
+      setSplitMode(false)
+      setSplits([])
     }
   }, [pending, visible, currentUserId, accountType, budgets])
 
@@ -409,7 +427,102 @@ function ApproveModal({
     setBeneficiary(bs.budget.beneficiary ?? '')
   }
 
+  // Split-mode helpers
+  const enterSplitMode = () => {
+    const firstKey = ++splitKeyRef.current
+    setSplits([
+      {
+        key: firstKey,
+        amount: amount,
+        category: category,
+        budget_id: budgetId,
+        beneficiary: beneficiary,
+      },
+    ])
+    setSplitMode(true)
+  }
+
+  const exitSplitMode = () => {
+    if (splits.length > 0) {
+      const first = splits[0]
+      setAmount(first.amount)
+      setCategory(first.category)
+      setBudgetId(first.budget_id)
+      setBeneficiary(first.beneficiary)
+    }
+    setSplitMode(false)
+    setSplits([])
+  }
+
+  const addSplit = () => {
+    const last = splits[splits.length - 1]
+    const allocated = splits.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+    const total = parseFloat(amount) || 0
+    const remaining = Math.max(0, total - allocated)
+    const newKey = ++splitKeyRef.current
+    setSplits((prev) => [
+      ...prev,
+      {
+        key: newKey,
+        amount: remaining > 0 ? remaining.toFixed(2) : '',
+        category: last?.category ?? 'other',
+        budget_id: last?.budget_id ?? null,
+        beneficiary: last?.beneficiary ?? '',
+      },
+    ])
+  }
+
+  const updateSplit = (key: number, changes: Partial<SplitRow>) => {
+    setSplits((prev) => prev.map((r) => (r.key === key ? { ...r, ...changes } : r)))
+  }
+
+  const removeSplit = (key: number) => {
+    setSplits((prev) => prev.filter((r) => r.key !== key))
+  }
+
+  const handleSplitApprove = () => {
+    const totalAmt = parseFloat(amount)
+    if (isNaN(totalAmt) || totalAmt <= 0) {
+      Alert.alert('Validation', 'Enter a valid total amount.')
+      return
+    }
+    if (splits.length < 2) {
+      Alert.alert('Validation', 'Add at least 2 splits, or use single budget approve.')
+      return
+    }
+    if (splits.some((r) => (parseFloat(r.amount) || 0) <= 0)) {
+      Alert.alert('Validation', 'All splits must have an amount greater than 0.')
+      return
+    }
+    const allocated = splits.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+    if (Math.abs(allocated - totalAmt) > 0.01) {
+      Alert.alert(
+        'Validation',
+        `Allocated ${fmtUSD(allocated)} doesn't match total ${fmtUSD(totalAmt)}.`
+      )
+      return
+    }
+    const tagsArr = tags.split(',').map((t) => t.trim()).filter(Boolean)
+    onApproveSplit?.({
+      splits: splits.map((r) => ({
+        amount: parseFloat(r.amount),
+        category: r.category,
+        budget_id: r.budget_id,
+        beneficiary: r.beneficiary || null,
+      })),
+      merchant: merchant.trim(),
+      date: date || toLocalISODate(),
+      payment_method: paymentMethod,
+      description: description.trim() || undefined,
+      tags: tagsArr.length > 0 ? tagsArr : undefined,
+    })
+  }
+
   const handleApprove = () => {
+    if (splitMode) {
+      handleSplitApprove()
+      return
+    }
     const amt = parseFloat(amount)
     if (isNaN(amt) || amt <= 0) {
       Alert.alert('Validation', 'Enter a valid amount greater than 0.')
@@ -431,6 +544,13 @@ function ApproveModal({
       budget_id: budgetId,
     })
   }
+
+  // Derived split validity
+  const totalAmt = parseFloat(amount) || 0
+  const allocated = splits.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+  const splitIsBalanced = Math.abs(allocated - totalAmt) <= 0.01
+  const splitAllPositive = splits.every((r) => (parseFloat(r.amount) || 0) > 0)
+  const splitDisabled = splitMode && (splits.length < 2 || !splitIsBalanced || !splitAllPositive)
 
   // Filter budgets: show those whose category matches current category, or has no category.
   // "Show all" toggle reveals the rest.
@@ -457,36 +577,48 @@ function ApproveModal({
               <Text style={modalStyles.cancel}>Cancel</Text>
             </TouchableOpacity>
             <Text style={modalStyles.title}>Approve Transaction</Text>
-            <TouchableOpacity onPress={handleApprove} disabled={isApproving}>
-              {isApproving ? (
+            <TouchableOpacity
+              onPress={handleApprove}
+              disabled={isApproving || isApprovingSplit || splitDisabled}
+            >
+              {isApproving || isApprovingSplit ? (
                 <ActivityIndicator size="small" color="#2563eb" />
               ) : (
-                <Text style={modalStyles.save}>Approve</Text>
+                <Text
+                  style={[
+                    modalStyles.save,
+                    splitDisabled && { color: '#9ca3af' },
+                  ]}
+                >
+                  Approve
+                </Text>
               )}
             </TouchableOpacity>
           </View>
 
-          {/* Category chips */}
-          <View style={modalStyles.chipsBar}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {CATEGORIES.map((cat) => {
-                const active = category === cat
-                return (
-                  <TouchableOpacity
-                    key={cat}
-                    style={[modalStyles.catChip, active && modalStyles.catChipActive]}
-                    onPress={() => handleCategoryChange(cat)}
-                    testID={`approve-category-chip-${cat}`}
-                  >
-                    <Text style={modalStyles.catEmoji}>{CATEGORY_EMOJI[cat] ?? '📝'}</Text>
-                    <Text style={[modalStyles.catLabel, active && modalStyles.catLabelActive]}>
-                      {CATEGORY_INFO[cat].label}
-                    </Text>
-                  </TouchableOpacity>
-                )
-              })}
-            </ScrollView>
-          </View>
+          {/* Category chips — hidden in split mode */}
+          {!splitMode && (
+            <View style={modalStyles.chipsBar}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                {CATEGORIES.map((cat) => {
+                  const active = category === cat
+                  return (
+                    <TouchableOpacity
+                      key={cat}
+                      style={[modalStyles.catChip, active && modalStyles.catChipActive]}
+                      onPress={() => handleCategoryChange(cat)}
+                      testID={`approve-category-chip-${cat}`}
+                    >
+                      <Text style={modalStyles.catEmoji}>{CATEGORY_EMOJI[cat] ?? '📝'}</Text>
+                      <Text style={[modalStyles.catLabel, active && modalStyles.catLabelActive]}>
+                        {CATEGORY_INFO[cat].label}
+                      </Text>
+                    </TouchableOpacity>
+                  )
+                })}
+              </ScrollView>
+            </View>
+          )}
 
           <ScrollView
             style={{ flex: 1 }}
@@ -506,6 +638,60 @@ function ApproveModal({
                   testID="approve-amount-input"
                 />
               </View>
+
+              {/* Split toggle */}
+              {!splitMode ? (
+                <TouchableOpacity
+                  style={splitStyles.splitToggleBtn}
+                  onPress={enterSplitMode}
+                  testID="split-toggle-btn"
+                >
+                  <Text style={splitStyles.splitToggleText}>⊕  Split across budgets</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={splitStyles.splitsSection}>
+                  <Text style={modalStyles.label}>Splits</Text>
+                  {splits.map((row, idx) => (
+                    <SplitCard
+                      key={row.key}
+                      index={idx}
+                      row={row}
+                      budgets={budgets}
+                      familyMembers={familyMembers}
+                      onUpdate={updateSplit}
+                      onRemove={removeSplit}
+                      canRemove={splits.length > 2}
+                    />
+                  ))}
+                  <TouchableOpacity
+                    style={splitStyles.addSplitBtn}
+                    onPress={addSplit}
+                    testID="add-split-btn"
+                  >
+                    <Text style={splitStyles.addSplitText}>+ Add split</Text>
+                  </TouchableOpacity>
+                  {/* Allocated indicator */}
+                  <View style={splitStyles.allocBar}>
+                    <Text
+                      style={[
+                        splitStyles.allocText,
+                        splitIsBalanced ? splitStyles.allocOk : splitStyles.allocBad,
+                      ]}
+                    >
+                      Allocated {fmtUSD(allocated)} / {fmtUSD(totalAmt)}
+                      {splitIsBalanced ? '  ✓' : ''}
+                    </Text>
+                  </View>
+                  {/* Use single budget */}
+                  <TouchableOpacity
+                    style={splitStyles.useSingleBtn}
+                    onPress={exitSplitMode}
+                    testID="use-single-budget-btn"
+                  >
+                    <Text style={splitStyles.useSingleText}>Use a single budget</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
 
               <Text style={modalStyles.label}>Date</Text>
               <TextInput
@@ -562,8 +748,8 @@ function ApproveModal({
                 ))}
               </ScrollView>
 
-              {/* Budget — dropdown picker (was chips) */}
-              {budgets.length > 0 && (
+              {/* Budget and For — hidden in split mode */}
+              {!splitMode && budgets.length > 0 && (
                 <>
                   <Text style={modalStyles.label}>Budget</Text>
                   <BudgetPicker
@@ -583,7 +769,7 @@ function ApproveModal({
                 </>
               )}
 
-              {familyMembers.length > 1 && (
+              {!splitMode && familyMembers.length > 1 && (
                 <>
                   <Text style={modalStyles.label}>For</Text>
                   <ScrollView
@@ -655,6 +841,161 @@ function ApproveModal({
     </Modal>
   )
 }
+
+// ─── Split card (one per split row inside ApproveModal split mode) ─────────────
+
+interface SplitCardProps {
+  index: number
+  row: SplitRow
+  budgets: BudgetStatus[]
+  familyMembers: { id: string; display_name: string }[]
+  onUpdate: (key: number, changes: Partial<SplitRow>) => void
+  onRemove: (key: number) => void
+  canRemove: boolean
+}
+
+function SplitCard({
+  index,
+  row,
+  budgets,
+  familyMembers,
+  onUpdate,
+  onRemove,
+  canRemove,
+}: SplitCardProps) {
+  const handleBudgetSelect = (id: string | null) => {
+    const bs = id ? budgets.find((b) => b.budget.id === id) : null
+    const changes: Partial<SplitRow> = { budget_id: id }
+    if (bs) {
+      if (bs.budget.category) {
+        changes.category = bs.budget.category as ExpenseCategory
+      }
+      changes.beneficiary = bs.budget.beneficiary ?? ''
+    }
+    onUpdate(row.key, changes)
+  }
+
+  return (
+    <View style={splitStyles.card}>
+      <View style={splitStyles.cardHeader}>
+        <Text style={splitStyles.cardTitle}>Split {index + 1}</Text>
+        {canRemove && (
+          <TouchableOpacity
+            onPress={() => onRemove(row.key)}
+            testID={`remove-split-${index}`}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={splitStyles.removeBtn}>✕</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Amount */}
+      <View style={[modalStyles.amountRow, { marginBottom: 12 }]}>
+        <Text style={modalStyles.dollar}>$</Text>
+        <TextInput
+          style={[modalStyles.amountInput, { fontSize: 18 }]}
+          value={row.amount}
+          onChangeText={(v) => onUpdate(row.key, { amount: v })}
+          keyboardType="decimal-pad"
+          placeholder="0.00"
+          testID={`split-amount-${index}`}
+        />
+      </View>
+
+      {/* Budget */}
+      <BudgetPicker
+        budgets={budgets}
+        selectedBudgetId={row.budget_id}
+        onSelect={handleBudgetSelect}
+        filterByCategory={row.category}
+        testID={`split-budget-picker-${index}`}
+      />
+
+      {/* For */}
+      {familyMembers.length > 1 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ marginBottom: 8 }}
+        >
+          <TouchableOpacity
+            style={[modalStyles.chip, row.beneficiary === '' && modalStyles.chipActive]}
+            onPress={() => onUpdate(row.key, { beneficiary: '' })}
+          >
+            <Text style={[modalStyles.chipText, row.beneficiary === '' && modalStyles.chipTextActive]}>
+              Family
+            </Text>
+          </TouchableOpacity>
+          {familyMembers.map((m) => (
+            <TouchableOpacity
+              key={m.id}
+              style={[modalStyles.chip, row.beneficiary === m.id && modalStyles.chipActive]}
+              onPress={() => onUpdate(row.key, { beneficiary: m.id })}
+            >
+              <Text style={[modalStyles.chipText, row.beneficiary === m.id && modalStyles.chipTextActive]}>
+                {m.display_name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  )
+}
+
+const splitStyles = StyleSheet.create({
+  splitToggleBtn: {
+    paddingVertical: 10,
+    marginBottom: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    borderRadius: 8,
+    backgroundColor: '#eff6ff',
+    borderStyle: 'dashed',
+  },
+  splitToggleText: { fontSize: 14, color: '#2563eb', fontWeight: '600' },
+  splitsSection: { marginBottom: 8 },
+  card: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+    backgroundColor: '#f9fafb',
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  cardTitle: { fontSize: 13, fontWeight: '600', color: '#374151' },
+  removeBtn: { fontSize: 16, color: '#9ca3af' },
+  addSplitBtn: {
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  addSplitText: { fontSize: 14, color: '#6b7280' },
+  allocBar: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 8,
+    marginBottom: 10,
+    alignItems: 'center',
+  },
+  allocText: { fontSize: 14, fontWeight: '600' },
+  allocOk: { color: '#16a34a' },
+  allocBad: { color: '#dc2626' },
+  useSingleBtn: { alignItems: 'center', paddingVertical: 8, marginBottom: 8 },
+  useSingleText: { fontSize: 13, color: '#6b7280', textDecorationLine: 'underline' },
+})
 
 const approveStyles = StyleSheet.create({
   showAllText: { fontSize: 12, color: '#2563eb', fontWeight: '500' },
@@ -1382,6 +1723,23 @@ export default function TransactionsScreen() {
     onError: () => Alert.alert('Error', 'Failed to approve transaction.'),
   })
 
+  const approveSplitMutation = useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: string
+      payload: ApproveSplitPayload
+    }) => plaidApi.approveSplit(id, payload),
+    onSuccess: (data, vars) => {
+      removePendingFromCache(vars.id)
+      queryClient.invalidateQueries({ queryKey: ['expenses'] })
+      setApprovingPending(null)
+      Alert.alert('Done', `Transaction split into ${data.expense_ids.length} expenses.`)
+    },
+    onError: () => Alert.alert('Error', 'Failed to split transaction.'),
+  })
+
   const saveUncatMutation = useMutation({
     mutationFn: (id: string) => plaidApi.saveUncategorized(id),
     onSuccess: (_data, id) => {
@@ -1428,6 +1786,15 @@ export default function TransactionsScreen() {
       approveMutation.mutate({ id: approvingPending.id, edits })
     },
     [approvingPending, approveMutation]
+  )
+
+  const handleApproveSplitSubmit = useCallback(
+    (payload: ApproveSplitPayload) => {
+      if (!approvingPending) return
+      setRemovedIds((prev) => new Set([...prev, approvingPending.id]))
+      approveSplitMutation.mutate({ id: approvingPending.id, payload })
+    },
+    [approvingPending, approveSplitMutation]
   )
 
   const handleDiscard = useCallback(
@@ -1595,6 +1962,8 @@ export default function TransactionsScreen() {
         familyMembers={familyMembers}
         currentUserId={user?.id ?? ''}
         accountType={null}
+        onApproveSplit={handleApproveSplitSubmit}
+        isApprovingSplit={approveSplitMutation.isPending}
       />
 
       {snackbar && (

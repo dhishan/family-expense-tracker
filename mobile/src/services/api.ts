@@ -22,6 +22,8 @@ import type {
   PlaidItemsResponse,
   PlaidItem,
   PendingListResponse,
+  ApproveSplitPayload,
+  ApproveSplitResponse,
 } from '../types'
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
@@ -477,6 +479,14 @@ export const plaidApi = {
   saveUncategorized: async (id: string): Promise<{ expense: Expense }> => {
     const response = await api.post<{ expense: Expense }>(
       `/plaid/pending/${id}/save-uncategorized`
+    )
+    return response.data
+  },
+
+  approveSplit: async (id: string, payload: ApproveSplitPayload): Promise<ApproveSplitResponse> => {
+    const response = await api.post<ApproveSplitResponse>(
+      `/plaid/pending/${id}/approve-split`,
+      payload
     )
     return response.data
   },

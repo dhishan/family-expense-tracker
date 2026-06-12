@@ -250,6 +250,22 @@ export interface PendingListResponse {
   page_size: number
 }
 
+export interface SplitItem {
+  amount: number
+  category: ExpenseCategory
+  budget_id?: string | null
+  beneficiary: string
+}
+
+export interface PendingApproveSplit {
+  splits: SplitItem[]
+  merchant?: string
+  date?: string
+  payment_method?: string
+  description?: string
+  tags?: string[]
+}
+
 // Auth types
 export interface AuthResponse {
   access_token: string

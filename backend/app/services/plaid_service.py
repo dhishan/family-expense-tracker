@@ -535,9 +535,15 @@ def update_pending_status(
     *,
     status: str,
     expense_id: str | None = None,
+    expense_ids: list[str] | None = None,
     actor_user_id: str | None = None,
 ) -> None:
-    """Update the status (and optionally expense_id) of a pending transaction doc."""
+    """Update the status (and optionally expense_id / expense_ids) of a pending transaction doc.
+
+    expense_id: used by the single-expense approve flow (backward-compat).
+    expense_ids: used by the split-approve flow — list of created expense IDs.
+    Both may be set simultaneously; callers should pass only the relevant one.
+    """
     db = get_firestore_client()
     update: dict[str, Any] = {"status": status, "updated_at": _now()}
     if status == "approved":
@@ -545,6 +551,8 @@ def update_pending_status(
         update["approved_by"] = actor_user_id
         if expense_id:
             update["expense_id"] = expense_id
+        if expense_ids is not None:
+            update["expense_ids"] = expense_ids
     elif status == "discarded":
         update["discarded_at"] = _now()
         update["discarded_by"] = actor_user_id

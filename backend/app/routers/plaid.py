@@ -921,6 +921,185 @@ async def save_uncategorized(
 
 
 # ---------------------------------------------------------------------------
+# Split-approve endpoint
+# ---------------------------------------------------------------------------
+
+
+class SplitItem(BaseModel):
+    amount: float
+    category: Optional[str] = None
+    budget_id: Optional[str] = None
+    beneficiary: Optional[str] = None
+
+
+class ApproveSplitRequest(BaseModel):
+    splits: list[SplitItem]
+    merchant: Optional[str] = None
+    date: Optional[str] = None
+    payment_method: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[list[str]] = None
+
+
+@router.post("/pending/{pending_id}/approve-split")
+async def approve_split(
+    pending_id: str,
+    body: ApproveSplitRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Split a pending transaction into N expense rows (N >= 2).
+
+    Each split carries its own amount, category, budget_id, and beneficiary.
+    Top-level merchant, date, payment_method, description, and tags are shared
+    across all splits.
+
+    Validation:
+    - At least 2 splits required (use /approve for a single expense).
+    - sum(splits[].amount) must equal pending.amount within $0.01.
+    - pending.status must be "pending" (409 if already approved/discarded).
+    - pending must belong to the calling user's family (404 otherwise).
+    """
+    from app.models.expense import ExpenseCategory, ExpenseCreate, PaymentMethod
+
+    family_id = _require_family_id(current_user)
+
+    # --- Validate split count ---
+    if len(body.splits) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="At least 2 splits are required. Use /approve for a single expense.",
+        )
+
+    # --- Load pending ---
+    pending = plaid_service.get_pending_transaction(pending_id, family_id)
+    if not pending:
+        raise HTTPException(status_code=404, detail="Pending transaction not found")
+
+    if pending.get("status") != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Transaction already {pending['status']}",
+        )
+
+    # --- Validate amounts sum ---
+    pending_amount = abs(float(pending.get("amount", 0.0)))
+    split_total = sum(abs(float(s.amount)) for s in body.splits)
+    if abs(split_total - pending_amount) > 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Split amounts sum to {split_total:.2f} but pending amount is "
+                f"{pending_amount:.2f} (tolerance $0.01)."
+            ),
+        )
+
+    # --- Resolve shared fields ---
+    currency = pending.get("iso_currency_code") or "USD"
+    tags = body.tags or []
+
+    if body.payment_method:
+        try:
+            payment_method = PaymentMethod(body.payment_method)
+        except ValueError:
+            payment_method = PaymentMethod.CREDIT
+    else:
+        acct_info = _get_account_info(family_id, pending.get("account_id", ""))
+        pm_str = _payment_method_from_account_type(acct_info.get("type"))
+        try:
+            payment_method = PaymentMethod(pm_str)
+        except ValueError:
+            payment_method = PaymentMethod.CREDIT
+
+    if body.date:
+        try:
+            from datetime import date as _date
+            txn_date = _date.fromisoformat(body.date)
+        except (ValueError, TypeError):
+            from datetime import date as _date
+            txn_date = _date.today()
+    else:
+        date_str = pending.get("date") or pending.get("authorized_date")
+        try:
+            from datetime import date as _date
+            txn_date = _date.fromisoformat(str(date_str)) if date_str else _date.today()
+        except (ValueError, TypeError):
+            from datetime import date as _date
+            txn_date = _date.today()
+
+    merchant = body.merchant if body.merchant is not None else pending.get("merchant_name")
+    description_base = (
+        body.description
+        or pending.get("merchant_name")
+        or pending.get("name")
+        or "Bank transaction"
+    )
+
+    # --- Create one expense per split ---
+    svc = get_expense_service()
+    expense_ids: list[str] = []
+
+    for split in body.splits:
+        split_amount = abs(float(split.amount))
+
+        category_str = split.category or "other"
+        try:
+            category = ExpenseCategory(category_str)
+        except ValueError:
+            category = ExpenseCategory.OTHER
+
+        beneficiary = split.beneficiary or current_user.id
+
+        expense_create = ExpenseCreate(
+            amount=split_amount,
+            currency=currency,
+            date=txn_date,
+            description=description_base,
+            merchant=merchant,
+            payment_method=payment_method,
+            category=category,
+            beneficiary=beneficiary,
+            tags=tags,
+            budget_id=split.budget_id or None,
+        )
+
+        expense = await svc.create(expense_create, current_user)
+        expense_ids.append(expense.id)
+
+        # Tag the expense with source metadata (best-effort)
+        try:
+            db = get_firestore_client()
+            db.collection("expenses").document(expense.id).update({
+                "source": "plaid_split",
+                "plaid_transaction_id": pending.get("plaid_transaction_id"),
+            })
+        except Exception:
+            logger.warning("Could not write plaid_split metadata onto expense %s", expense.id)
+
+    # --- Mark pending as approved with all expense IDs ---
+    plaid_service.update_pending_status(
+        pending_id,
+        status="approved",
+        expense_ids=expense_ids,
+        actor_user_id=current_user.id,
+    )
+
+    # --- Side-effect: budget status (best-effort, must not 500 the response) ---
+    try:
+        from app.services.budget_service import get_budget_service
+        budget_svc = get_budget_service()
+        await budget_svc.check_budget_alerts(family_id)
+    except Exception:
+        pass
+
+    logger.info(
+        "approve_split pending=%s splits=%d expense_ids=%s user=%s family=%s",
+        pending_id, len(expense_ids), expense_ids, current_user.id, family_id,
+    )
+
+    return {"expense_ids": expense_ids, "pending_id": pending_id}
+
+
+# ---------------------------------------------------------------------------
 # Sandbox / test-only endpoints — 404 in production
 # ---------------------------------------------------------------------------
 

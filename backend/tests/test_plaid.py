@@ -1013,3 +1013,150 @@ class TestCreateLinkTokenRedirectUri:
         captured: dict = {}
         self._call_create_link_token("mobile", captured)
         assert captured["req"].redirect_uri == PLAID_REDIRECT_URI_MOBILE
+
+
+# ---------------------------------------------------------------------------
+# approve-split endpoint tests
+# ---------------------------------------------------------------------------
+
+
+def _make_split_expense(expense_id: str, amount: float):
+    from app.models.expense import ExpenseResponse, ExpenseCategory, PaymentMethod
+    from datetime import date
+
+    mock = MagicMock(spec=ExpenseResponse)
+    mock.id = expense_id
+    mock.amount = amount
+    mock.model_dump = MagicMock(return_value={"id": expense_id, "amount": amount})
+    return mock
+
+
+class TestApproveSplit:
+    """Tests for POST /pending/{id}/approve-split."""
+
+    def _run_split(self, pending_doc, splits, extra_body=None, user=None):
+        """Helper: call approve_split with mocked dependencies."""
+        from app.routers.plaid import approve_split, ApproveSplitRequest, SplitItem
+        import asyncio
+
+        user = user or _make_user()
+        split_items = [SplitItem(**s) for s in splits]
+        body_kwargs = {"splits": split_items, "merchant": "Costco Wholesale",
+                       "date": "2026-06-11", "payment_method": "credit"}
+        if extra_body:
+            body_kwargs.update(extra_body)
+        body = ApproveSplitRequest(**body_kwargs)
+
+        # Create mock expenses corresponding to each split
+        mock_expenses = [
+            _make_split_expense(f"exp-split-{i}", abs(float(s.amount)))
+            for i, s in enumerate(split_items)
+        ]
+
+        call_count = {"n": 0}
+
+        async def _fake_create(expense_create, calling_user):
+            idx = call_count["n"]
+            call_count["n"] += 1
+            return mock_expenses[idx]
+
+        with (
+            patch("app.routers.plaid.plaid_service.get_pending_transaction", return_value=pending_doc),
+            patch("app.routers.plaid.plaid_service.update_pending_status") as mock_update,
+            patch("app.routers.plaid._get_account_info", return_value={"type": "credit"}),
+            patch("app.routers.plaid.get_firestore_client") as mock_fs,
+            patch("app.services.expense_service.ExpenseService.create", new_callable=AsyncMock, side_effect=_fake_create),
+        ):
+            mock_fs.return_value.collection.return_value.document.return_value.update = MagicMock()
+            result = asyncio.run(approve_split(pending_doc["id"], body, user))
+            return result, mock_update
+
+    def test_happy_path_three_splits(self):
+        """3 splits summing to pending amount -> 3 expenses created, pending approved."""
+        pending = _make_pending_doc(amount=120.00)
+        splits = [
+            {"amount": 60.00, "category": "groceries"},
+            {"amount": 40.00, "category": "dining"},
+            {"amount": 20.00, "category": "other"},
+        ]
+        result, mock_update = self._run_split(pending, splits)
+
+        assert len(result["expense_ids"]) == 3
+        assert result["pending_id"] == pending["id"]
+        mock_update.assert_called_once()
+        call_kwargs = mock_update.call_args
+        assert call_kwargs[1]["status"] == "approved"
+        assert len(call_kwargs[1]["expense_ids"]) == 3
+
+    def test_sum_mismatch_returns_400(self):
+        """Splits not summing to pending amount raise 400."""
+        from fastapi import HTTPException
+        import asyncio
+        from app.routers.plaid import approve_split, ApproveSplitRequest, SplitItem
+
+        pending = _make_pending_doc(amount=100.00)
+        splits = [SplitItem(amount=60.00, category="groceries"),
+                  SplitItem(amount=30.00, category="dining")]  # total = 90 != 100
+        body = ApproveSplitRequest(splits=splits)
+
+        with (
+            patch("app.routers.plaid.plaid_service.get_pending_transaction", return_value=pending),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(approve_split(pending["id"], body, _make_user()))
+            assert exc_info.value.status_code == 400
+            assert "90.00" in exc_info.value.detail or "sum" in exc_info.value.detail.lower() or "100.00" in exc_info.value.detail
+
+    def test_single_split_returns_400(self):
+        """Exactly 1 split raises 400 — caller should use /approve instead."""
+        from fastapi import HTTPException
+        import asyncio
+        from app.routers.plaid import approve_split, ApproveSplitRequest, SplitItem
+
+        pending = _make_pending_doc(amount=42.50)
+        splits = [SplitItem(amount=42.50, category="dining")]
+        body = ApproveSplitRequest(splits=splits)
+
+        with (
+            patch("app.routers.plaid.plaid_service.get_pending_transaction", return_value=pending),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(approve_split(pending["id"], body, _make_user()))
+            assert exc_info.value.status_code == 400
+            assert "2" in exc_info.value.detail or "split" in exc_info.value.detail.lower()
+
+    def test_already_approved_returns_409(self):
+        """Calling approve-split on an already-approved pending row raises 409."""
+        from fastapi import HTTPException
+        import asyncio
+        from app.routers.plaid import approve_split, ApproveSplitRequest, SplitItem
+
+        pending = _make_pending_doc(amount=100.00, status="approved")
+        splits = [SplitItem(amount=50.00, category="groceries"),
+                  SplitItem(amount=50.00, category="dining")]
+        body = ApproveSplitRequest(splits=splits)
+
+        with (
+            patch("app.routers.plaid.plaid_service.get_pending_transaction", return_value=pending),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(approve_split(pending["id"], body, _make_user()))
+            assert exc_info.value.status_code == 409
+
+    def test_cross_family_pending_returns_404(self):
+        """Pending belonging to a different family returns 404."""
+        from fastapi import HTTPException
+        import asyncio
+        from app.routers.plaid import approve_split, ApproveSplitRequest, SplitItem
+
+        # get_pending_transaction returns None for cross-family access
+        splits = [SplitItem(amount=50.00, category="groceries"),
+                  SplitItem(amount=50.00, category="dining")]
+        body = ApproveSplitRequest(splits=splits)
+
+        with (
+            patch("app.routers.plaid.plaid_service.get_pending_transaction", return_value=None),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(approve_split("pend-foreign", body, _make_user()))
+            assert exc_info.value.status_code == 404

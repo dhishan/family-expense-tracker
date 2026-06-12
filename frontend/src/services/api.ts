@@ -19,6 +19,7 @@ import type {
   NotificationListResponse,
   PlaidItemsResponse,
   PendingListResponse,
+  PendingApproveSplit,
 } from '../types'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -362,6 +363,11 @@ export const plaidApi = {
 
   saveUncategorized: async (id: string): Promise<{ expense: Expense }> => {
     const response = await api.post<{ expense: Expense }>(`/plaid/pending/${id}/save-uncategorized`)
+    return response.data
+  },
+
+  approveSplit: async (id: string, payload: PendingApproveSplit): Promise<{ expense_ids: string[]; pending_id: string }> => {
+    const response = await api.post<{ expense_ids: string[]; pending_id: string }>(`/plaid/pending/${id}/approve-split`, payload)
     return response.data
   },
 }
