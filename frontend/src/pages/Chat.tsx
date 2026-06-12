@@ -3,8 +3,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '../store/auth'
-import { PaperAirplaneIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon } from '@heroicons/react/24/outline'
-import { expensesApi, budgetsApi, investmentsApi } from '../services/api'
+import { PaperAirplaneIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon, ClockIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline'
+import { expensesApi, budgetsApi, investmentsApi, chatApi, type ChatConversationSummary } from '../services/api'
 import type { HoldingGroup } from '../services/api'
 import type { BudgetStatus } from '../types'
 
@@ -320,6 +320,7 @@ export default function Chat() {
   // conversation; once set, subsequent sends continue the same one
   // server-side. Reset by "New chat".
   const [conversationId, setConversationId] = useState<string | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -559,20 +560,31 @@ export default function Chat() {
           </div>
           <p className="text-xs text-gray-500">Powered by Claude - live data from your brokers, banks and cards, FRED, Tiingo, Finnhub, SEC EDGAR, prediction markets, and options chains</p>
         </div>
-        {messages.length > 0 && (
+        <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
-            onClick={() => {
-              setMessages([])
-              setConversationId(null)
-            }}
-            aria-label="Start a new chat"
+            onClick={() => setHistoryOpen(true)}
+            aria-label="Chat history"
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
           >
-            <PlusIcon className="h-4 w-4" />
-            New chat
+            <ClockIcon className="h-4 w-4" />
+            History
           </button>
-        )}
+          {messages.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setMessages([])
+                setConversationId(null)
+              }}
+              aria-label="Start a new chat"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+            >
+              <PlusIcon className="h-4 w-4" />
+              New chat
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Message area */}
@@ -671,6 +683,128 @@ export default function Chat() {
         <p className="text-center text-xs text-gray-400 mt-2">
           Press Enter to send &middot; Shift+Enter for newline
         </p>
+      </div>
+
+      <HistoryDrawer
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        currentConversationId={conversationId}
+        onSelect={(id) => {
+          setConversationId(id)
+          setMessages([])
+          setHistoryOpen(false)
+        }}
+      />
+    </div>
+  )
+}
+
+// ---- History drawer --------------------------------------------------------
+
+interface HistoryDrawerProps {
+  open: boolean
+  onClose: () => void
+  currentConversationId: string | null
+  onSelect: (id: string) => void
+}
+
+function HistoryDrawer({ open, onClose, currentConversationId, onSelect }: HistoryDrawerProps) {
+  const { data, refetch, isLoading } = useQuery({
+    queryKey: ['chat', 'conversations'],
+    queryFn: () => chatApi.listConversations(50),
+    enabled: open,
+    staleTime: 30_000,
+  })
+
+  if (!open) return null
+
+  const conversations: ChatConversationSummary[] = data?.conversations ?? []
+
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    if (!confirm('Delete this conversation? This cannot be undone.')) return
+    try {
+      await chatApi.deleteConversation(id)
+      refetch()
+    } catch {
+      alert('Failed to delete conversation')
+    }
+  }
+
+  const formatDate = (s: string | null) => {
+    if (!s) return ''
+    const d = new Date(s)
+    const now = new Date()
+    const diff = (now.getTime() - d.getTime()) / 1000
+    if (diff < 60) return 'just now'
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+    if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}d ago`
+    return d.toLocaleDateString()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      <div
+        className="relative ml-auto h-full w-full sm:w-96 bg-white shadow-xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 shrink-0">
+          <h2 className="text-sm font-semibold text-gray-900">Recent conversations</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close history"
+            className="p-1 text-gray-500 hover:text-gray-700"
+          >
+            <XMarkIcon className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {isLoading ? (
+            <div className="p-6 text-center text-sm text-gray-500">Loading…</div>
+          ) : conversations.length === 0 ? (
+            <div className="p-6 text-center text-sm text-gray-500">
+              No conversations yet. Start chatting to see history here.
+            </div>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {conversations.map((c) => {
+                const active = c.id === currentConversationId
+                return (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      onClick={() => onSelect(c.id)}
+                      className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors flex items-start gap-2 ${
+                        active ? 'bg-indigo-50' : ''
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {c.title || 'Untitled conversation'}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {formatDate(c.updated_at)}
+                          {c.turn_count > 0 && ` · ${c.turn_count} turn${c.turn_count !== 1 ? 's' : ''}`}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDelete(e, c.id)}
+                        aria-label="Delete conversation"
+                        className="p-1 text-gray-400 hover:text-red-600 shrink-0"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
   )

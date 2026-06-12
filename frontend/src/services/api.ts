@@ -392,4 +392,30 @@ export const rulesApi = {
   },
 }
 
+// Chat API (history)
+export interface ChatConversationSummary {
+  id: string
+  title: string
+  created_at: string | null
+  updated_at: string | null
+  turn_count: number
+  last_turn_id: string | null
+}
+
+export const chatApi = {
+  listConversations: async (limit = 50): Promise<{ conversations: ChatConversationSummary[] }> => {
+    const response = await api.get('/chat/conversations', { params: { limit } })
+    return response.data
+  },
+
+  getConversation: async (conversationId: string): Promise<{ conversation: ChatConversationSummary; turns: unknown[] }> => {
+    const response = await api.get(`/chat/conversations/${conversationId}`)
+    return response.data
+  },
+
+  deleteConversation: async (conversationId: string): Promise<void> => {
+    await api.delete(`/chat/conversations/${conversationId}`)
+  },
+}
+
 export default api
