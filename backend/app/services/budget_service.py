@@ -194,23 +194,25 @@ class BudgetService:
         if bud_beneficiary in (None, "", "family", "Family"):
             bud_beneficiary = None
 
-        # Get spending in the current period
+        # Run current-period spending and rollover query in parallel —
+        # they don't depend on each other.
+        import asyncio
         expense_service = get_expense_service()
-        spent = await expense_service.get_spending_for_budget(
-            family_id=family_id,
-            start_date=period_start,
-            end_date=period_end,
-            category=budget.category,
-            beneficiary=bud_beneficiary,
-            budget_id=budget.id,
-        )
-
-        # Compute cumulative rollover from prior periods (when enabled).
-        rollover_amount = await self._compute_rollover(
-            budget=budget,
-            current_period_start=period_start,
-            family_id=family_id,
-            bud_beneficiary=bud_beneficiary,
+        spent, rollover_amount = await asyncio.gather(
+            expense_service.get_spending_for_budget(
+                family_id=family_id,
+                start_date=period_start,
+                end_date=period_end,
+                category=budget.category,
+                beneficiary=bud_beneficiary,
+                budget_id=budget.id,
+            ),
+            self._compute_rollover(
+                budget=budget,
+                current_period_start=period_start,
+                family_id=family_id,
+                bud_beneficiary=bud_beneficiary,
+            ),
         )
 
         effective_amount = budget.amount + rollover_amount
@@ -287,19 +289,70 @@ class BudgetService:
         return max(0.0, total_past_budget - past_spent)
 
     async def list_with_status(self, family_id: str, reference_date: Optional[date] = None) -> List[BudgetStatus]:
-        """List all budgets with their current status."""
+        """List all budgets with their current status.
+
+        Fans out per-budget status calls in parallel. We already have the
+        Budget objects from self.list(), so we pass them directly to
+        _status_for_budget instead of having each get_status re-fetch its
+        own doc. Saves N redundant single-doc reads on every dashboard
+        load.
+        """
+        import asyncio
         budgets = await self.list(family_id)
 
-        statuses = []
-        for budget in budgets:
-            try:
-                status = await self.get_status(budget.id, family_id, reference_date=reference_date)
-                if status:
-                    statuses.append(status)
-            except Exception:
-                pass
-        
-        return statuses
+        results = await asyncio.gather(
+            *[self._status_for_budget(b, family_id, reference_date=reference_date) for b in budgets],
+            return_exceptions=True,
+        )
+        return [s for s in results if isinstance(s, BudgetStatus)]
+
+    async def _status_for_budget(
+        self,
+        budget: BudgetResponse,
+        family_id: str,
+        reference_date: Optional[date] = None,
+    ) -> Optional[BudgetStatus]:
+        """Status from an already-loaded Budget. Same body as get_status,
+        but skips the redundant single-doc fetch.
+        """
+        period = BudgetPeriod(budget.period)
+        period_start, period_end = self._get_period_dates(period, reference_date=reference_date)
+        bud_beneficiary = budget.beneficiary
+        if bud_beneficiary in (None, "", "family", "Family"):
+            bud_beneficiary = None
+
+        import asyncio
+        expense_service = get_expense_service()
+        spent, rollover_amount = await asyncio.gather(
+            expense_service.get_spending_for_budget(
+                family_id=family_id,
+                start_date=period_start,
+                end_date=period_end,
+                category=budget.category,
+                beneficiary=bud_beneficiary,
+                budget_id=budget.id,
+            ),
+            self._compute_rollover(
+                budget=budget,
+                current_period_start=period_start,
+                family_id=family_id,
+                bud_beneficiary=bud_beneficiary,
+            ),
+        )
+        effective_amount = budget.amount + rollover_amount
+        remaining = effective_amount - spent
+        percentage_used = (spent / effective_amount * 100) if effective_amount > 0 else 0
+        return BudgetStatus(
+            budget=budget,
+            spent=spent,
+            remaining=remaining,
+            percentage_used=round(percentage_used, 2),
+            is_over_budget=spent > effective_amount,
+            period_start=period_start,
+            period_end=period_end,
+            rollover_amount=round(rollover_amount, 2),
+            effective_amount=round(effective_amount, 2),
+        )
     
     async def check_budget_alerts(
         self, 
