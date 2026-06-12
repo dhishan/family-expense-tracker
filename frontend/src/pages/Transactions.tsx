@@ -12,7 +12,7 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
 } from '@heroicons/react/24/outline'
-import { expensesApi, plaidApi, budgetsApi } from '../services/api'
+import { expensesApi, plaidApi, budgetsApi, rulesApi } from '../services/api'
 import { useAuthStore } from '../store/auth'
 import { CATEGORY_INFO, PAYMENT_METHOD_LABELS } from '../types'
 import type { ExpenseCreate, ExpenseCategory, PaymentMethod, Expense, PendingTransaction, BudgetStatus, PendingListResponse, PendingApproveSplit } from '../types'
@@ -170,6 +170,7 @@ export default function Transactions() {
   const [splitMode, setSplitMode] = useState(false)
   const [splits, setSplits] = useState<SplitRow[]>([])
   const [splitUnit, setSplitUnit] = useState<'$' | '%'>('$')
+  const [saveAsRule, setSaveAsRule] = useState(false)
 
   // Discard undo buffer: map id -> { tx, timerId }
   const discardBuffer = useRef<Map<string, { tx: PendingTransaction; timerId: ReturnType<typeof setTimeout> }>>(new Map())
@@ -224,6 +225,14 @@ export default function Transactions() {
     staleTime: 2 * 60 * 1000,
   })
   const budgets: BudgetStatus[] = budgetsData?.budgets ?? []
+
+  const { data: rulesData } = useQuery({
+    queryKey: ['rules', 'merchant'],
+    queryFn: rulesApi.list,
+    enabled: !!user?.family_id,
+    staleTime: 2 * 60 * 1000,
+  })
+  const existingRules = rulesData?.rules ?? []
 
   const visiblePending = allPending.filter(
     (tx) => !optimisticallyDiscarded.has(tx.id)
@@ -406,6 +415,7 @@ export default function Transactions() {
     setApproveBudgetId(tx.suggested_budget_id ?? undefined)
     setSplitMode(false)
     setSplits([])
+    setSaveAsRule(false)
     const dateStr = tx.date || tx.authorized_date || ''
     resetApprove({
       amount: Math.abs(tx.amount),
@@ -420,7 +430,7 @@ export default function Transactions() {
     })
   }
 
-  const onApproveSubmit = (data: ApproveFormData) => {
+  const onApproveSubmit = async (data: ApproveFormData) => {
     if (!approvingTx) return
     // For income rows: require the confirmation banner to be acked
     if (approvingIsIncome && !incomeConfirmed) {
@@ -430,6 +440,26 @@ export default function Transactions() {
     const tagsArr = data.tags
       ? data.tags.split(',').map((t) => t.trim()).filter(Boolean)
       : []
+
+    // If "always apply" is checked, POST rule first (non-fatal on 409)
+    if (saveAsRule && data.merchant) {
+      try {
+        await rulesApi.create({
+          merchant_name: data.merchant,
+          category: data.category,
+          budget_id: approveBudgetId ?? null,
+          beneficiary: data.beneficiary,
+        })
+        queryClient.invalidateQueries({ queryKey: ['rules', 'merchant'] })
+      } catch (err: unknown) {
+        const status = (err as { response?: { status?: number } })?.response?.status
+        if (status === 409) {
+          toast('Rule already exists', { icon: 'ℹ️' })
+        }
+        // non-fatal: continue with approve regardless
+      }
+    }
+
     approveMutation.mutate({
       id: approvingTx.id,
       edits: {
@@ -481,11 +511,13 @@ export default function Transactions() {
     })
   }
 
-  // Helpers for split mode
-  const splitTotalAmount = (() => {
-    const v = parseFloat(String(watchApprove('amount')))
-    return isNaN(v) ? Math.abs(approvingTx?.amount ?? 0) : v
-  })()
+  // Helpers for split mode.
+  // Anchor to the original pending amount, NOT the editable form field.
+  // The backend compares sum(splits) to pending.amount; if the user edited
+  // the Amount before entering split mode (or react-hook-form returned a
+  // string with float drift), the splits would sum to a different value
+  // and the backend would 400 with a sum mismatch.
+  const splitTotalAmount = Math.abs(approvingTx?.amount ?? 0)
   const allocatedTotal = splits.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0)
   // In % mode, allocations sum to 100; in $ mode, to splitTotalAmount.
   const allocationTarget = splitUnit === '%' ? 100 : splitTotalAmount
@@ -992,10 +1024,24 @@ export default function Transactions() {
                     type="button"
                     onClick={() => {
                       // User confirmed — now actually submit
-                      handleApproveSubmit((data) => {
+                      handleApproveSubmit(async (data) => {
                         const tagsArr = data.tags
                           ? data.tags.split(',').map((t) => t.trim()).filter(Boolean)
                           : []
+                        if (saveAsRule && data.merchant) {
+                          try {
+                            await rulesApi.create({
+                              merchant_name: data.merchant,
+                              category: data.category,
+                              budget_id: approveBudgetId ?? null,
+                              beneficiary: data.beneficiary,
+                            })
+                            queryClient.invalidateQueries({ queryKey: ['rules', 'merchant'] })
+                          } catch (err: unknown) {
+                            const status = (err as { response?: { status?: number } })?.response?.status
+                            if (status === 409) toast('Rule already exists', { icon: 'ℹ️' })
+                          }
+                        }
                         approveMutation.mutate({
                           id: approvingTx.id,
                           edits: {
@@ -1180,6 +1226,39 @@ export default function Transactions() {
                       </option>
                     ))}
                   </select>
+
+                  {/* Always-apply rule checkbox — single mode only */}
+                  {(() => {
+                    const merchantVal = watchApprove('merchant')
+                    if (!merchantVal) return null
+                    const ruleExists = existingRules.some(
+                      (r) => r.merchant_name.toLowerCase() === merchantVal.toLowerCase()
+                    )
+                    if (ruleExists) {
+                      return (
+                        <p className="mt-2 text-xs text-gray-500">
+                          A rule already exists for this merchant. Delete it in{' '}
+                          <a href="/settings/auto-rules" className="underline text-primary-600">
+                            Settings
+                          </a>{' '}
+                          to change.
+                        </p>
+                      )
+                    }
+                    return (
+                      <label className="flex items-start gap-2 mt-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={saveAsRule}
+                          onChange={(e) => setSaveAsRule(e.target.checked)}
+                          className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                        />
+                        <span className="text-sm text-gray-700">
+                          Always apply this categorization to future &ldquo;{merchantVal}&rdquo; transactions
+                        </span>
+                      </label>
+                    )
+                  })()}
                 </div>
               )}
 

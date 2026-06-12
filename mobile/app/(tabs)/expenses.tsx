@@ -16,10 +16,10 @@ import {
 } from 'react-native'
 import Slider from '@react-native-community/slider'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { expensesApi, plaidApi, budgetsApi } from '@/services/api'
+import { expensesApi, plaidApi, budgetsApi, rulesApi } from '@/services/api'
 import { useAuthStore } from '@/store/auth'
 import { CATEGORY_INFO } from '@/types'
-import type { ExpenseCategory, ExpenseCreate, Expense, PendingTransaction, PaymentMethod, BudgetStatus, ApproveSplitPayload } from '@/types'
+import type { ExpenseCategory, ExpenseCreate, Expense, PendingTransaction, PaymentMethod, BudgetStatus, ApproveSplitPayload, MerchantRule } from '@/types'
 
 const CATEGORY_EMOJI: Record<string, string> = {
   groceries: '🛒',
@@ -320,6 +320,7 @@ interface ApproveEdits {
   beneficiary: string
   tags: string[]
   budget_id?: string | null
+  saveAsRule?: boolean
 }
 
 interface ApproveModalProps {
@@ -360,6 +361,8 @@ function ApproveModal({
   // Track if the user manually changed category so budget auto-fill doesn't fight them
   const [categoryManuallySet, setCategoryManuallySet] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  // Rule checkbox (single-budget mode only)
+  const [saveAsRule, setSaveAsRule] = useState(false)
   // Split mode
   const [splitMode, setSplitMode] = useState(false)
   const [splits, setSplits] = useState<SplitRow[]>([])
@@ -372,6 +375,16 @@ function ApproveModal({
     enabled: visible,
   })
   const budgets: BudgetStatus[] = budgetsData?.budgets ?? []
+
+  const { data: rulesData } = useQuery({
+    queryKey: ['rules', 'merchant'],
+    queryFn: rulesApi.list,
+    enabled: visible,
+  })
+  const existingRules: MerchantRule[] = rulesData ?? []
+  const merchantLower = merchant.trim().toLowerCase()
+  const ruleAlreadyExists = merchantLower.length > 0
+    && existingRules.some((r) => r.merchant.toLowerCase() === merchantLower)
 
   useEffect(() => {
     if (pending && visible) {
@@ -398,6 +411,7 @@ function ApproveModal({
         setBeneficiary(currentUserId)
       }
       setCategoryManuallySet(false)
+      setSaveAsRule(false)
       setSplitMode(false)
       setSplits([])
     }
@@ -483,7 +497,9 @@ function ApproveModal({
   }
 
   const handleSplitApprove = () => {
-    const totalAmt = parseFloat(amount)
+    // Anchor to the original pending amount, NOT the editable form field —
+    // backend compares sum(splits) to pending.amount and 400s on drift.
+    const totalAmt = Math.abs(pending?.amount ?? parseFloat(amount) ?? 0)
     if (isNaN(totalAmt) || totalAmt <= 0) {
       Alert.alert('Validation', 'Enter a valid total amount.')
       return
@@ -558,11 +574,12 @@ function ApproveModal({
       beneficiary,
       tags: tagsArr,
       budget_id: budgetId,
+      saveAsRule: saveAsRule && !ruleAlreadyExists,
     })
   }
 
-  // Derived split validity
-  const totalAmt = parseFloat(amount) || 0
+  // Derived split validity — anchored to pending.amount (see handleSplitApprove)
+  const totalAmt = Math.abs(pending?.amount ?? parseFloat(amount) ?? 0)
   const allocated = splits.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
   const allocationTarget = splitUnit === '%' ? 100 : totalAmt
   const splitIsBalanced = Math.abs(allocated - allocationTarget) <= 0.01
@@ -884,6 +901,29 @@ function ApproveModal({
                 </>
               )}
 
+              {/* Auto-rule checkbox — single-budget mode only */}
+              {!splitMode && merchant.trim().length > 0 && (
+                ruleAlreadyExists ? (
+                  <Text style={ruleStyles.alreadyExists}>
+                    Rule already exists. Delete it in Settings to change.
+                  </Text>
+                ) : (
+                  <TouchableOpacity
+                    style={ruleStyles.checkRow}
+                    onPress={() => setSaveAsRule((v) => !v)}
+                    activeOpacity={0.7}
+                    testID="save-as-rule-checkbox"
+                  >
+                    <View style={[ruleStyles.checkbox, saveAsRule && ruleStyles.checkboxChecked]}>
+                      {saveAsRule && <Text style={ruleStyles.checkmark}>✓</Text>}
+                    </View>
+                    <Text style={ruleStyles.checkLabel}>
+                      Always apply to future &ldquo;{merchant.trim()}&rdquo; transactions
+                    </Text>
+                  </TouchableOpacity>
+                )
+              )}
+
               <Text style={modalStyles.label}>Tags (comma-separated)</Text>
               <TextInput
                 style={modalStyles.input}
@@ -1106,6 +1146,49 @@ const approveStyles = StyleSheet.create({
   budgetChipNameActive: { color: '#1d4ed8' },
   budgetChipMeta: { fontSize: 10, color: '#9ca3af', marginTop: 2 },
   budgetChipMetaActive: { color: '#6366f1' },
+})
+
+const ruleStyles = StyleSheet.create({
+  checkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingVertical: 4,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#d1d5db',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    flexShrink: 0,
+  },
+  checkboxChecked: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  checkmark: {
+    fontSize: 13,
+    color: '#fff',
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  checkLabel: {
+    flex: 1,
+    fontSize: 13,
+    color: '#374151',
+    lineHeight: 18,
+  },
+  alreadyExists: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginBottom: 16,
+    fontStyle: 'italic',
+  },
 })
 
 // ─── Add/Edit modal ────────────────────────────────────────────────────────────
@@ -1809,6 +1892,21 @@ export default function TransactionsScreen() {
       removePendingFromCache(vars.id)
       queryClient.invalidateQueries({ queryKey: ['expenses'] })
       setApprovingPending(null)
+      // If user opted in to auto-rule, fire it non-blocking (409 = already exists, safe to ignore)
+      if (vars.edits.saveAsRule && vars.edits.merchant.trim()) {
+        rulesApi.create({
+          merchant: vars.edits.merchant.trim(),
+          category: vars.edits.category,
+          budget_id: vars.edits.budget_id ?? null,
+          beneficiary: vars.edits.beneficiary || null,
+        }).then(() => {
+          queryClient.invalidateQueries({ queryKey: ['rules', 'merchant'] })
+        }).catch((err: { response?: { status?: number } }) => {
+          if (err?.response?.status !== 409) {
+            Alert.alert('Note', 'Expense approved. Could not save auto-rule.')
+          }
+        })
+      }
     },
     onError: () => Alert.alert('Error', 'Failed to approve transaction.'),
   })

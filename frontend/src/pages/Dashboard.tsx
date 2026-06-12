@@ -211,7 +211,7 @@ export default function Dashboard() {
                 onClick={() => setBudgetView('period')}
                 className={`px-3 py-1.5 ${budgetView === 'period' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
               >
-                This Period
+                Period
               </button>
               <button
                 onClick={() => setBudgetView('monthly')}
@@ -260,9 +260,13 @@ export default function Dashboard() {
                         </span>
                         {budgetView === 'period' ? (
                           <div className="text-xs text-gray-400">
-                            {new Date(status.period_start + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                            {' – '}
-                            {new Date(status.period_end + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            <span className="capitalize">{status.budget.period}</span>
+                            {' · '}
+                            {status.budget.period === 'yearly'
+                              ? new Date(status.period_start + 'T00:00:00').getFullYear()
+                              : status.budget.period === 'monthly'
+                              ? new Date(status.period_start + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+                              : `${new Date(status.period_start + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${new Date(status.period_end + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
                           </div>
                         ) : (
                           <div className="text-xs text-gray-400">
