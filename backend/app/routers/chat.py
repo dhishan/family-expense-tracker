@@ -1615,11 +1615,12 @@ async def _generate_turn(
         lf_obs = lf.start_observation(
             name="portfolio-chat",
             as_type="span",
+            user_id=user_id,        # TOP-LEVEL — populates Langfuse Users tab
+            session_id=session_id,  # TOP-LEVEL — populates Sessions tab
             metadata={
-                "user_id": user_id,
-                "session_id": session_id,
                 "conv_id": conv_id,
                 "turn_id": assistant_turn_id,
+                "source": "chat",
             },
         )
     except Exception as e:
@@ -1862,6 +1863,30 @@ async def _generate_turn(
                 metadata={"stop_reason": stop_reason, "n_tool_calls": len(tool_use_blocks)},
             )
 
+            # Record usage to Firestore (cost chip + future quota gate).
+            # Wrapped in try/except inside record_usage so this can never
+            # break the chat response.
+            try:
+                from app.services import usage_service as _usage_svc
+                from types import SimpleNamespace
+                _usage_svc.record_usage(
+                    user_id=user_id,
+                    family_id=_get_family_id(user_id),
+                    source="chat",
+                    model=model_id,
+                    conversation_id=conv_id,
+                    turn_id=assistant_turn_id,
+                    usage=SimpleNamespace(
+                        input_tokens=usage_dict["input"],
+                        output_tokens=usage_dict["output"],
+                        cache_read_input_tokens=usage_dict["cache_read"],
+                        cache_creation_input_tokens=usage_dict["cache_creation"],
+                    ),
+                    duration_ms=0,  # streaming — not tracked at sub-turn level here
+                )
+            except Exception as e:
+                logger.warning("usage_service.record_usage failed: %s", e)
+
             # ---- No tool calls: we are done -----------------------------------
             if stop_reason == "end_turn" or not tool_use_blocks:
                 break
@@ -1943,17 +1968,30 @@ async def _generate_turn(
             try:
                 lf_obs.update(
                     output={"text": "".join(output_text_parts)},
-                    metadata={
-                        "user_id": user_id,
-                        "session_id": session_id,
-                        "turns": len(msgs),
-                    },
+                    metadata={"turns": len(msgs)},
                 )
                 lf_obs.end()
                 if lf:
                     lf.flush()
             except Exception as e:
                 logger.warning("Langfuse trace close failed: %s", e)
+
+        # ── Usage metering (best-effort, never breaks chat) ────────────
+        try:
+            from app.services import usage_service as _usage_svc
+            import time as _time
+            _usage_svc.record_usage(
+                user_id=user_id,
+                family_id=None,  # not threaded into _generate_turn; look up if needed
+                source="chat",
+                model=model_id,
+                conversation_id=conv_id,
+                turn_id=assistant_turn_id,
+                usage=stream_usage,
+                duration_ms=0,  # duration tracking can be added later
+            )
+        except Exception as _ue:
+            logger.warning("usage_service record failed (non-fatal): %s", _ue)
 
     except Exception as exc:
         logger.exception("Chat generation error for user %s conv %s", user_id, conv_id)
@@ -1971,7 +2009,7 @@ async def _generate_turn(
             logger.warning("finalize_turn (error) failed: %s", e)
         if lf_obs:
             try:
-                lf_obs.update(metadata={"error": str(exc), "user_id": user_id})
+                lf_obs.update(metadata={"error": str(exc)})
                 lf_obs.end()
                 if lf:
                     lf.flush()
@@ -2021,6 +2059,26 @@ async def chat_start(
     text = (body.message or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="message must not be empty")
+
+    # ── Quota gate (scaffolded, default off) ──────────────────────────
+    # Read user.monthly_cap_usd; if None (default) do nothing.
+    try:
+        from app.services.firestore import get_firestore_client as _get_db
+        from app.services import usage_service as _usage_svc
+        _user_doc = _get_db().collection("users").document(current_user.id).get()
+        if _user_doc.exists:
+            _cap = (_user_doc.to_dict() or {}).get("monthly_cap_usd")
+            if _cap is not None:
+                _spent = _usage_svc.get_monthly_cost(current_user.id)
+                if _spent >= float(_cap):
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Monthly cap of ${_cap:.2f} reached",
+                    )
+    except HTTPException:
+        raise
+    except Exception as _qe:
+        logger.warning("quota gate check failed (non-fatal): %s", _qe)
 
     store = get_chat_store()
     family_id = body.family_id or _family_id_for(current_user)

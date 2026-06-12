@@ -16,7 +16,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import Markdown from 'react-native-markdown-display'
 import { Ionicons } from '@expo/vector-icons'
 import { useQuery } from '@tanstack/react-query'
-import { chatApi, expensesApi, budgetsApi, investmentsApi } from '@/services/api'
+import { chatApi, expensesApi, budgetsApi, investmentsApi, usageApi } from '@/services/api'
 import { useAuthStore } from '@/store/auth'
 import type { BudgetStatus, HoldingGroup } from '@/types'
 
@@ -278,6 +278,8 @@ export default function ChatScreen() {
   const { user } = useAuthStore()
   const starters = useDynamicStarters()
   const listRef = useRef<FlatList>(null)
+  // Reactive mirror of convIdRef.current — needed for React Query key.
+  const [conversationId, setConversationId] = useState<string | null>(null)
   const streamingIdRef = useRef<string | null>(null)
   // Tracks transient SSE-disconnect retries within a single in-flight
   // assistant turn. We allow up to MAX_SSE_RECONNECTS automatic
@@ -285,6 +287,20 @@ export default function ChatScreen() {
   // retry button. Reset on done/error/explicit retry/new chat.
   const reconnectAttemptsRef = useRef<number>(0)
   const MAX_SSE_RECONNECTS = 3
+
+  // ─── Usage cost chip ──────────────────────────────────────────────────────
+  const { data: usageData, refetch: refetchUsage } = useQuery({
+    queryKey: ['usage', 'quick', conversationId],
+    queryFn: () => usageApi.quick(conversationId),
+    enabled: !!user,
+    staleTime: 30_000,
+  })
+  // Keep a ref so the stable openResumeStream callback can trigger a refetch
+  // without closing over a stale function reference.
+  const refetchUsageRef = useRef(refetchUsage)
+  useEffect(() => {
+    refetchUsageRef.current = refetchUsage
+  }, [refetchUsage])
 
   // ─── Durable conversation state ───────────────────────────────────────────
   //
@@ -318,6 +334,7 @@ export default function ChatScreen() {
         convIdRef.current = conv.id
         assistantTurnIdRef.current = null
         lastSeqRef.current = 0
+        setConversationId(conv.id)
         const ui: UIMessage[] = conv.turns.map((t) => ({
           id: t.id,
           role: t.role,
@@ -349,6 +366,7 @@ export default function ChatScreen() {
     assistantTurnIdRef.current = null
     lastSeqRef.current = 0
     reconnectAttemptsRef.current = 0
+    setConversationId(null)
     setMessages([])
     setInput('')
     if (params.conversation_id) {
@@ -404,6 +422,8 @@ export default function ChatScreen() {
           streamCleanupRef.current = null
           reconnectAttemptsRef.current = 0
           scrollToBottom()
+          // Refresh cost chip after each completed turn.
+          void refetchUsageRef.current()
         },
         onError: (err: string) => {
           // Transient SSE drops (lost wifi, switched cell tower, iOS
@@ -543,6 +563,7 @@ export default function ChatScreen() {
       assistantTurnIdRef.current = started.assistant_turn_id
       lastSeqRef.current = 0
       streamingIdRef.current = started.assistant_turn_id
+      setConversationId(started.conversation_id)
 
       // Swap the temp IDs for the server-assigned ones so resume works
       // even mid-render.
@@ -589,6 +610,8 @@ export default function ChatScreen() {
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state !== 'active') return
+      // Refresh usage cost chip on every foreground event.
+      void refetchUsageRef.current()
       if (!convIdRef.current || !assistantTurnIdRef.current) return
       if (!isStreaming) return
       openResumeStream(
@@ -686,9 +709,16 @@ export default function ChatScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <View>
+        <View style={{ flex: 1, marginRight: 8 }}>
           <Text style={styles.title}>Chat</Text>
           <Text style={styles.subtitle}>Powered by Claude - brokers, banks, FRED, Tiingo, Finnhub, SEC EDGAR, prediction markets</Text>
+          {usageData && (usageData.session_cost_usd > 0 || usageData.month_cost_usd > 0 || !!conversationId) ? (
+            <View style={styles.costChip}>
+              <Text style={styles.costChipText}>
+                {`$${usageData.session_cost_usd >= 0.01 ? usageData.session_cost_usd.toFixed(2) : '0.00'} session  ·  $${usageData.month_cost_usd >= 0.01 ? usageData.month_cost_usd.toFixed(2) : '0.00'} month`}
+              </Text>
+            </View>
+          ) : null}
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <TouchableOpacity
@@ -962,5 +992,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#334155',  // slate-700
     lineHeight: 20,
+  },
+  costChip: {
+    alignSelf: 'flex-start',
+    marginTop: 5,
+    backgroundColor: '#f1f5f9',  // slate-100
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  costChipText: {
+    fontSize: 10,
+    color: '#64748b',  // slate-500
+    fontWeight: '500',
   },
 })

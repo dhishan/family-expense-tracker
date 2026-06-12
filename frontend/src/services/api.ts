@@ -418,4 +418,13 @@ export const chatApi = {
   },
 }
 
+export const usageApi = {
+  quick: async (conversationId?: string | null): Promise<{ session_cost_usd: number; month_cost_usd: number }> => {
+    const params: Record<string, string> = {}
+    if (conversationId) params.conversation_id = conversationId
+    const response = await api.get('/usage/quick', { params })
+    return response.data
+  },
+}
+
 export default api

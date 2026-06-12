@@ -512,4 +512,20 @@ export const rulesApi = {
   },
 }
 
+// ─── Usage ────────────────────────────────────────────────────────────────────
+
+export interface QuickUsage {
+  session_cost_usd: number
+  month_cost_usd: number
+}
+
+export const usageApi = {
+  quick: async (conversationId?: string | null): Promise<QuickUsage> => {
+    const params: Record<string, string> = {}
+    if (conversationId) params.conversation_id = conversationId
+    const response = await api.get<QuickUsage>('/usage/quick', { params })
+    return response.data
+  },
+}
+
 export default api

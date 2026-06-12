@@ -157,6 +157,7 @@ def _call_haiku(
             as_type="generation",
             model="claude-haiku-4-5",
             input={"system": _SYSTEM_PROMPT, "user": user_prompt},
+            metadata={"source": "haiku-budget-suggestion"},
         )
     except Exception as lf_err:
         logger.debug("Langfuse init skipped: %s", lf_err)
@@ -185,6 +186,22 @@ def _call_haiku(
             "output": response.usage.output_tokens if response.usage else 0,
         },
     )
+
+    # Record usage (best-effort)
+    try:
+        from app.services import usage_service as _usage_svc
+        _usage_svc.record_usage(
+            user_id="system",
+            family_id=None,
+            source="haiku-budget-suggestion",
+            model="claude-haiku-4-5",
+            conversation_id=None,
+            turn_id=None,
+            usage=response.usage,
+            duration_ms=0,
+        )
+    except Exception as _ue:
+        logger.warning("usage_service record failed in budget_suggester (non-fatal): %s", _ue)
 
     # Parse
     try:

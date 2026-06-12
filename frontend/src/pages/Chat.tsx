@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '../store/auth'
 import { PaperAirplaneIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon, ClockIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline'
-import { expensesApi, budgetsApi, investmentsApi, chatApi, type ChatConversationSummary } from '../services/api'
+import { expensesApi, budgetsApi, investmentsApi, chatApi, usageApi, type ChatConversationSummary } from '../services/api'
 import type { HoldingGroup } from '../services/api'
 import type { BudgetStatus } from '../types'
 
@@ -324,7 +324,14 @@ export default function Chat() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const { token } = useAuthStore()
+  const { token, user } = useAuthStore()
+
+  const { data: usageData, refetch: refetchUsage } = useQuery({
+    queryKey: ['usage', 'quick', conversationId],
+    queryFn: () => usageApi.quick(conversationId),
+    enabled: !!user,
+    staleTime: 30_000,
+  })
 
   // Detect when the user scrolls up — pause auto-scroll until they return
   // to the bottom. Without this, every streamed token snaps the view down
@@ -505,6 +512,7 @@ export default function Chat() {
               const phase = event.phase as string
               if (phase === 'thinking') setActivity('Thinking through next step…')
             } else if (evType === 'done') {
+              void refetchUsage()
               break
             } else if (evType === 'error') {
               throw new Error(event.message as string)
@@ -529,7 +537,7 @@ export default function Chat() {
         setStreaming(false)
       }
     },
-    [messages, streaming, token, conversationId]
+    [messages, streaming, token, conversationId, refetchUsage]
   )
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -561,6 +569,17 @@ export default function Chat() {
           <p className="text-xs text-gray-500">Powered by Claude - live data from your brokers, banks and cards, FRED, Tiingo, Finnhub, SEC EDGAR, prediction markets, and options chains</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {/* Cost chip — hidden when both costs are 0 and no active conversation */}
+          {(conversationId || (usageData && (usageData.session_cost_usd > 0 || usageData.month_cost_usd > 0))) && usageData && (
+            <span
+              title="Cost of this conversation · Cost this month"
+              className="hidden sm:inline-flex items-center px-2.5 py-1 rounded-full bg-gray-100 text-xs text-slate-500 select-none"
+            >
+              ${usageData.session_cost_usd >= 0.01 ? usageData.session_cost_usd.toFixed(2) : '0.00'} session
+              <span className="mx-1.5 text-slate-300">·</span>
+              ${usageData.month_cost_usd >= 0.01 ? usageData.month_cost_usd.toFixed(2) : '0.00'} month
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setHistoryOpen(true)}
