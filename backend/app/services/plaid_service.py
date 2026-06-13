@@ -502,6 +502,10 @@ def _txn_to_doc(txn: Any, family_id: str, connected_by_user_id: str, plaid_item_
         "connected_by_user_id": connected_by_user_id,
         "plaid_item_id": plaid_item_id,
         "plaid_transaction_id": _get(txn, "transaction_id"),
+        # Set on a POSTED transaction by Plaid, referencing the id of the
+        # earlier PENDING transaction for the same real-world charge. Used
+        # to link pending→posted so we don't surface duplicates.
+        "pending_predecessor_id": _get(txn, "pending_transaction_id"),
         "account_id": _get(txn, "account_id"),
         "account_name": account_name,
         "institution_name": institution_name,
@@ -713,6 +717,59 @@ def sync_transactions(plaid_item_id: str) -> dict[str, Any]:
             if existing:
                 # Already in our system — skip to avoid duplicates.
                 continue
+
+            # Plaid pending → posted: a posted transaction carries
+            # `pending_transaction_id` pointing at the previously-pending
+            # row for the same real-world charge. Link them so the user
+            # doesn't see the same purchase twice in their inbox.
+            predecessor_id = doc.get("pending_predecessor_id")
+            if predecessor_id:
+                prev = _find_pending_by_plaid_txn_id(db, family_id, predecessor_id)
+                if prev:
+                    prev_status = prev.get("status", "pending")
+                    if prev_status == "approved":
+                        # User already approved the pending hold → the posted
+                        # version is the same charge. Write an auto-approved
+                        # shadow row referencing the same expense so future
+                        # syncs dedupe correctly via tx_id.
+                        shadow = dict(doc)
+                        shadow["status"] = "approved"
+                        shadow["expense_id"] = prev.get("expense_id")
+                        shadow["approved_at"] = _now()
+                        shadow["approved_by"] = prev.get("approved_by")
+                        shadow["pending_to_posted_link"] = True
+                        db.collection(PLAID_PENDING_COLLECTION).document().set(shadow)
+                        added_count += 1
+                        logger.info(
+                            "sync_transactions: linked posted txn %s to existing expense %s "
+                            "(predecessor %s)", txn_id, prev.get("expense_id"), predecessor_id,
+                        )
+                        continue
+                    if prev_status == "discarded":
+                        # User explicitly said no. Mirror the discard.
+                        shadow = dict(doc)
+                        shadow["status"] = "discarded"
+                        shadow["discarded_at"] = _now()
+                        shadow["discarded_by"] = prev.get("discarded_by")
+                        shadow["pending_to_posted_link"] = True
+                        db.collection(PLAID_PENDING_COLLECTION).document().set(shadow)
+                        continue
+                    # status == "pending" — user hasn't touched the hold yet.
+                    # Update the existing row in place to the posted values
+                    # (newer amount + date), keep status=pending, swap the
+                    # plaid_transaction_id so future syncs match correctly.
+                    db.collection(PLAID_PENDING_COLLECTION).document(prev["id"]).update({
+                        "plaid_transaction_id": txn_id,
+                        "amount": doc.get("amount"),
+                        "date": doc.get("date"),
+                        "authorized_date": doc.get("authorized_date"),
+                        "pending_until_posted": doc.get("pending_until_posted"),
+                        "merchant_name": doc.get("merchant_name"),
+                        "name": doc.get("name"),
+                        "updated_at": _now(),
+                        "pending_to_posted_link": True,
+                    })
+                    continue
 
             # --- Merchant rule auto-apply (non-income only) ---
             if not doc.get("is_income"):
