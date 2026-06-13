@@ -1176,26 +1176,32 @@ def _execute_alpaca_tool(name: str, tool_input: dict) -> str:
 
 
 def _execute_tradier_tool(name: str, tool_input: dict) -> str:
-    """Tradier: option chains with real Greeks."""
+    """Options data via the Tradier-primary / Alpaca-fallback facade.
+
+    The facade routes to Tradier first (real Greeks). On error or empty
+    payload, transparently falls back to Alpaca so a rate-limit / outage
+    on either side doesn't kill chat. Result rows carry a `_provider`
+    field so the LLM can note when Greeks aren't available.
+    """
     try:
         if name == "option_expirations":
-            result = market_data.tradier_option_expirations(symbol=tool_input["symbol"])
+            result = market_data.option_expirations(symbol=tool_input["symbol"])
         elif name == "option_chain":
-            result = market_data.tradier_option_chain(
+            result = market_data.option_chain(
                 symbol=tool_input["symbol"],
                 expiration=tool_input["expiration"],
                 greeks=tool_input.get("greeks", True),
             )
         elif name == "option_strikes":
-            result = market_data.tradier_option_strikes(
+            result = market_data.option_strikes(
                 symbol=tool_input["symbol"],
                 expiration=tool_input["expiration"],
             )
         else:
-            return json.dumps({"error": f"Unknown Tradier tool: {name}"})
+            return json.dumps({"error": f"Unknown options tool: {name}"})
         return json.dumps(result, default=str)
     except Exception as exc:
-        logger.exception("Tradier tool %s failed", name)
+        logger.exception("Options tool %s failed", name)
         return json.dumps({"error": str(exc)})
 
 

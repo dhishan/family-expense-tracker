@@ -526,26 +526,28 @@ def alpaca_bars(
 
 @mcp.tool()
 def option_expirations(symbol: str) -> list:
-    """All option expiration dates for a symbol (Tradier).
+    """All option expiration dates for a symbol (YYYY-MM-DD).
 
-    Returns a list of YYYY-MM-DD strings. Call first to discover valid
-    expirations before pulling a chain.
+    Routes Tradier-first / Alpaca-fallback so an outage on either
+    provider doesn't break the call.
     """
-    return market_data.tradier_option_expirations(symbol=symbol)
+    return market_data.option_expirations(symbol=symbol)
 
 
 @mcp.tool()
 def option_chain(symbol: str, expiration: str, greeks: bool = True) -> list:
-    """Full option chain (calls + puts) for symbol + expiration, with real Greeks
-    (delta, gamma, theta, vega, rho, IV) from Tradier's OPRA feed.
+    """Full option chain (calls + puts) for symbol + expiration.
+
+    Tradier primary (real Greeks). Alpaca fallback (Greeks may be null).
+    Each row includes `_provider` so callers know which feed answered.
     """
-    return market_data.tradier_option_chain(symbol=symbol, expiration=expiration, greeks=greeks)
+    return market_data.option_chain(symbol=symbol, expiration=expiration, greeks=greeks)
 
 
 @mcp.tool()
 def option_strikes(symbol: str, expiration: str) -> list:
-    """List available strike prices for symbol + expiration (Tradier)."""
-    return market_data.tradier_option_strikes(symbol=symbol, expiration=expiration)
+    """List of strike prices. Tradier first, Alpaca fallback."""
+    return market_data.option_strikes(symbol=symbol, expiration=expiration)
 
 
 # ---- Expense + budget tools ------------------------------------------------

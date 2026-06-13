@@ -1360,3 +1360,61 @@ def tradier_option_chain(symbol: str, expiration: str, greeks: bool = True) -> l
         return out
     except Exception as exc:
         return [{"error": str(exc), "symbol": symbol, "expiration": expiration}]
+
+
+# ---------------------------------------------------------------------------
+# Provider-agnostic option facade — Tradier primary, Alpaca fallback.
+#
+# We try Tradier first (real Greeks). If Tradier returns an error or empty
+# response (rate-limit, outage, missing token), we transparently fall back
+# to Alpaca so the chat still returns SOMETHING — just without populated
+# Greeks. The result includes a `_provider` field so the LLM can mention
+# the fallback if it matters ("Greeks unavailable — using delayed Alpaca
+# data instead").
+# ---------------------------------------------------------------------------
+
+def _tradier_returned_error(result) -> bool:
+    """Did a tradier_* call return an [{'error': ...}] payload or empty list?"""
+    if not result:
+        return True
+    if isinstance(result, list) and isinstance(result[0], dict) and "error" in result[0]:
+        return True
+    if isinstance(result, dict) and "error" in result:
+        return True
+    return False
+
+
+def option_expirations(symbol: str) -> list:
+    """Tradier first, Alpaca fallback."""
+    tr = tradier_option_expirations(symbol)
+    if not _tradier_returned_error(tr):
+        return tr
+    return alpaca_option_expirations(symbol)
+
+
+def option_strikes(symbol: str, expiration: str) -> list:
+    """Tradier first, Alpaca fallback."""
+    tr = tradier_option_strikes(symbol, expiration)
+    if not _tradier_returned_error(tr):
+        return tr
+    return alpaca_option_strikes(symbol, expiration)
+
+
+def option_chain(symbol: str, expiration: str, greeks: bool = True) -> list[dict]:
+    """Tradier first (real Greeks), Alpaca fallback (Greeks=null).
+
+    On fallback, each row carries `_provider: "alpaca"` so callers can
+    surface that Greeks aren't available. Tradier rows get `_provider:
+    "tradier"`.
+    """
+    tr = tradier_option_chain(symbol, expiration, greeks=greeks)
+    if not _tradier_returned_error(tr):
+        for row in tr:
+            row["_provider"] = "tradier"
+        return tr
+    al = alpaca_option_chain(symbol, expiration, greeks=greeks)
+    if isinstance(al, list):
+        for row in al:
+            if isinstance(row, dict):
+                row["_provider"] = "alpaca"
+    return al
