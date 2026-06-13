@@ -305,6 +305,24 @@ mobile-run-phone: ## Build + install a Release native build on a connected iPhon
 
 .PHONY: mobile-run-phone
 
+mobile-build-ipa: ## Build an unsigned .ipa locally for AltStore install (no Apple Developer Program needed)
+	@cd mobile && npx expo prebuild --platform ios --no-install 2>/dev/null || true
+	@cd mobile/ios && xcodebuild \
+		-workspace Expenses.xcworkspace \
+		-scheme Expenses \
+		-configuration Release \
+		-archivePath /tmp/Expenses.xcarchive \
+		-destination 'generic/platform=iOS' \
+		archive \
+		CODE_SIGNING_ALLOWED=NO
+	@mkdir -p /tmp/Expenses-ipa/Payload
+	@cp -R /tmp/Expenses.xcarchive/Products/Applications/Expenses.app /tmp/Expenses-ipa/Payload/
+	@cd /tmp/Expenses-ipa && zip -qr ~/Downloads/Expenses.ipa Payload && rm -rf /tmp/Expenses-ipa /tmp/Expenses.xcarchive
+	@echo "Built: ~/Downloads/Expenses.ipa"
+	@echo "Drag this onto AltServer's menubar icon to install on a paired phone via AltStore."
+
+.PHONY: mobile-build-ipa
+
 mobile-update-prod: ## Push to 'production' branch (for when you ship to TestFlight / App Store)
 	cd mobile && eas update --branch production --message "$${MSG:-release}"
 
