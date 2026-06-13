@@ -191,3 +191,16 @@ variable "apca_api_secret_key" {
   sensitive   = true
   default     = ""
 }
+
+variable "tradier_token" {
+  description = "Tradier API token (production unless TRADIER_ENV=sandbox)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "tradier_env" {
+  description = "Tradier environment: sandbox | production"
+  type        = string
+  default     = "production"
+}

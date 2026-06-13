@@ -525,32 +525,27 @@ def alpaca_bars(
 
 
 @mcp.tool()
-def alpaca_option_expirations(symbol: str) -> list:
-    """List all available option expiration dates for a symbol via Alpaca.
+def option_expirations(symbol: str) -> list:
+    """All option expiration dates for a symbol (Tradier).
 
-    Call this first to discover valid expirations before pulling a chain.
-    Returns a sorted list of YYYY-MM-DD strings.
+    Returns a list of YYYY-MM-DD strings. Call first to discover valid
+    expirations before pulling a chain.
     """
-    return market_data.alpaca_option_expirations(symbol=symbol)
+    return market_data.tradier_option_expirations(symbol=symbol)
 
 
 @mcp.tool()
-def alpaca_option_chain(symbol: str, expiration: str, greeks: bool = True) -> list:
-    """Full option chain (calls and puts) for a symbol and expiration date via Alpaca.
-
-    Returns contracts sorted by strike with delta, gamma, theta, vega, rho,
-    and implied volatility. Use for 'show me the NVDA call chain' or IV queries.
+def option_chain(symbol: str, expiration: str, greeks: bool = True) -> list:
+    """Full option chain (calls + puts) for symbol + expiration, with real Greeks
+    (delta, gamma, theta, vega, rho, IV) from Tradier's OPRA feed.
     """
-    return market_data.alpaca_option_chain(symbol=symbol, expiration=expiration, greeks=greeks)
+    return market_data.tradier_option_chain(symbol=symbol, expiration=expiration, greeks=greeks)
 
 
 @mcp.tool()
-def alpaca_option_strikes(symbol: str, expiration: str) -> list:
-    """List available strike prices for a symbol and expiration via Alpaca.
-
-    Use to find valid strikes before pulling a full chain or quoting a specific contract.
-    """
-    return market_data.alpaca_option_strikes(symbol=symbol, expiration=expiration)
+def option_strikes(symbol: str, expiration: str) -> list:
+    """List available strike prices for symbol + expiration (Tradier)."""
+    return market_data.tradier_option_strikes(symbol=symbol, expiration=expiration)
 
 
 # ---- Expense + budget tools ------------------------------------------------

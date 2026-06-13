@@ -1187,3 +1187,176 @@ def alpaca_option_strikes(symbol: str, expiration: str) -> list:
         return strikes
     except Exception as exc:
         return [{"error": str(exc), "symbol": symbol, "expiration": expiration}]
+
+
+# ---------------------------------------------------------------------------
+# Tradier — options chains with real Greeks (paid OPRA feed via brokerage).
+#
+# Why over Alpaca: Alpaca's free indicative feed returns None for
+# delta/gamma/theta/vega. Tradier ships actual Greeks at the brokerage
+# tier (free with a funded account, or via standalone Market Data sub).
+#
+# Auth: Bearer <token>.  Base URL flips by env (sandbox/production).
+# ---------------------------------------------------------------------------
+
+_TRADIER_PROD_BASE = "https://api.tradier.com/v1"
+_TRADIER_SANDBOX_BASE = "https://sandbox.tradier.com/v1"
+
+
+def _tradier_token_and_base() -> tuple[str, str]:
+    """Return (token, base_url) for the configured Tradier environment.
+
+    Honors TRADIER_TOKEN_SANDBOX when TRADIER_ENV=sandbox so CI runs
+    end-to-end against the sandbox without touching the production token.
+    """
+    s = get_settings()
+    env = (s.tradier_env or "sandbox").lower()
+    if env == "production":
+        token = s.tradier_token
+        base = _TRADIER_PROD_BASE
+    else:
+        token = s.tradier_token_sandbox or s.tradier_token
+        base = _TRADIER_SANDBOX_BASE
+    if not token:
+        raise RuntimeError(
+            f"Tradier token missing for env={env}. "
+            "Set TRADIER_TOKEN (prod) or TRADIER_TOKEN_SANDBOX (sandbox)."
+        )
+    return token, base
+
+
+def _tradier_headers() -> dict:
+    token, _ = _tradier_token_and_base()
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+
+
+def tradier_quote(symbol: str) -> dict:
+    """Real-time equity quote. Returns last/bid/ask/volume/day OHLC."""
+    try:
+        _, base = _tradier_token_and_base()
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+    try:
+        r = httpx.get(
+            f"{base}/markets/quotes",
+            headers=_tradier_headers(),
+            params={"symbols": symbol, "greeks": "false"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        q = (r.json() or {}).get("quotes", {}).get("quote") or {}
+        if isinstance(q, list):
+            q = q[0] if q else {}
+        return {
+            "symbol": q.get("symbol", symbol.upper()),
+            "last": q.get("last"),
+            "bid": q.get("bid"),
+            "ask": q.get("ask"),
+            "volume": q.get("volume"),
+            "open": q.get("open"),
+            "high": q.get("high"),
+            "low": q.get("low"),
+            "prev_close": q.get("prevclose"),
+            "change": q.get("change"),
+            "change_percent": q.get("change_percentage"),
+        }
+    except Exception as exc:
+        return {"error": str(exc), "symbol": symbol}
+
+
+def tradier_option_expirations(symbol: str) -> list:
+    """All option expiration dates for a symbol (YYYY-MM-DD strings)."""
+    try:
+        _, base = _tradier_token_and_base()
+    except RuntimeError as exc:
+        return [{"error": str(exc)}]
+    try:
+        r = httpx.get(
+            f"{base}/markets/options/expirations",
+            headers=_tradier_headers(),
+            params={"symbol": symbol, "includeAllRoots": "true", "strikes": "false"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        dates = (r.json() or {}).get("expirations", {}).get("date") or []
+        if isinstance(dates, str):
+            dates = [dates]
+        return list(dates)
+    except Exception as exc:
+        return [{"error": str(exc), "symbol": symbol}]
+
+
+def tradier_option_strikes(symbol: str, expiration: str) -> list:
+    """All strike prices for a symbol+expiration."""
+    try:
+        _, base = _tradier_token_and_base()
+    except RuntimeError as exc:
+        return [{"error": str(exc)}]
+    try:
+        r = httpx.get(
+            f"{base}/markets/options/strikes",
+            headers=_tradier_headers(),
+            params={"symbol": symbol, "expiration": expiration},
+            timeout=10,
+        )
+        r.raise_for_status()
+        strikes = (r.json() or {}).get("strikes", {}).get("strike") or []
+        return list(strikes)
+    except Exception as exc:
+        return [{"error": str(exc), "symbol": symbol, "expiration": expiration}]
+
+
+def tradier_option_chain(symbol: str, expiration: str, greeks: bool = True) -> list[dict]:
+    """Full option chain. With greeks=True, each contract row includes
+    real delta/gamma/theta/vega/rho/mid_iv from Tradier's OPRA feed.
+    """
+    try:
+        _, base = _tradier_token_and_base()
+    except RuntimeError as exc:
+        return [{"error": str(exc)}]
+    try:
+        r = httpx.get(
+            f"{base}/markets/options/chains",
+            headers=_tradier_headers(),
+            params={
+                "symbol": symbol,
+                "expiration": expiration,
+                "greeks": "true" if greeks else "false",
+            },
+            timeout=15,
+        )
+        r.raise_for_status()
+        options = (r.json() or {}).get("options", {}).get("option") or []
+        if isinstance(options, dict):
+            options = [options]
+        out: list[dict] = []
+        for o in options:
+            g = o.get("greeks") or {}
+            out.append({
+                "symbol": o.get("symbol"),
+                "underlying": o.get("underlying"),
+                "expiration": o.get("expiration_date") or expiration,
+                "strike": o.get("strike"),
+                "option_type": o.get("option_type"),  # 'call' | 'put'
+                "bid": o.get("bid"),
+                "ask": o.get("ask"),
+                "last": o.get("last"),
+                "volume": o.get("volume"),
+                "open_interest": o.get("open_interest"),
+                "greeks": {
+                    "delta": g.get("delta"),
+                    "gamma": g.get("gamma"),
+                    "theta": g.get("theta"),
+                    "vega": g.get("vega"),
+                    "rho": g.get("rho"),
+                    "mid_iv": g.get("mid_iv"),
+                    "bid_iv": g.get("bid_iv"),
+                    "ask_iv": g.get("ask_iv"),
+                } if greeks else None,
+            })
+        return out
+    except Exception as exc:
+        return [{"error": str(exc), "symbol": symbol, "expiration": expiration}]

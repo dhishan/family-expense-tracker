@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     apca_api_key_id: str = ""
     apca_api_secret_key: str = ""
 
+    # Tradier (options chains with real Greeks; brokerage data API).
+    # In prod: TRADIER_TOKEN + TRADIER_ENV=production → api.tradier.com
+    # In CI:   TRADIER_TOKEN_SANDBOX                  → sandbox.tradier.com
+    tradier_token: str = ""
+    tradier_env: str = "sandbox"  # sandbox | production
+    tradier_token_sandbox: str = ""           # used by CI / smoke tests
+    tradier_env_sandbox_account: str = ""     # sandbox account id (only needed for /accounts endpoints)
+
     # Cloudflare Access (gates the hosted /mcp endpoint in production)
     cf_access_team_domain: str = ""  # e.g. blueelephants.cloudflareaccess.com
     cf_access_aud: str = ""          # Application AUD tag

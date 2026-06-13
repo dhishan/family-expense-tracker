@@ -672,11 +672,10 @@ TOOLS: list[dict] = [
         },
     },
     {
-        "name": "alpaca_option_expirations",
+        "name": "option_expirations",
         "description": (
-            "List all available option expiration dates for a symbol via Alpaca. "
-            "Call this first to discover valid expirations before pulling a full chain. "
-            "Returns a sorted list of YYYY-MM-DD strings."
+            "All option expiration dates for a symbol. Call first to discover valid "
+            "expirations before pulling a chain. Returns a list of YYYY-MM-DD strings."
         ),
         "input_schema": {
             "type": "object",
@@ -687,12 +686,11 @@ TOOLS: list[dict] = [
         },
     },
     {
-        "name": "alpaca_option_chain",
+        "name": "option_chain",
         "description": (
-            "Full option chain (calls and puts) for a symbol and expiration date, with Greeks. "
-            "Use for questions like 'show me the NVDA call chain for next Friday' or "
-            "'what is the implied volatility on AAPL 200-strike calls'. "
-            "Returns contracts sorted by strike with delta, gamma, theta, vega, rho, and IV."
+            "Full option chain (calls and puts) for a symbol + expiration, with real Greeks "
+            "(delta, gamma, theta, vega, rho, IV). Use for 'NVDA call chain for next Friday', "
+            "'implied vol on AAPL 200 calls', etc."
         ),
         "input_schema": {
             "type": "object",
@@ -701,7 +699,7 @@ TOOLS: list[dict] = [
                 "expiration": {"type": "string", "description": "Expiration date YYYY-MM-DD"},
                 "greeks": {
                     "type": "boolean",
-                    "description": "Include Greeks (delta, gamma, theta, vega, rho, IV) — default true",
+                    "description": "Include Greeks — default true",
                     "default": True,
                 },
             },
@@ -709,10 +707,10 @@ TOOLS: list[dict] = [
         },
     },
     {
-        "name": "alpaca_option_strikes",
+        "name": "option_strikes",
         "description": (
-            "List available strike prices for a symbol and expiration via Alpaca. "
-            "Use to find valid strikes before pulling a chain or quoting a specific contract."
+            "List of strike prices for a symbol + expiration. Use to find valid strikes "
+            "before pulling a chain or quoting a specific contract."
         ),
         "input_schema": {
             "type": "object",
@@ -800,9 +798,14 @@ _PREDICTION_MARKET_TOOLS = {
 _ALPACA_TOOLS = {
     "alpaca_quote",
     "alpaca_bars",
-    "alpaca_option_expirations",
-    "alpaca_option_chain",
-    "alpaca_option_strikes",
+}
+
+# Tradier handles options (real Greeks, OPRA feed). Alpaca's free indicative
+# feed returned None for delta/gamma/theta — kept Alpaca only for quotes/bars.
+_TRADIER_TOOLS = {
+    "option_expirations",
+    "option_chain",
+    "option_strikes",
 }
 
 
@@ -835,7 +838,7 @@ _TOPIC_TOOLS: dict[str, set[str]] = {
     },
     "expenses": set(_EXPENSE_TOOLS),
     "prediction_markets": set(_PREDICTION_MARKET_TOOLS),
-    "options": set(_ALPACA_TOOLS),
+    "options": set(_TRADIER_TOOLS) | {"alpaca_quote"},  # underlying quote + Tradier chain
     "banks": set(_PLAID_TOOLS),
 }
 
@@ -1152,7 +1155,7 @@ def _execute_prediction_market_tool(name: str, tool_input: dict) -> str:
 
 
 def _execute_alpaca_tool(name: str, tool_input: dict) -> str:
-    """Execute an Alpaca market-data tool. Returns JSON string."""
+    """Alpaca: equity quote + OHLCV bars."""
     try:
         if name == "alpaca_quote":
             result = market_data.alpaca_quote(symbol=tool_input["symbol"])
@@ -1164,24 +1167,35 @@ def _execute_alpaca_tool(name: str, tool_input: dict) -> str:
                 end=tool_input.get("end"),
                 limit=tool_input.get("limit", 100),
             )
-        elif name == "alpaca_option_expirations":
-            result = market_data.alpaca_option_expirations(symbol=tool_input["symbol"])
-        elif name == "alpaca_option_chain":
-            result = market_data.alpaca_option_chain(
-                symbol=tool_input["symbol"],
-                expiration=tool_input["expiration"],
-                greeks=tool_input.get("greeks", True),
-            )
-        elif name == "alpaca_option_strikes":
-            result = market_data.alpaca_option_strikes(
-                symbol=tool_input["symbol"],
-                expiration=tool_input["expiration"],
-            )
         else:
             return json.dumps({"error": f"Unknown Alpaca tool: {name}"})
         return json.dumps(result, default=str)
     except Exception as exc:
         logger.exception("Alpaca tool %s failed", name)
+        return json.dumps({"error": str(exc)})
+
+
+def _execute_tradier_tool(name: str, tool_input: dict) -> str:
+    """Tradier: option chains with real Greeks."""
+    try:
+        if name == "option_expirations":
+            result = market_data.tradier_option_expirations(symbol=tool_input["symbol"])
+        elif name == "option_chain":
+            result = market_data.tradier_option_chain(
+                symbol=tool_input["symbol"],
+                expiration=tool_input["expiration"],
+                greeks=tool_input.get("greeks", True),
+            )
+        elif name == "option_strikes":
+            result = market_data.tradier_option_strikes(
+                symbol=tool_input["symbol"],
+                expiration=tool_input["expiration"],
+            )
+        else:
+            return json.dumps({"error": f"Unknown Tradier tool: {name}"})
+        return json.dumps(result, default=str)
+    except Exception as exc:
+        logger.exception("Tradier tool %s failed", name)
         return json.dumps({"error": str(exc)})
 
 
@@ -2064,6 +2078,8 @@ async def _generate_turn(
                     result_content = _execute_prediction_market_tool(tc["name"], tc["input"])
                 elif tc["name"] in _ALPACA_TOOLS:
                     result_content = _execute_alpaca_tool(tc["name"], tc["input"])
+                elif tc["name"] in _TRADIER_TOOLS:
+                    result_content = _execute_tradier_tool(tc["name"], tc["input"])
                 else:
                     result_content = _execute_snaptrade_tool(tc["name"], tc["input"], user_id)
                 _safe_end(

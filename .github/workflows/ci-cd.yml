@@ -144,6 +144,8 @@ jobs:
           TF_VAR_kalshi_private_key_b64: ${{ secrets.KALSHI_PRIVATE_KEY_B64 }}
           TF_VAR_apca_api_key_id: ${{ secrets.APCA_API_KEY_ID }}
           TF_VAR_apca_api_secret_key: ${{ secrets.APCA_API_SECRET_KEY }}
+          TF_VAR_tradier_token: ${{ secrets.TRADIER_TOKEN }}
+          TF_VAR_tradier_env: ${{ secrets.TRADIER_ENV || 'production' }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           make terraform-apply TF_ENV=${{ env.TF_ENV }} REGION=${{ env.REGION }} PROJECT_ID=${{ env.PROJECT_ID }}
@@ -284,6 +286,8 @@ jobs:
           PLAID_CLIENT_ID: ${{ secrets.PLAID_CLIENT_ID }}
           PLAID_SECRET: ${{ secrets.PLAID_SECRET_SANDBOX }}
           PLAID_ENV: sandbox
+          TRADIER_TOKEN_SANDBOX: ${{ secrets.TRADIER_TOKEN_SANDBOX }}
+          TRADIER_ENV: sandbox
 
       - name: Start frontend (static serve)
         run: |

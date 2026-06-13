@@ -466,6 +466,24 @@ resource "google_secret_manager_secret_version" "apca_api_secret_key" {
   secret_data = coalesce(var.apca_api_secret_key, "not-configured")
 }
 
+# Tradier brokerage API token (options chains with real Greeks)
+resource "google_secret_manager_secret" "tradier_token" {
+  secret_id = "${var.backend_service_name}-tradier-token"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+resource "google_secret_manager_secret_version" "tradier_token" {
+  secret      = google_secret_manager_secret.tradier_token.id
+  secret_data = coalesce(var.tradier_token, "not-configured")
+}
+
 # Cloud Run service for backend
 resource "google_cloud_run_service" "backend" {
   name     = var.backend_service_name
@@ -693,6 +711,21 @@ resource "google_cloud_run_service" "backend" {
           }
         }
 
+        env {
+          name = "TRADIER_TOKEN"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.tradier_token.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name  = "TRADIER_ENV"
+          value = var.tradier_env
+        }
+
         resources {
           limits = {
             cpu    = "1000m"
@@ -767,6 +800,7 @@ resource "google_cloud_run_service" "backend" {
     google_secret_manager_secret_version.kalshi_private_key_b64,
     google_secret_manager_secret_version.apca_api_key_id,
     google_secret_manager_secret_version.apca_api_secret_key,
+    google_secret_manager_secret_version.tradier_token,
   ]
 }
 
