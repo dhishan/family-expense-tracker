@@ -441,22 +441,36 @@ export default function Transactions() {
       ? data.tags.split(',').map((t) => t.trim()).filter(Boolean)
       : []
 
-    // If "always apply" is checked, POST rule first (non-fatal on 409)
-    if (saveAsRule && data.merchant) {
-      try {
-        await rulesApi.create({
-          merchant_name: data.merchant,
-          category: data.category,
-          budget_id: approveBudgetId ?? null,
-          beneficiary: data.beneficiary,
-        })
-        queryClient.invalidateQueries({ queryKey: ['rules', 'merchant'] })
-      } catch (err: unknown) {
-        const status = (err as { response?: { status?: number } })?.response?.status
-        if (status === 409) {
-          toast('Rule already exists', { icon: 'ℹ️' })
+    // If "always apply" is checked, POST rule first (non-fatal on 409).
+    // Coerce fields and surface validation errors so a silent 422 doesn't
+    // leave the user wondering why no rule was created.
+    if (saveAsRule) {
+      const merchantStr = (data.merchant || '').trim()
+      const categoryStr = (data.category || '').trim()
+      if (!merchantStr || !categoryStr) {
+        toast.error('Could not create rule: merchant and category are required')
+      } else {
+        try {
+          await rulesApi.create({
+            merchant_name: merchantStr,
+            category: categoryStr,
+            budget_id: approveBudgetId || null,
+            beneficiary: (data.beneficiary || '').toString() || null,
+          })
+          toast.success(`Rule saved for "${merchantStr}"`)
+          queryClient.invalidateQueries({ queryKey: ['rules', 'merchant'] })
+        } catch (err: unknown) {
+          const status = (err as { response?: { status?: number } })?.response?.status
+          if (status === 409) {
+            toast('Rule already exists for this merchant', { icon: 'ℹ️' })
+          } else if (status === 422) {
+            toast.error('Rule rejected by backend (validation error)')
+            console.error('rules.create 422 payload:', { merchant_name: merchantStr, category: categoryStr, budget_id: approveBudgetId, beneficiary: data.beneficiary })
+          } else {
+            toast.error('Failed to save rule')
+            console.error('rules.create error:', err)
+          }
         }
-        // non-fatal: continue with approve regardless
       }
     }
 
