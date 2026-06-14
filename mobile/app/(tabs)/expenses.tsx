@@ -1895,7 +1895,7 @@ export default function TransactionsScreen() {
       // If user opted in to auto-rule, fire it non-blocking (409 = already exists, safe to ignore)
       if (vars.edits.saveAsRule && vars.edits.merchant.trim()) {
         rulesApi.create({
-          merchant: vars.edits.merchant.trim(),
+          merchant_name: vars.edits.merchant.trim(),
           category: vars.edits.category,
           budget_id: vars.edits.budget_id ?? null,
           beneficiary: vars.edits.beneficiary || null,

@@ -341,7 +341,7 @@ export interface MerchantRule {
 }
 
 export interface MerchantRuleCreate {
-  merchant: string
+  merchant_name: string
   category: ExpenseCategory
   budget_id?: string | null
   beneficiary?: string | null
