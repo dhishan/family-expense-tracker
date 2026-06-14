@@ -41,7 +41,7 @@
       "developerName": "Dhishan Amaranath",
       "subtitle": "Strength logging, nutrition, body metrics, AI coach",
       "localizedDescription": "Log strength workouts, scan barcodes, snap photos of meals for AI macro estimation, sync Apple Health, track body metrics, and chat with an AI coach grounded in your training data.",
-      "iconURL": "https://ui.expense-tracker.blueelephants.org/blue-elephants-icon.png",
+      "iconURL": "https://fitness-tracker-ble.web.app/pwa-512x512.png",
       "tintColor": "3B82F6",
       "category": "healthcare",
       "screenshotURLs": [],
