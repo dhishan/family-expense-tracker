@@ -24,6 +24,7 @@ on:
 
 permissions:
   contents: write   # commit + push altstore.json change, create GH release
+  id-token: write   # WIF auth to GCP for shared bucket upload
 
 jobs:
   build-and-publish:
@@ -134,7 +135,21 @@ jobs:
           SIZE: ${{ steps.ipa.outputs.size }}
           DATE: ${{ steps.ipa.outputs.date }}
 
-      - name: Commit + push altstore.json
+      - name: Auth to GCS for shared source
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Upload altstore.json to shared GCS bucket
+        run: |
+          gcloud storage cp frontend/public/altstore.json \
+            gs://blueelephants-altstore/altstore.json \
+            --content-type=application/json \
+            --cache-control="public,max-age=60" \
+            --project personal-projects-473219
+
+      - name: Commit + push altstore.json (legacy mirror)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
