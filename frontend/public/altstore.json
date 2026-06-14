@@ -4,7 +4,10 @@
   "description": "Self-hosted source for the family's iOS apps. Add this source in AltStore to receive updates automatically.",
   "iconURL": "https://ui.expense-tracker.blueelephants.org/pwa-512x512.png",
   "tintColor": "2563EB",
-  "featuredApps": ["org.blueelephants.familyexpensetracker"],
+  "featuredApps": [
+    "org.blueelephants.familyexpensetracker",
+    "org.blueelephants.fitnesstracker"
+  ],
   "apps": [
     {
       "name": "Expenses",
@@ -24,6 +27,32 @@
           "localizedDescription": "Initial AltStore-source release.",
           "downloadURL": "https://github.com/dhishan/family-expense-tracker/releases/download/mobile-v1.0.0/Expenses.ipa",
           "size": 10640887,
+          "minOSVersion": "16.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": []
+      }
+    },
+    {
+      "name": "Fitness Tracker",
+      "bundleIdentifier": "org.blueelephants.fitnesstracker",
+      "developerName": "Dhishan Amaranath",
+      "subtitle": "Strength logging, nutrition, body metrics, AI coach",
+      "localizedDescription": "Log strength workouts, scan barcodes, snap photos of meals for AI macro estimation, sync Apple Health, track body metrics, and chat with an AI coach grounded in your training data.",
+      "iconURL": "https://ui.expense-tracker.blueelephants.org/pwa-512x512.png",
+      "tintColor": "3B82F6",
+      "category": "healthcare",
+      "screenshotURLs": [],
+      "versions": [
+        {
+          "version": "1.0.0",
+          "buildVersion": "1",
+          "date": "2026-06-14T06:34:49Z",
+          "localizedDescription": "Initial AltStore-source release.",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.0/FitnessTracker.ipa",
+          "size": 17476964,
           "minOSVersion": "16.0"
         }
       ],
