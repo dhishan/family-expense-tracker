@@ -1,0 +1,157 @@
+name: Mobile Publish (.ipa)
+
+# Builds an unsigned iOS .ipa, publishes it as a GitHub Release, and
+# updates frontend/public/altstore.json so AltStore subscribers get an
+# "Update available" notification.
+#
+# Trigger: manual via GitHub Actions UI (Run workflow → pick a version).
+#
+# Cost: macos-latest runners are FREE for public repos, but 10x the
+# Linux rate for private repos. Audit the repo before flipping public.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver version (e.g. 1.0.1). Tag will be mobile-v<version>."
+        required: true
+        type: string
+      release_notes:
+        description: "Optional release notes."
+        required: false
+        type: string
+        default: "AltStore-source release. JS-only changes ship via EAS Update; this release is only needed when native deps change."
+
+permissions:
+  contents: write   # commit + push altstore.json change, create GH release
+
+jobs:
+  build-and-publish:
+    name: Build, release, source-bump
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need to push back to main
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install mobile deps
+        working-directory: mobile
+        run: npm ci
+
+      - name: Expo prebuild (regenerate ios/ from app.json)
+        working-directory: mobile
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: Pin Xcode (matches local dev)
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: xcodebuild archive (unsigned)
+        run: |
+          cd mobile/ios
+          xcodebuild \
+            -workspace Expenses.xcworkspace \
+            -scheme Expenses \
+            -configuration Release \
+            -archivePath /tmp/Expenses.xcarchive \
+            -destination 'generic/platform=iOS' \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee /tmp/xcodebuild.log | xcpretty --color || (cat /tmp/xcodebuild.log; exit 1)
+
+      - name: Package as .ipa
+        run: |
+          mkdir -p /tmp/payload/Payload
+          cp -R /tmp/Expenses.xcarchive/Products/Applications/Expenses.app /tmp/payload/Payload/
+          cd /tmp/payload && zip -qr /tmp/Expenses.ipa Payload
+          ls -lh /tmp/Expenses.ipa
+
+      - name: Compute .ipa size + sha256
+        id: ipa
+        run: |
+          SIZE=$(stat -f %z /tmp/Expenses.ipa)
+          SHA=$(shasum -a 256 /tmp/Expenses.ipa | awk '{print $1}')
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "size=$SIZE" >> $GITHUB_OUTPUT
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release with .ipa
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "mobile-v${{ inputs.version }}" /tmp/Expenses.ipa \
+            --title "Mobile v${{ inputs.version }}" \
+            --notes "${{ inputs.release_notes }}" \
+          || gh release upload "mobile-v${{ inputs.version }}" /tmp/Expenses.ipa --clobber
+
+      - name: Update altstore.json with new version entry
+        run: |
+          python3 <<'PY'
+          import json, os
+          version = os.environ["VERSION"]
+          size = int(os.environ["SIZE"])
+          date = os.environ["DATE"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          path = "frontend/public/altstore.json"
+
+          with open(path) as f:
+              data = json.load(f)
+
+          # Find the Expenses app entry by bundle ID
+          target = "org.blueelephants.familyexpensetracker"
+          app = next((a for a in data["apps"] if a["bundleIdentifier"] == target), None)
+          if app is None:
+              raise SystemExit(f"No app with bundleIdentifier={target} in altstore.json")
+
+          new_version = {
+              "version": version,
+              "buildVersion": "1",
+              "date": date,
+              "localizedDescription": f"Version {version}",
+              "downloadURL": f"https://github.com/{repo}/releases/download/mobile-v{version}/Expenses.ipa",
+              "size": size,
+              "minOSVersion": "16.0",
+          }
+          # Prepend new version, drop any duplicate of the same version string
+          app["versions"] = [new_version] + [v for v in app["versions"] if v["version"] != version]
+
+          with open(path, "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+          print(f"Updated {path} with mobile-v{version} ({size} bytes)")
+          PY
+        env:
+          VERSION: ${{ inputs.version }}
+          SIZE: ${{ steps.ipa.outputs.size }}
+          DATE: ${{ steps.ipa.outputs.date }}
+
+      - name: Commit + push altstore.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/public/altstore.json
+          if git diff --staged --quiet; then
+            echo "No altstore.json changes to commit (idempotent run)."
+          else
+            git commit -m "release: mobile v${{ inputs.version }} (AltStore source)"
+            git push
+          fi
+
+      - name: Summary
+        run: |
+          echo "### Mobile v${{ inputs.version }} published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- IPA: \`https://github.com/${{ github.repository }}/releases/download/mobile-v${{ inputs.version }}/Expenses.ipa\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Size: ${{ steps.ipa.outputs.size }} bytes" >> $GITHUB_STEP_SUMMARY
+          echo "- SHA256: \`${{ steps.ipa.outputs.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Phones will see 'Update available' in AltStore once Firebase Hosting redeploys frontend/public/altstore.json (~3 min)." >> $GITHUB_STEP_SUMMARY

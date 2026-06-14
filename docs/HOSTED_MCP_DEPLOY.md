@@ -7,7 +7,7 @@ at `mcp.expense-tracker.blueelephants.org`, gated by Cloudflare Access (Google S
 
 ## Prerequisites
 
-- `gcloud` CLI authenticated as `dhishan.coder@gmail.com` (not the CI SA)
+- `gcloud` CLI authenticated as your personal Google account (not the CI service account)
 - `terraform` >= 1.9 available
 - The four secrets below exist or you have their values ready
 
