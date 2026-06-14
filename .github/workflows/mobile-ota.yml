@@ -1,0 +1,83 @@
+name: Mobile OTA (EAS Update)
+
+# Auto-pushes a JS-only update to the EAS `preview` channel on every push
+# to main that touches mobile/. Phones pick it up on next app launch.
+#
+# Why this is cheap + safe:
+# - Linux runner (free unlimited minutes for public repos)
+# - JS-only — no native rebuild, no Apple Dev cost
+# - EAS Update runtime version is pinned to 1.0.0 — if a JS bundle is
+#   incompatible with the native shell, AltStore-installed apps fall
+#   back to the embedded bundle automatically
+# - Path filter scopes this to mobile/ changes — backend/web edits
+#   don't trigger an OTA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-ota.yml"
+
+  workflow_dispatch:
+    inputs:
+      message:
+        description: "Optional update message"
+        required: false
+        type: string
+        default: "manual update"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Coalesce rapid-fire pushes — only the last OTA in a cluster runs
+  group: mobile-ota
+  cancel-in-progress: true
+
+jobs:
+  ota:
+    name: Push OTA to EAS preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install mobile deps
+        working-directory: mobile
+        run: npm ci
+
+      - name: Resolve update message
+        id: msg
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MSG="${{ inputs.message }}"
+          else
+            # Use the latest commit message, truncated
+            MSG=$(git log -1 --pretty=format:'%s' | head -c 200)
+          fi
+          echo "message=$MSG" >> $GITHUB_OUTPUT
+          echo "Update message: $MSG"
+
+      - name: EAS Update → preview
+        working-directory: mobile
+        run: |
+          npx eas-cli update --branch preview --message "${{ steps.msg.outputs.message }}" --non-interactive
+
+      - name: Summary
+        run: |
+          echo "### Mobile OTA pushed" >> $GITHUB_STEP_SUMMARY
+          echo "- Channel: preview" >> $GITHUB_STEP_SUMMARY
+          echo "- Message: ${{ steps.msg.outputs.message }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Runtime: 1.0.0 (must match the .ipa runtime, or this update is ignored)" >> $GITHUB_STEP_SUMMARY

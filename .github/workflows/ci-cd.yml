@@ -142,6 +142,7 @@ jobs:
           TF_VAR_plaid_env: ${{ secrets.PLAID_ENV || 'sandbox' }}
           TF_VAR_kalshi_key_id: ${{ secrets.KALSHI_KEY_ID }}
           TF_VAR_kalshi_private_key_b64: ${{ secrets.KALSHI_PRIVATE_KEY_B64 }}
+          TF_VAR_notification_email: ${{ secrets.NOTIFICATION_EMAIL }}
           TF_VAR_apca_api_key_id: ${{ secrets.APCA_API_KEY_ID }}
           TF_VAR_apca_api_secret_key: ${{ secrets.APCA_API_SECRET_KEY }}
           TF_VAR_tradier_token: ${{ secrets.TRADIER_TOKEN }}

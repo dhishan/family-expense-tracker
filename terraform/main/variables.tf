@@ -114,9 +114,9 @@ variable "langfuse_base_url" {
 }
 
 variable "notification_email" {
-  description = "Email for monitoring alert notifications"
+  description = "Email for monitoring alert notifications. Set via TF_VAR_notification_email or terraform.tfvars (kept out of source so the repo can be public)."
   type        = string
-  default     = "iamdhishan@gmail.com"
+  default     = ""
 }
 
 # --- Financial data APIs (Phase F) ---
