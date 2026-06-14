@@ -1,0 +1,37 @@
+{
+  "name": "Blue Elephants Family",
+  "subtitle": "Personal apps for the Amaranath household",
+  "description": "Self-hosted source for the family's iOS apps. Add this source in AltStore to receive updates automatically.",
+  "iconURL": "https://ui.expense-tracker.blueelephants.org/pwa-512x512.png",
+  "tintColor": "2563EB",
+  "featuredApps": ["org.blueelephants.familyexpensetracker"],
+  "apps": [
+    {
+      "name": "Expenses",
+      "bundleIdentifier": "org.blueelephants.familyexpensetracker",
+      "developerName": "Dhishan Amaranath",
+      "subtitle": "Family expense tracking with linked banks and AI chat",
+      "localizedDescription": "Track expenses, set budgets, link Plaid bank accounts, and chat with an AI about your spending and investments. Built for the Amaranath family.",
+      "iconURL": "https://ui.expense-tracker.blueelephants.org/pwa-512x512.png",
+      "tintColor": "2563EB",
+      "category": "finance",
+      "screenshotURLs": [],
+      "versions": [
+        {
+          "version": "1.0.0",
+          "buildVersion": "1",
+          "date": "2026-06-13T19:00:00Z",
+          "localizedDescription": "Initial AltStore-source release.",
+          "downloadURL": "https://github.com/dhishan/family-expense-tracker/releases/download/mobile-v1.0.0/Expenses.ipa",
+          "size": 10640887,
+          "minOSVersion": "16.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": []
+      }
+    }
+  ],
+  "news": []
+}

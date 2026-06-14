@@ -324,6 +324,32 @@ mobile-build-ipa: ## Build an unsigned .ipa for AltStore install. Writes to iClo
 
 .PHONY: mobile-build-ipa
 
+mobile-publish-ipa: ## Publish the most-recent built .ipa to a GitHub Release and update altstore.json so both phones get an "Update available" notification in AltStore. Pass VERSION=x.y.z (required).
+	@if [ -z "$$VERSION" ]; then echo "Usage: make mobile-publish-ipa VERSION=1.2.3"; exit 1; fi
+	@IPA="$$HOME/Library/Mobile Documents/com~apple~CloudDocs/Share/Expenses.ipa"; \
+	if [ ! -f "$$IPA" ]; then echo "No .ipa at $$IPA. Run 'make mobile-build-ipa' first."; exit 1; fi; \
+	echo "Creating GH Release mobile-v$$VERSION with $$IPA..."; \
+	gh release create "mobile-v$$VERSION" "$$IPA" \
+	  --title "Mobile v$$VERSION" \
+	  --notes "AltStore-source release. JS-only changes ship via EAS Update; this release is only needed when native deps change." || \
+	gh release upload "mobile-v$$VERSION" "$$IPA" --clobber; \
+	IPA_SIZE=$$(stat -f %z "$$IPA"); \
+	IPA_DATE=$$(date -u +"%Y-%m-%dT%H:%M:%SZ"); \
+	echo "Updating frontend/public/altstore.json to point at mobile-v$$VERSION..."; \
+	python3 -c "import json,sys; \
+	p='frontend/public/altstore.json'; \
+	d=json.load(open(p)); \
+	app=d['apps'][0]; \
+	new_v = {'version':'$$VERSION','buildVersion':'1','date':'$$IPA_DATE','localizedDescription':'New version $$VERSION','downloadURL':'https://github.com/dhishan/family-expense-tracker/releases/download/mobile-v$$VERSION/Expenses.ipa','size':$$IPA_SIZE,'minOSVersion':'16.0'}; \
+	app['versions'] = [new_v] + [v for v in app['versions'] if v['version'] != '$$VERSION']; \
+	json.dump(d, open(p,'w'), indent=2); print('updated', p)"
+	@git add frontend/public/altstore.json
+	@git commit -m "release: mobile v$(VERSION) (AltStore source)"
+	@git push
+	@echo "Pushed. Both phones will see the update in AltStore -> Browse -> Updates within ~1 min of Firebase Hosting deploy."
+
+.PHONY: mobile-publish-ipa
+
 mobile-update-prod: ## Push to 'production' branch (for when you ship to TestFlight / App Store)
 	cd mobile && eas update --branch production --message "$${MSG:-release}"
 
