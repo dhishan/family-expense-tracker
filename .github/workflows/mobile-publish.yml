@@ -55,6 +55,10 @@ jobs:
       - name: Pin Xcode (matches local dev)
         run: sudo xcode-select -s /Applications/Xcode.app
 
+      - name: CocoaPods install (generates Expenses.xcworkspace)
+        working-directory: mobile/ios
+        run: pod install
+
       - name: xcodebuild archive (unsigned)
         run: |
           cd mobile/ios
