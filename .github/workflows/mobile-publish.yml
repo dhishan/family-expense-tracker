@@ -82,9 +82,7 @@ jobs:
           # AppCheckCore (Swift) depends on GoogleUtilities + RecaptchaInterop,
           # which don't define modules. Required for `pod install` to succeed.
           if ! grep -q "use_modular_headers!" Podfile; then
-            sed -i '' '1a\
-use_modular_headers!
-' Podfile
+            python3 -c "import io; p='Podfile'; s=open(p).read(); open(p,'w').write('use_modular_headers!\n' + s)"
           fi
           head -5 Podfile
 
