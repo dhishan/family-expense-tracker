@@ -204,6 +204,9 @@ jobs:
             --project personal-projects-473219
 
           # Mirror to frontend/public for the legacy Firebase URL.
+          # Tag-triggered runs check out detached HEAD, so explicitly target main.
           cp "$RUNNER_TEMP/altstore.json" frontend/public/altstore.json
+          git fetch origin main
+          git checkout -B main origin/main
           git add frontend/public/altstore.json
-          git diff --staged --quiet || (git commit -m "release: $TAG (AltStore source mirror)" && git push)
+          git diff --staged --quiet || (git commit -m "release: $TAG (AltStore source mirror)" && git push origin main)

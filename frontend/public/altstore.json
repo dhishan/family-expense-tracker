@@ -21,6 +21,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.1",
+          "buildVersion": "1",
+          "date": "2026-06-15T08:27:07Z",
+          "localizedDescription": "New version 1.0.1",
+          "downloadURL": "https://github.com/dhishan/family-expense-tracker/releases/download/mobile-v1.0.1/Expenses.ipa",
+          "size": 17590048,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.0",
           "buildVersion": "1",
           "date": "2026-06-13T19:00:00Z",
