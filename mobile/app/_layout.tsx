@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { ActivityIndicator, Linking, View, Pressable, Keyboard } from 'react-native'
+import { ActivityIndicator, Linking, View, Keyboard } from 'react-native'
 import { Stack, router } from 'expo-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { StatusBar } from 'expo-status-bar'
@@ -91,12 +91,12 @@ export default function RootLayout() {
           <ActivityIndicator size="large" color="#ffffff" />
         </View>
       ) : (
-        <Pressable style={{ flex: 1 }} onPress={() => Keyboard.dismiss()}>
+        <View style={{ flex: 1 }} onStartShouldSetResponder={() => false} onTouchStart={() => Keyboard.dismiss()}>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="login" />
           <Stack.Screen name="(tabs)" />
         </Stack>
-        </Pressable>
+        </View>
       )}
     </QueryClientProvider>
   )
