@@ -1221,10 +1221,30 @@ function AddEditModal({
           category: editing.category,
           date: editing.date,
           beneficiary: editing.beneficiary,
-          budget_id: (editing as Expense & { budget_id?: string | null }).budget_id ?? null,
+          budget_id: editing.budget_id ?? null,
         }
       : defaultForm()
   )
+
+  // AddEditModal stays mounted in the parent tree, so useState's initializer
+  // only runs once. Re-seed the form whenever `editing` flips (open Add → open
+  // Edit, or switch between expenses) or the modal re-opens.
+  useEffect(() => {
+    if (!visible) return
+    setForm(
+      editing
+        ? {
+            amount: String(editing.amount),
+            description: editing.description,
+            merchant: editing.merchant ?? '',
+            category: editing.category,
+            date: editing.date,
+            beneficiary: editing.beneficiary,
+            budget_id: editing.budget_id ?? null,
+          }
+        : defaultForm(),
+    )
+  }, [editing, visible])
 
   const set = (key: keyof ExpenseFormData) => (value: string) =>
     setForm((prev) => ({ ...prev, [key]: value }))
