@@ -77,13 +77,31 @@ jobs:
           sed -i '' 's/ENABLE_USER_SCRIPT_SANDBOXING = YES/ENABLE_USER_SCRIPT_SANDBOXING = NO/g' \
             mobile/ios/Expenses.xcodeproj/project.pbxproj
 
-      - name: Patch Podfile for Firebase (use_modular_headers)
+      - name: Patch Podfile — scoped modular headers for Firebase deps
         working-directory: mobile/ios
+        # AppCheckCore (Swift) depends on GoogleUtilities + RecaptchaInterop,
+        # neither of which define modules. Pod install fails without modular
+        # headers on those two. Applying use_modular_headers! globally breaks
+        # RN 0.79 (duplicate 'react_runtime' module), so scope to just these
+        # two pods inside the main target.
         run: |
-          if ! grep -q "use_modular_headers!" Podfile; then
-            python3 -c "p='Podfile'; s=open(p).read(); open(p,'w').write('use_modular_headers!\n' + s)"
-          fi
-          head -5 Podfile
+          python3 - <<'PY'
+          import re
+          p = "Podfile"
+          src = open(p).read()
+          if "GoogleUtilities" in src and "RecaptchaInterop" in src:
+              print("already patched")
+          else:
+              inject = (
+                  "  pod 'GoogleUtilities', :modular_headers => true\n"
+                  "  pod 'RecaptchaInterop', :modular_headers => true\n"
+              )
+              # Insert right after the first `target '...' do` line
+              src = re.sub(r"(target ['\"][^'\"]+['\"] do\n)", r"\1" + inject, src, count=1)
+              open(p, "w").write(src)
+              print("patched")
+          PY
+          grep -nE "GoogleUtilities|RecaptchaInterop|^target" Podfile | head -10
 
       - name: Pod install
         working-directory: mobile/ios
