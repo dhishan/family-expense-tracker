@@ -48,12 +48,33 @@ jobs:
         working-directory: mobile
         run: npm ci
 
+      - name: Inject release version into app.json
+        # Lands in Info.plist via CFBundleShortVersionString so AltStore
+        # version-matches the IPA to the source entry.
+        run: |
+          python3 - <<EOF
+          import json
+          p = "mobile/app.json"
+          d = json.load(open(p))
+          d["expo"]["version"] = "${{ inputs.version }}"
+          json.dump(d, open(p, "w"), indent=2)
+          print("set version to", "${{ inputs.version }}")
+          EOF
+
       - name: Expo prebuild (regenerate ios/ from app.json)
         working-directory: mobile
-        run: npx expo prebuild --platform ios --no-install
+        run: npx expo prebuild --platform ios --no-install --clean
 
       - name: Pin Xcode (matches local dev)
         run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Disable script-phase sandboxing (Xcode 16 + Node bundler)
+        # Xcode 16's default sandbox blocks the React Native bundle script
+        # from reading node_modules. Disabling matches the working
+        # fitness-coach pattern.
+        run: |
+          sed -i '' 's/ENABLE_USER_SCRIPT_SANDBOXING = YES/ENABLE_USER_SCRIPT_SANDBOXING = NO/g' \
+            mobile/ios/Expenses.xcodeproj/project.pbxproj
 
       - name: Patch Podfile for Firebase (use_modular_headers)
         working-directory: mobile/ios
@@ -61,7 +82,6 @@ jobs:
           # AppCheckCore (Swift) depends on GoogleUtilities + RecaptchaInterop,
           # which don't define modules. Required for `pod install` to succeed.
           if ! grep -q "use_modular_headers!" Podfile; then
-            # Insert right after the platform/target line — top of file is safe.
             sed -i '' '1a\
 use_modular_headers!
 ' Podfile
@@ -70,7 +90,7 @@ use_modular_headers!
 
       - name: CocoaPods install (generates Expenses.xcworkspace)
         working-directory: mobile/ios
-        run: pod install
+        run: pod install --repo-update
 
       - name: xcodebuild archive (unsigned)
         run: |
