@@ -1,0 +1,184 @@
+name: Release IPA
+
+# Auto-release on every push to main that touches mobile/**.
+# Bumps the patch component of the latest mobile-v* tag, builds an unsigned IPA,
+# uploads it to a GitHub Release, and updates the shared AltStore source on GCS.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/release-ipa.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Override version (e.g. 1.0.5). Leave blank to auto-bump patch.'
+        required: false
+        type: string
+
+permissions:
+  contents: write   # to create tags + GH Release
+  id-token: write   # WIF auth to GCP for shared bucket upload
+
+jobs:
+  build-ipa:
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need tags to compute next version
+
+      - name: Compute next version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            NEXT="${{ inputs.version }}"
+          else
+            LATEST=$(git tag -l 'mobile-v*' --sort=-v:refname | head -1)
+            if [ -z "$LATEST" ]; then
+              NEXT="1.0.0"
+            else
+              CUR="${LATEST#mobile-v}"
+              IFS='.' read -r MAJ MIN PAT <<< "$CUR"
+              NEXT="${MAJ}.${MIN}.$((PAT + 1))"
+            fi
+          fi
+          echo "version=$NEXT" >> $GITHUB_OUTPUT
+          echo "tag=mobile-v$NEXT" >> $GITHUB_OUTPUT
+          echo "Releasing mobile-v$NEXT"
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install mobile deps
+        working-directory: mobile
+        run: npm ci
+
+      - name: Inject release version into app.json
+        # AltStore validates that the IPA's CFBundleShortVersionString matches
+        # the version in altstore.json. Write the new version into mobile/app.json
+        # before prebuild so it lands in Info.plist.
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          python3 - <<EOF
+          import json
+          p = "mobile/app.json"
+          d = json.load(open(p))
+          d["expo"]["version"] = "$VER"
+          json.dump(d, open(p, "w"), indent=2)
+          print("set version to", "$VER")
+          EOF
+
+      - name: Expo prebuild (iOS)
+        working-directory: mobile
+        run: npx expo prebuild --platform ios --no-install --clean
+
+      - name: Disable script-phase sandboxing (Xcode 16 + Node bundler)
+        run: |
+          sed -i '' 's/ENABLE_USER_SCRIPT_SANDBOXING = YES/ENABLE_USER_SCRIPT_SANDBOXING = NO/g' \
+            mobile/ios/Expenses.xcodeproj/project.pbxproj
+
+      - name: Pod install
+        working-directory: mobile/ios
+        run: pod install --repo-update
+
+      - name: Archive
+        working-directory: mobile/ios
+        run: |
+          xcodebuild \
+            -workspace Expenses.xcworkspace \
+            -scheme Expenses \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/Expenses.xcarchive" \
+            -destination 'generic/platform=iOS' \
+            archive \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package IPA
+        run: |
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$RUNNER_TEMP/Expenses.xcarchive/Products/Applications/Expenses.app" \
+            "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa" && zip -qr "$RUNNER_TEMP/Expenses.ipa" Payload
+          ls -lh "$RUNNER_TEMP/Expenses.ipa"
+
+      - name: Create tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git tag "${{ steps.ver.outputs.tag }}"
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      - name: Upload IPA to GH Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" "$RUNNER_TEMP/Expenses.ipa" \
+            --title "Mobile v${{ steps.ver.outputs.version }}" \
+            --notes "AltStore-source release. Built from ${{ github.sha }}." \
+            || gh release upload "${{ steps.ver.outputs.tag }}" "$RUNNER_TEMP/Expenses.ipa" --clobber
+
+      - name: Auth to GCS for shared source
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Update shared AltStore source on GCS
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          TAG="${{ steps.ver.outputs.tag }}"
+          IPA_SIZE=$(stat -f %z "$RUNNER_TEMP/Expenses.ipa")
+          IPA_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # Download the current source, mutate, re-upload.
+          gcloud storage cp gs://blueelephants-altstore/altstore.json "$RUNNER_TEMP/altstore.json" \
+            --project personal-projects-473219
+
+          python3 - <<EOF
+          import json
+          p = "$RUNNER_TEMP/altstore.json"
+          d = json.load(open(p))
+          bid = "org.blueelephants.familyexpensetracker"
+          app = next(a for a in d["apps"] if a["bundleIdentifier"] == bid)
+          new_v = {
+            "version": "$VER",
+            "buildVersion": "1",
+            "date": "$IPA_DATE",
+            "localizedDescription": "New version $VER",
+            "downloadURL": "https://github.com/${{ github.repository }}/releases/download/$TAG/Expenses.ipa",
+            "size": $IPA_SIZE,
+            "minOSVersion": "16.0",
+          }
+          app["versions"] = [new_v] + [v for v in app["versions"] if v["version"] != "$VER"]
+          json.dump(d, open(p, "w"), indent=2)
+          print("updated", p)
+          EOF
+
+          gcloud storage cp "$RUNNER_TEMP/altstore.json" \
+            gs://blueelephants-altstore/altstore.json \
+            --content-type=application/json \
+            --cache-control="public,max-age=60" \
+            --project personal-projects-473219
+
+          # Mirror to frontend/public for the legacy Firebase URL.
+          cp "$RUNNER_TEMP/altstore.json" frontend/public/altstore.json
+          git add frontend/public/altstore.json
+          git diff --staged --quiet || (git commit -m "release: $TAG (AltStore source mirror)" && git push)
