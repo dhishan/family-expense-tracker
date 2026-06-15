@@ -55,6 +55,19 @@ jobs:
       - name: Pin Xcode (matches local dev)
         run: sudo xcode-select -s /Applications/Xcode.app
 
+      - name: Patch Podfile for Firebase (use_modular_headers)
+        working-directory: mobile/ios
+        run: |
+          # AppCheckCore (Swift) depends on GoogleUtilities + RecaptchaInterop,
+          # which don't define modules. Required for `pod install` to succeed.
+          if ! grep -q "use_modular_headers!" Podfile; then
+            # Insert right after the platform/target line — top of file is safe.
+            sed -i '' '1a\
+use_modular_headers!
+' Podfile
+          fi
+          head -5 Podfile
+
       - name: CocoaPods install (generates Expenses.xcworkspace)
         working-directory: mobile/ios
         run: pod install
