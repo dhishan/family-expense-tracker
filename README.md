@@ -486,6 +486,44 @@ Apple's free dev cert expires every 7 days. Options ranked best-to-worst:
 
 For 2-3 family devices, AltStore or SideStore are the best free path.
 
+### Sideloading via the AltStore source
+
+The app is published as a self-hosted [AltStore](https://altstore.io) source — no App Store, no $99/yr Apple Developer Program required. AltStore Classic re-signs the app over wifi every 7 days using a free Apple ID.
+
+**Source URL** (paste this into AltStore → Browse → Sources → **+**):
+
+```
+https://apps.blueelephants.org/altstore.json
+```
+
+The canonical JSON is served from a shared GCS bucket (`gs://blueelephants-altstore/altstore.json`) and fronted by `apps.blueelephants.org`. A mirror also lives at `frontend/public/altstore.json` (served by Firebase Hosting alongside the web app) for back-compat. Open the URL in a browser to verify it's reachable before pasting into AltStore.
+
+**One-time setup (per phone):**
+
+1. Install **AltServer** on a Mac that stays on the same wifi as the phone: https://altstore.io
+2. Install **AltStore Classic** on the iPhone via AltServer (cable required for this step only)
+3. In Finder, pair the iPhone and enable "Show this iPhone when on Wi-Fi" — required for AltServer to reach the device
+4. Open AltStore on the phone → **Browse** tab → **Sources** → **+** → paste the source URL above
+5. Tap the **Expenses** app in the source and hit **Free** to install
+
+**Self-hosted anisette server (for AltStore Classic 2.3+ / SideStore):**
+
+AltStore 2.3+ and SideStore need an "anisette server" to talk to Apple's signing service without bundling AltServer. We host one on GCP Cloud Run (free tier, scale-to-zero):
+
+```
+https://anisette.blueelephants.org
+```
+
+Paste that into AltStore Settings → **Anisette Servers** → **+**, or SideStore's equivalent. It runs `dadoum/anisette-v3-server` and stores no secrets — see `terraform/main/anisette.tf`. The raw Cloud Run URL (`https://anisette-server-ix5fldbdya-uc.a.run.app`) also works as a fallback. If you'd rather use a public community server, https://ani.sidestore.io is the standard alternative.
+
+**Pushing updates:**
+
+- **JS-only change** (most UI/logic fixes): `make mobile-update MSG="..."` → phone picks it up on next app launch via EAS Update (~10s, no re-sign)
+- **Native change** (icons, Info.plist, new module): tag-triggered. Run `git tag mobile-v<x.y.z> && git push origin mobile-v<x.y.z>` — `.github/workflows/release-ipa.yml` builds the `.ipa` on a macOS runner, creates a GitHub Release, updates the GCS source, and mirrors `frontend/public/altstore.json`. Phones see the new version in AltStore and tap **UPDATE**
+- **Manual local build**: `make mobile-publish-ipa VERSION=x.y.z` (requires Mac with Xcode + Apple ID signed in)
+
+The canonical AltStore source JSON lives in GCS (`gs://blueelephants-altstore/altstore.json`) served via `apps.blueelephants.org`; `frontend/public/altstore.json` is a back-compat mirror. The branded icon (`blue-elephants-icon.png`) renders in the AltStore source listing.
+
 ### Local mobile testing
 
 ```bash
