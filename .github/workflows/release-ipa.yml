@@ -1,21 +1,27 @@
 name: Release IPA
 
-# Auto-release on every push to main that touches mobile/**.
-# Bumps the patch component of the latest mobile-v* tag, builds an unsigned IPA,
-# uploads it to a GitHub Release, and updates the shared AltStore source on GCS.
+# Tag-triggered (push `mobile-v1.0.1` to release) + workflow_dispatch fallback.
+# Builds an unsigned IPA, creates a GitHub Release, and updates the shared
+# AltStore source on GCS + the legacy Firebase mirror.
+#
+# Tag trigger avoids macOS runs on every mobile/** commit. JS-only changes
+# ship via mobile-ota.yml (cheap Linux runner) — only re-cut a tag when
+# native deps or app.json icons/perms change.
 
 on:
   push:
-    branches: [main]
-    paths:
-      - 'mobile/**'
-      - '.github/workflows/release-ipa.yml'
+    tags:
+      - 'mobile-v*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Override version (e.g. 1.0.5). Leave blank to auto-bump patch.'
-        required: false
+        description: 'Version to release (e.g. 1.0.5). Will create + push mobile-v<version>.'
+        required: true
         type: string
+
+concurrency:
+  group: release-ipa
+  cancel-in-progress: false
 
 permissions:
   contents: write   # to create tags + GH Release
@@ -31,20 +37,14 @@ jobs:
         with:
           fetch-depth: 0   # need tags to compute next version
 
-      - name: Compute next version
+      - name: Resolve version
         id: ver
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             NEXT="${{ inputs.version }}"
           else
-            LATEST=$(git tag -l 'mobile-v*' --sort=-v:refname | head -1)
-            if [ -z "$LATEST" ]; then
-              NEXT="1.0.0"
-            else
-              CUR="${LATEST#mobile-v}"
-              IFS='.' read -r MAJ MIN PAT <<< "$CUR"
-              NEXT="${MAJ}.${MIN}.$((PAT + 1))"
-            fi
+            # Tag push: github.ref_name is e.g. "mobile-v1.0.1"
+            NEXT="${GITHUB_REF_NAME#mobile-v}"
           fi
           echo "version=$NEXT" >> $GITHUB_OUTPUT
           echo "tag=mobile-v$NEXT" >> $GITHUB_OUTPUT
@@ -90,6 +90,30 @@ jobs:
           sed -i '' 's/ENABLE_USER_SCRIPT_SANDBOXING = YES/ENABLE_USER_SCRIPT_SANDBOXING = NO/g' \
             mobile/ios/Expenses.xcodeproj/project.pbxproj
 
+      - name: Patch Podfile — scoped modular headers for Firebase deps
+        working-directory: mobile/ios
+        # AppCheckCore (Swift) depends on GoogleUtilities + RecaptchaInterop,
+        # neither of which define modules. pod install fails without modular
+        # headers on those two. Global use_modular_headers! breaks RN 0.79
+        # ('Redefinition of module react_runtime'), so scope to just these
+        # two pods inside the main target.
+        run: |
+          python3 - <<'PY'
+          import re
+          p = "Podfile"
+          src = open(p).read()
+          if "GoogleUtilities" in src and "RecaptchaInterop" in src:
+              print("already patched")
+          else:
+              inject = (
+                  "  pod 'GoogleUtilities', :modular_headers => true\n"
+                  "  pod 'RecaptchaInterop', :modular_headers => true\n"
+              )
+              src = re.sub(r"(target ['\"][^'\"]+['\"] do\n)", r"\1" + inject, src, count=1)
+              open(p, "w").write(src)
+              print("patched")
+          PY
+
       - name: Pod install
         working-directory: mobile/ios
         run: pod install --repo-update
@@ -114,14 +138,15 @@ jobs:
           cd "$RUNNER_TEMP/ipa" && zip -qr "$RUNNER_TEMP/Expenses.ipa" Payload
           ls -lh "$RUNNER_TEMP/Expenses.ipa"
 
-      - name: Create tag
+      - name: Create tag (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git tag "${{ steps.ver.outputs.tag }}"
-          git push origin "${{ steps.ver.outputs.tag }}"
+          git tag "${{ steps.ver.outputs.tag }}" || true
+          git push origin "${{ steps.ver.outputs.tag }}" || true
 
       - name: Upload IPA to GH Release
         env:
