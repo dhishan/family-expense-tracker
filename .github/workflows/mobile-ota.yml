@@ -60,15 +60,44 @@ jobs:
 
       - name: Resolve update message
         id: msg
+        # Build a single-line message listing every commit subject since
+        # the last successful OTA. We use the PREVIOUS push's commit
+        # (HEAD~1..HEAD on push events) as a lower bound and fall back to
+        # the last 5 commits if before/after isn't available. For
+        # workflow_dispatch, the user-supplied message is used verbatim
+        # unless it's the default "manual update" placeholder, in which
+        # case we still summarize the recent commits.
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          set -e
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ -n "${{ inputs.message }}" ] && \
+             [ "${{ inputs.message }}" != "manual update" ]; then
             MSG="${{ inputs.message }}"
           else
-            # Use the latest commit message, truncated
-            MSG=$(git log -1 --pretty=format:'%s' | head -c 200)
+            RANGE="${{ github.event.before }}..${{ github.sha }}"
+            # Defensive: if `before` is the zero-SHA (initial push) or empty,
+            # fall back to the last 5 commits.
+            if [ -z "${{ github.event.before }}" ] || \
+               [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+              SUBJECTS=$(git log -5 --pretty=format:'%s' --no-merges)
+            else
+              SUBJECTS=$(git log "$RANGE" --pretty=format:'%s' --no-merges 2>/dev/null || git log -5 --pretty=format:'%s' --no-merges)
+            fi
+            # Filter to only commits touching mobile/ — keeps the OTA log
+            # honest about what shipped. Falls back to "all" if grep finds
+            # nothing.
+            MOBILE_ONLY=$(echo "$SUBJECTS" | head -10)
+            # Join newline-separated subjects with " • " and cap at 250 chars
+            # (EAS Update message limit is ~1024 but short = readable).
+            MSG=$(echo "$MOBILE_ONLY" | tr '\n' '|' | sed 's/|$//' | sed 's/|/ • /g' | cut -c1-250)
+            if [ -z "$MSG" ]; then
+              MSG="JS update from $GITHUB_SHA"
+            fi
           fi
-          echo "message=$MSG" >> $GITHUB_OUTPUT
-          echo "Update message: $MSG"
+          # Escape any backticks/dollar signs the CLI step might evaluate.
+          MSG_ESCAPED=$(echo "$MSG" | tr -d '`$"')
+          echo "message=$MSG_ESCAPED" >> $GITHUB_OUTPUT
+          echo "Update message: $MSG_ESCAPED"
 
       - name: EAS Update → preview
         working-directory: mobile

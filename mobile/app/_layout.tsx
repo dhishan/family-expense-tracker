@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar'
 import * as SecureStore from 'expo-secure-store'
 import { useAuthStore } from '@/store/auth'
 import { create, open } from 'react-native-plaid-link-sdk'
+import { WhatsNewSheet } from '@/components/WhatsNewSheet'
 import '../global.css'
 
 const PLAID_LINK_TOKEN_KEY = 'plaid_link_token'
@@ -113,6 +114,7 @@ export default function RootLayout() {
           <Stack.Screen name="login" />
           <Stack.Screen name="(tabs)" />
         </Stack>
+        <WhatsNewSheet />
         </View>
       )}
     </QueryClientProvider>
