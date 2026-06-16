@@ -708,10 +708,45 @@ export default function Chat() {
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
         currentConversationId={conversationId}
-        onSelect={(id) => {
+        onSelect={async (id) => {
+          setHistoryOpen(false)
           setConversationId(id)
           setMessages([])
-          setHistoryOpen(false)
+          try {
+            const conv = await chatApi.getConversation(id)
+            const loaded: Message[] = []
+            for (const t of conv.turns as Array<{
+              role: 'user' | 'assistant'
+              text?: string
+              tool_calls?: Array<{
+                id: string
+                name: string
+                input?: Record<string, unknown>
+                result?: string
+              }>
+            }>) {
+              if (t.role === 'user') {
+                loaded.push({ role: 'user', blocks: [{ type: 'text', text: t.text ?? '' }] })
+              } else {
+                const blocks: MessageBlock[] = []
+                for (const tc of t.tool_calls ?? []) {
+                  blocks.push({
+                    type: 'tool_call',
+                    id: tc.id,
+                    name: tc.name,
+                    input: tc.input ?? {},
+                    result: tc.result,
+                    expanded: false,
+                  })
+                }
+                if (t.text) blocks.push({ type: 'text', text: t.text })
+                loaded.push({ role: 'assistant', blocks })
+              }
+            }
+            setMessages(loaded)
+          } catch (e) {
+            console.error('Failed to load conversation', e)
+          }
         }}
       />
     </div>
