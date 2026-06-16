@@ -150,6 +150,28 @@ function useDynamicStarters(): string[] {
   }, [holdingsData, recentExpenses, budgetsData])
 }
 
+// Source citations: SYSTEM_PROMPT asks the model to suffix factual claims
+// with `[tool_name]`. Mobile has no tool-card UI to scroll to, so we
+// rewrite to a low-key italic `_(via tool label)_` so the citation is
+// visible without dominating the line.
+const KNOWN_TOOL_NAMES = new Set([
+  ...Object.keys(TOOL_LABELS),
+  'macro_indicator', 'list_accounts', 'get_holdings', 'get_cost_basis',
+  'portfolio_summary', 'get_account_balances', 'get_activities',
+  'manifold_search', 'polymarket_search', 'kalshi_search',
+  'option_chain', 'option_strikes', 'option_expirations',
+  'alpaca_quote', 'alpaca_bars',
+  'bank_accounts', 'bank_transactions', 'bank_recurring',
+])
+
+function renderCitationsForMobile(text: string): string {
+  return text.replace(/\[([a-z][a-z0-9_]{2,})\]/g, (full, name) => {
+    if (!KNOWN_TOOL_NAMES.has(name)) return full
+    const label = TOOL_LABELS[name] ?? name.replace(/_/g, ' ')
+    return ` _(via ${label})_`
+  })
+}
+
 function labelForTool(name: string, input?: Record<string, unknown>): string {
   const base = TOOL_LABELS[name] ?? name
   const sym =
@@ -664,7 +686,7 @@ export default function ChatScreen() {
               ) : (
                 <>
                   <Markdown style={markdownStyles}>
-                    {item.content || ' '}
+                    {renderCitationsForMobile(item.content) || ' '}
                   </Markdown>
                   {item.streaming && item.status ? (
                     // In-progress tool status (e.g. "Pulling portfolio data")

@@ -43,6 +43,30 @@ function humanizeToolName(name: string): string {
   return TOOL_LABELS[name] ?? name.replace(/_/g, ' ')
 }
 
+// Allow only known tool names from TOOL_LABELS plus any snake_case token
+// the model might emit. Keeps the [bracketed text] for actual prose
+// citations like "see [the docs]" untouched — those don't match.
+const KNOWN_TOOL_NAMES = new Set([
+  ...Object.keys(TOOL_LABELS),
+  // Generic patterns we also accept inline:
+  'macro_indicator', 'list_accounts', 'get_holdings', 'get_cost_basis',
+  'portfolio_summary', 'get_account_balances', 'get_activities',
+  'manifold_search', 'polymarket_search', 'kalshi_search',
+  'option_chain', 'option_strikes', 'option_expirations',
+  'alpaca_quote', 'alpaca_bars',
+  'bank_accounts', 'bank_transactions', 'bank_recurring',
+])
+
+function renderCitations(text: string): string {
+  // Rewrite `[tool_name]` (only when tool_name matches snake_case AND is
+  // in our known set) into a markdown anchor the `a` renderer turns into
+  // a chip. Avoids touching prose like "[see appendix]".
+  return text.replace(/\[([a-z][a-z0-9_]{2,})\]/g, (full, name) => {
+    if (!KNOWN_TOOL_NAMES.has(name)) return full
+    return `[ⓘ ${humanizeToolName(name)}](#tc-${name})`
+  })
+}
+
 // ---- Types ------------------------------------------------------------------
 
 interface TextBlock {
@@ -163,7 +187,10 @@ function useDynamicStarters(): string[] {
 
 function ToolCard({ block, onToggle }: { block: ToolCallBlock; onToggle: () => void }) {
   return (
-    <div className="my-2 rounded-lg border border-gray-200 bg-gray-50 text-xs font-mono overflow-hidden">
+    <div
+      data-tool-call={block.name}
+      className="my-2 rounded-lg border border-gray-200 bg-gray-50 text-xs font-mono overflow-hidden"
+    >
       <button
         onClick={onToggle}
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-600 hover:bg-gray-100 transition-colors"
@@ -259,8 +286,6 @@ function Bubble({ msg, onToolToggle }: {
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   components={{
-                    // Wrap tables so they can scroll horizontally on narrow screens
-                    // without overflowing the chat bubble.
                     table: ({ children }) => (
                       <div className="my-3 overflow-x-auto rounded-md border border-slate-200">
                         <table className="w-full text-sm border-collapse">{children}</table>
@@ -284,9 +309,36 @@ function Bubble({ msg, onToolToggle }: {
                         {children}
                       </td>
                     ),
+                    // Citation chips: SYSTEM_PROMPT asks the model to tag
+                    // factual claims with `[tool_name]`. We rewrite those
+                    // into markdown anchor links upstream (`[ⓘ label](#tc-name)`),
+                    // and render the anchor as a small chip that scrolls to
+                    // the corresponding tool call block on click.
+                    a: ({ href, children }) => {
+                      if (typeof href === 'string' && href.startsWith('#tc-')) {
+                        const toolName = href.slice(4)
+                        return (
+                          <a
+                            href={href}
+                            onClick={(e) => {
+                              e.preventDefault()
+                              const el = document.querySelector(
+                                `[data-tool-call="${toolName}"]`,
+                              )
+                              el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                            }}
+                            className="inline-flex items-center gap-1 px-1.5 py-0 mx-0.5 align-baseline text-[10px] font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full hover:bg-indigo-100 no-underline"
+                            title={`Jump to ${toolName} tool call`}
+                          >
+                            {children}
+                          </a>
+                        )
+                      }
+                      return <a href={href}>{children}</a>
+                    },
                   }}
                 >
-                  {block.text}
+                  {renderCitations(block.text)}
                 </ReactMarkdown>
               </div>
             )
