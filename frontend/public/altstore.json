@@ -110,6 +110,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.28",
+          "buildVersion": "1",
+          "date": "2026-06-16T08:48:13Z",
+          "localizedDescription": "New version 1.0.28",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.28/FitnessTracker.ipa",
+          "size": 20376801,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.27",
           "buildVersion": "1",
           "date": "2026-06-16T04:55:37Z",
