@@ -64,8 +64,18 @@ def _require_credentials(internal_user_id: str) -> tuple[str, str]:
     return creds["snaptrade_user_id"], creds["user_secret"]
 
 
+class SnapTradePlanLimitError(RuntimeError):
+    """Raised when the SnapTrade plan refuses to provision a second user
+    (Personal plan = one user only). Caller should turn this into a 409 or
+    similar with a user-facing message rather than a 500."""
+
+
 def register_user(internal_user_id: str) -> dict:
-    """Register the app user with SnapTrade. Idempotent: returns existing if present."""
+    """Register the app user with SnapTrade. Idempotent: returns existing if present.
+
+    Raises SnapTradePlanLimitError on the Personal-plan limitation so the
+    router can return a friendly message instead of a 500.
+    """
     existing = get_stored_credentials(internal_user_id)
     if existing:
         return {
@@ -76,7 +86,20 @@ def register_user(internal_user_id: str) -> dict:
     client = get_client()
     # Use a stable opaque ID so we can re-register deterministically if Firestore is wiped.
     snap_user_id = f"fet-{internal_user_id}-{uuid.uuid4().hex[:8]}"
-    resp = client.authentication.register_snap_trade_user(body={"userId": snap_user_id})
+    try:
+        resp = client.authentication.register_snap_trade_user(body={"userId": snap_user_id})
+    except Exception as e:
+        msg = str(e)
+        # SnapTrade Personal plan blocks a second registerUser call. Detect
+        # it specifically so the UI shows a helpful message instead of 500.
+        if "registerUser is not available for personal" in msg or "registerUser is not available" in msg:
+            raise SnapTradePlanLimitError(
+                "Brokerage linking is not available on the family's current "
+                "SnapTrade plan — only one connected SnapTrade user is allowed. "
+                "Ask the family admin (the first person who connected a brokerage) "
+                "to share their linked accounts."
+            )
+        raise
     user_secret = resp.body["userSecret"]
 
     _doc_ref(internal_user_id).set({

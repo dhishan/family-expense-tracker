@@ -24,6 +24,10 @@ async def register(current_user: User = Depends(get_current_user)):
     """Register the current user with SnapTrade. Idempotent."""
     try:
         return snaptrade_service.register_user(current_user.id)
+    except snaptrade_service.SnapTradePlanLimitError as e:
+        # Personal plan: only one SnapTrade user allowed. Surface a clean 409
+        # with the human-readable message rather than a 500.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
 

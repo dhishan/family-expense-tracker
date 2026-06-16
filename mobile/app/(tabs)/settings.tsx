@@ -200,8 +200,20 @@ export default function SettingsScreen() {
         'Brokerage connection started',
         'Complete the link in your browser, then pull to refresh this screen.',
       )
-    } catch {
-      Alert.alert('Error', 'Failed to start brokerage connection.')
+    } catch (err: unknown) {
+      // Surface backend's user-facing detail when present (e.g. SnapTrade
+      // Personal-plan limit returns 409 with a clear message).
+      let title = 'Error'
+      let body = 'Failed to start brokerage connection.'
+      const e = err as { response?: { status?: number; data?: { detail?: string } } }
+      const detail = e?.response?.data?.detail
+      if (e?.response?.status === 409 && detail) {
+        title = 'Family brokerage limit'
+        body = detail
+      } else if (detail) {
+        body = detail
+      }
+      Alert.alert(title, body)
     } finally {
       setConnectingBrokerage(false)
     }
