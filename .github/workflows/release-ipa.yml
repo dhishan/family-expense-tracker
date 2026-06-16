@@ -50,6 +50,27 @@ jobs:
           echo "tag=mobile-v$NEXT" >> $GITHUB_OUTPUT
           echo "Releasing mobile-v$NEXT"
 
+      - name: Build changelog from commits since last mobile tag
+        id: changelog
+        run: |
+          PREV=$(git tag -l 'mobile-v*' --sort=-v:refname | grep -v "^mobile-v${{ steps.ver.outputs.version }}$" | head -1)
+          if [ -z "$PREV" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="$PREV..HEAD"
+          fi
+          LOG=$(git log "$RANGE" --no-merges --pretty=format:'%s' -- mobile/ backend/app/ \
+            | grep -vE '^(chore|ci|docs|test)(\(|:)' \
+            | sed -E 's/^(feat|fix|perf)\([^)]*\): */- /; s/^(feat|fix|perf): */- /' \
+            | sed -E 's/^([A-Za-z])/- \1/' \
+            | head -10)
+          if [ -z "$LOG" ]; then
+            LOG="- Minor improvements and fixes"
+          fi
+          echo "log<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$LOG" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
       - name: Setup node
         uses: actions/setup-node@v4
         with:
@@ -151,10 +172,16 @@ jobs:
       - name: Upload IPA to GH Release
         env:
           GH_TOKEN: ${{ github.token }}
+          CHANGELOG: ${{ steps.changelog.outputs.log }}
         run: |
+          NOTES="What's changed:
+          $CHANGELOG
+
+          ---
+          Built from ${{ github.sha }}."
           gh release create "${{ steps.ver.outputs.tag }}" "$RUNNER_TEMP/Expenses.ipa" \
             --title "Mobile v${{ steps.ver.outputs.version }}" \
-            --notes "AltStore-source release. Built from ${{ github.sha }}." \
+            --notes "$NOTES" \
             || gh release upload "${{ steps.ver.outputs.tag }}" "$RUNNER_TEMP/Expenses.ipa" --clobber
 
       - name: Auth to GCS for shared source
@@ -167,35 +194,42 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Update shared AltStore source on GCS
+        env:
+          CHANGELOG: ${{ steps.changelog.outputs.log }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          VER="${{ steps.ver.outputs.version }}"
-          TAG="${{ steps.ver.outputs.tag }}"
-          IPA_SIZE=$(stat -f %z "$RUNNER_TEMP/Expenses.ipa")
-          IPA_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          export VER="${{ steps.ver.outputs.version }}"
+          export TAG="${{ steps.ver.outputs.tag }}"
+          export IPA_SIZE=$(stat -f %z "$RUNNER_TEMP/Expenses.ipa")
+          export IPA_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
           # Download the current source, mutate, re-upload.
           gcloud storage cp gs://blueelephants-altstore/altstore.json "$RUNNER_TEMP/altstore.json" \
             --project personal-projects-473219
 
-          python3 - <<EOF
-          import json
-          p = "$RUNNER_TEMP/altstore.json"
+          python3 - <<'PY'
+          import json, os
+          ver = os.environ["VER"]
+          tag = os.environ["TAG"]
+          changelog = os.environ.get("CHANGELOG", "").strip() or "- Minor improvements and fixes"
+          desc = f"What's changed:\n{changelog}"
+          p = f"{os.environ['RUNNER_TEMP']}/altstore.json"
           d = json.load(open(p))
           bid = "org.blueelephants.familyexpensetracker"
           app = next(a for a in d["apps"] if a["bundleIdentifier"] == bid)
           new_v = {
-            "version": "$VER",
+            "version": ver,
             "buildVersion": "1",
-            "date": "$IPA_DATE",
-            "localizedDescription": "New version $VER",
-            "downloadURL": "https://github.com/${{ github.repository }}/releases/download/$TAG/Expenses.ipa",
-            "size": $IPA_SIZE,
+            "date": os.environ["IPA_DATE"],
+            "localizedDescription": desc,
+            "downloadURL": f"https://github.com/{os.environ['GH_REPO']}/releases/download/{tag}/Expenses.ipa",
+            "size": int(os.environ["IPA_SIZE"]),
             "minOSVersion": "16.0",
           }
-          app["versions"] = [new_v] + [v for v in app["versions"] if v["version"] != "$VER"]
+          app["versions"] = [new_v] + [v for v in app["versions"] if v["version"] != ver]
           json.dump(d, open(p, "w"), indent=2)
           print("updated", p)
-          EOF
+          PY
 
           gcloud storage cp "$RUNNER_TEMP/altstore.json" \
             gs://blueelephants-altstore/altstore.json \
