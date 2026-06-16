@@ -641,11 +641,73 @@ Quick summary of where each secret lives in production:
 
 ## Hosted MCP
 
-The MCP server is mounted at `/mcp` on the backend and exposed publicly at https://mcp.expense-tracker.blueelephants.org/, gated by Cloudflare Access with Google SSO. Family members add it to Claude Desktop or Claude mobile and chat about their portfolio and expenses.
+The MCP server is mounted at `/mcp` on the backend and exposed publicly at https://mcp.expense-tracker.blueelephants.org/, gated by Cloudflare Access with Google SSO. Adding it to Claude Desktop / claude.ai / ChatGPT lets you query the same portfolio + expense + bank data from a chat surface that bills against your existing Claude or ChatGPT subscription instead of our backend's Anthropic API key.
 
-Configuration runbook (Cloudflare Access app, IdP, policy, DNS, Cloud Run domain mapping, Secret Manager population): see [`docs/HOSTED_MCP_DEPLOY.md`](docs/HOSTED_MCP_DEPLOY.md).
+**Endpoint**: `https://mcp.expense-tracker.blueelephants.org/mcp/`
 
-To add a family member's email to the Access allowlist: `docs/HOSTED_MCP_DEPLOY.md` → "Adding more family members".
+### Claude Desktop (Mac / Windows)
+
+1. Settings → **Developer** → **Edit Config**
+2. Add (or merge into) the JSON:
+   ```json
+   {
+     "mcpServers": {
+       "family-portfolio": {
+         "url": "https://mcp.expense-tracker.blueelephants.org/mcp/"
+       }
+     }
+   }
+   ```
+3. Restart Claude Desktop. First tool call opens a browser for Google SSO via Cloudflare Access — sign in with the same email used for the web app.
+
+### Claude Code (CLI)
+
+```bash
+claude mcp add family-portfolio --url "https://mcp.expense-tracker.blueelephants.org/mcp/"
+```
+
+### claude.ai (web, including mobile Safari)
+
+Requires Pro / Max / Team plan.
+
+1. Settings → **Connectors** → **+ Add custom connector**
+2. URL: `https://mcp.expense-tracker.blueelephants.org/mcp/`
+3. First tool call pops the Google SSO sheet — sign in once, Cloudflare caches the session.
+
+> **Note**: the official Claude mobile app does NOT yet expose a Custom Connectors UI. Use claude.ai in mobile Safari instead. "Add to Home Screen" makes it look like an app.
+
+### ChatGPT (Plus / Pro / Team / Business)
+
+ChatGPT added MCP connector support in late 2025.
+
+1. Settings → **Beta Features** → enable Developer mode (if needed)
+2. Settings → **Connectors** → **+ Add custom MCP server**
+3. URL: `https://mcp.expense-tracker.blueelephants.org/mcp/`
+
+**Caveat**: the Cloudflare Access Google-SSO popup can be unreliable from inside ChatGPT's connector sandbox. If it fails, two options:
+
+- **Quick**: set `ALLOW_MCP_BEARER_FALLBACK=true` on the Cloud Run env and issue yourself a long-lived backend JWT. ChatGPT sends `Authorization: Bearer <token>`. Lower security — rotate the token.
+- **Cleaner**: mount a parallel `/mcp-token` route with a static `X-API-Key` header (not yet implemented — open a follow-up).
+
+### What the model can call
+
+Same tool surface as the in-app `/chat`: 25+ tools across SnapTrade portfolio (`list_accounts`, `get_holdings`, `get_cost_basis`, `portfolio_summary`, ...), FRED macro (`macro_indicator`), Tiingo prices, Finnhub news + analyst, EDGAR filings, Manifold / Polymarket / Kalshi prediction markets, Tradier options chain + Greeks, Alpaca quotes/bars, Plaid bank data, your own expenses + budgets.
+
+### Trade-offs vs the in-app `/chat`
+
+| | In-app `/chat` | Claude/ChatGPT + MCP |
+|---|---|---|
+| Token cost | Charged to the backend's Anthropic API key | Charged to your Claude/ChatGPT subscription quota |
+| Model | Sonnet 4.6 default, Opus 4.7 on "deep analysis" keywords | Whatever your subscription gives you (Opus on Pro/Max) |
+| Cache hit | Yes (5-min TTL, ~80% savings) | Provider-managed |
+| Mobile | Native app + web | claude.ai in mobile Safari (no Custom Connectors in Claude mobile app yet) |
+| Auth | App JWT | Cloudflare Access Google SSO |
+
+### Runbooks
+
+Cloudflare Access app, IdP, policy, DNS, Cloud Run domain mapping, Secret Manager population — see [`docs/HOSTED_MCP_DEPLOY.md`](docs/HOSTED_MCP_DEPLOY.md).
+
+Adding a family member's email to the Access allowlist: `docs/HOSTED_MCP_DEPLOY.md` → "Adding more family members".
 
 ## Observability
 
