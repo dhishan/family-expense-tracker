@@ -13,8 +13,10 @@ router = APIRouter()
 
 class LoginUrlRequest(BaseModel):
     broker: Optional[str] = "ROBINHOOD"
-    custom_redirect: Optional[str] = None
     connection_type: str = "read"
+    # NOTE: `custom_redirect` intentionally NOT exposed — was a Low-sev
+    # open-redirect risk (client-controlled URL forwarded to SnapTrade's
+    # connection portal). See docs/security-review-2026-06-15.md.
 
 
 @router.post("/register")
@@ -35,7 +37,7 @@ async def connect(
     return snaptrade_service.login_url(
         current_user.id,
         broker=req.broker,
-        custom_redirect=req.custom_redirect,
+        custom_redirect=None,  # not client-controlled — security
         connection_type=req.connection_type,
     )
 

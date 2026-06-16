@@ -13,6 +13,10 @@ Flow:
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from datetime import datetime
 from functools import lru_cache
 from typing import Any, Optional
@@ -210,7 +214,15 @@ def get_activities(
                 query_params=query_base, path_params={"accountId": acct_id}
             ).body
         except Exception as e:
-            return [{"account_id": acct_id, "error": str(e)}]
+            # Never echo SDK exception strings — SnapTrade SDK has been
+            # observed to include the full request URL (with userSecret
+            # query param) in exception messages. Log server-side, return
+            # a generic code to the caller.
+            logger.warning(
+                "snaptrade get_account_activities failed acct=%s err=%s",
+                acct_id, type(e).__name__,
+            )
+            return [{"account_id": acct_id, "error": "snaptrade_request_failed"}]
         items = page if isinstance(page, list) else (page.get("data") or [])
         for item in items:
             item.setdefault("account_id", acct_id)

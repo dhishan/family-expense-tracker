@@ -27,6 +27,8 @@ from starlette.responses import JSONResponse
 
 from app.auth.cloudflare import CloudflareAuthError, verify_access_jwt
 from app.auth.dependencies import decode_token
+import os
+
 from app.config import get_settings
 from app.services import market_data, snaptrade_service
 from app.services.budget_service import get_budget_service
@@ -82,9 +84,26 @@ def _resolve_user_id_from_request(request: Request) -> str:
             raise HTTPException(status_code=401, detail="Cloudflare JWT missing email claim")
         return _resolve_user_id_by_email(email)
 
-    # 2. Bearer token: our own app JWT
+    # 2. Bearer token: our own app JWT — DEV ONLY (or behind an explicit
+    # opt-in flag). In production we require the Cloudflare Access JWT so
+    # that policy enforcement at the edge is the single source of truth.
+    # Without this guard, a client could call api.expense-tracker.../mcp
+    # with a normal app JWT and bypass Cloudflare Access entirely.
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
+        allow_bearer = (
+            settings.environment != "production"
+            or os.getenv("ALLOW_MCP_BEARER_FALLBACK", "").lower() in ("1", "true", "yes")
+        )
+        if not allow_bearer:
+            raise HTTPException(
+                status_code=401,
+                detail=(
+                    "MCP in production requires Cloudflare Access. Bearer-token "
+                    "fallback is disabled. Reach /mcp via mcp.expense-tracker."
+                    "blueelephants.org so Cf-Access-Jwt-Assertion is injected."
+                ),
+            )
         token = auth.split(" ", 1)[1].strip()
         try:
             payload = decode_token(token)

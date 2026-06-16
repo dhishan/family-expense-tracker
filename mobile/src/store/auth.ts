@@ -2,10 +2,11 @@ import { create } from 'zustand'
 import * as SecureStore from 'expo-secure-store'
 import { GoogleSignin } from '@react-native-google-signin/google-signin'
 import type { User, Family, FamilyMember } from '../types'
+import { API_BASE_URL } from '../config/apiBase'
 
 // Lazy require so this module doesn't depend on the api module load order.
 const fetchMe = async (token: string): Promise<User | null> => {
-  const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
+  const base = API_BASE_URL
   const r = await fetch(`${base}/api/v1/auth/me`, {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -17,7 +18,7 @@ const fetchFamily = async (
   token: string,
   familyId: string,
 ): Promise<Family | null> => {
-  const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
+  const base = API_BASE_URL
   const r = await fetch(`${base}/api/v1/families/${familyId}`, {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -102,7 +103,7 @@ export const useAuthStore = create<AuthState>((set) => ({
           (userInfo as unknown as { data?: { idToken?: string } })?.data?.idToken ??
           (userInfo as unknown as { idToken?: string })?.idToken
         if (idToken) {
-          const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
+          const base = API_BASE_URL
           const r = await fetch(`${base}/api/v1/auth/google`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

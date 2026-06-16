@@ -31,7 +31,9 @@ def create_access_token(user_id: str, email: str) -> str:
         "exp": expire,
         "iat": datetime.utcnow(),
     }
-    return jwt.encode(to_encode, settings.secret_key, algorithm=settings.jwt_algorithm)
+    return jwt.encode(
+        to_encode, settings.effective_jwt_secret(), algorithm=settings.jwt_algorithm
+    )
 
 
 def decode_token(token: str) -> dict:
@@ -49,9 +51,9 @@ def decode_token(token: str) -> dict:
     """
     try:
         payload = jwt.decode(
-            token, 
-            settings.secret_key, 
-            algorithms=[settings.jwt_algorithm]
+            token,
+            settings.effective_jwt_secret(),
+            algorithms=[settings.jwt_algorithm],
         )
         return payload
     except JWTError as e:

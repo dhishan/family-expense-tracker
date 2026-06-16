@@ -3,7 +3,7 @@ import { ActivityIndicator, Linking, View, Keyboard } from 'react-native'
 import { Stack, router } from 'expo-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { StatusBar } from 'expo-status-bar'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import * as SecureStore from 'expo-secure-store'
 import { useAuthStore } from '@/store/auth'
 import { create, open } from 'react-native-plaid-link-sdk'
 import '../global.css'
@@ -11,19 +11,36 @@ import '../global.css'
 const PLAID_LINK_TOKEN_KEY = 'plaid_link_token'
 
 /**
- * Resume a Plaid OAuth flow when the app is opened via the expenses://plaid-oauth deep link.
- * The bank redirected to our backend relay, which forwarded here.
- * We restore the saved link_token, re-create the Plaid session, and open it.
+ * Resume a Plaid OAuth flow when the app is opened via expenses://plaid-oauth
+ * deep link. Hardened: strict URL parsing, require oauth_state_id query param,
+ * link_token stored in expo-secure-store (not AsyncStorage).
  */
 async function handlePlaidOAuthDeepLink(url: string): Promise<void> {
-  if (!url.startsWith('expenses://plaid-oauth')) return
-  const token = await AsyncStorage.getItem(PLAID_LINK_TOKEN_KEY)
+  // Strict URL validation — `startsWith` accepts crafted prefixes like
+  // `expenses://plaid-oauthsomething/`. Parse and check protocol + host/path
+  // + required state param exactly.
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return
+  }
+  if (parsed.protocol !== 'expenses:') return
+  // Expo uses scheme://path; host/pathname both reachable depending on iOS vs Android.
+  const pathish = `${parsed.host}${parsed.pathname}`.replace(/^\/+/, '')
+  if (!pathish.startsWith('plaid-oauth')) return
+  // Plaid OAuth resume requires this query param. Without it, this is a
+  // malformed callback (or a hostile app firing a guessed scheme).
+  const stateId = parsed.searchParams.get('oauth_state_id')
+  if (!stateId || stateId.length < 8 || stateId.length > 256) return
+
+  const token = await SecureStore.getItemAsync(PLAID_LINK_TOKEN_KEY).catch(() => null)
   if (!token) return
   create({ token })
   open({
     onSuccess: async (success: { publicToken: string }) => {
       try {
-        await AsyncStorage.removeItem(PLAID_LINK_TOKEN_KEY)
+        await SecureStore.deleteItemAsync(PLAID_LINK_TOKEN_KEY).catch(() => {})
         const { plaidApi } = await import('@/services/api')
         await plaidApi.exchangePublicToken(success.publicToken)
       } catch {

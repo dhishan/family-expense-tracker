@@ -13,7 +13,7 @@ import {
 import { router } from 'expo-router'
 import Constants from 'expo-constants'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import * as SecureStore from 'expo-secure-store'
 import { useAuthStore } from '@/store/auth'
 import { authApi, plaidApi, investmentsApi } from '@/services/api'
 import type { InvestmentAccount } from '@/types'
@@ -241,13 +241,14 @@ export default function SettingsScreen() {
     try {
       setConnectingBank(true)
       const { link_token } = await plaidApi.createLinkToken({ platform: 'mobile' })
-      // Persist token so the OAuth resume handler can retrieve it after the deep link fires
-      await AsyncStorage.setItem(PLAID_LINK_TOKEN_KEY, link_token)
+      // Persist token in SecureStore (Keychain on iOS, Keystore on Android) so
+      // it isn't readable by other apps with shared filesystem access.
+      await SecureStore.setItemAsync(PLAID_LINK_TOKEN_KEY, link_token)
       create({ token: link_token })
       open({
         onSuccess: async (success: { publicToken: string }) => {
           try {
-            await AsyncStorage.removeItem(PLAID_LINK_TOKEN_KEY)
+            await SecureStore.deleteItemAsync(PLAID_LINK_TOKEN_KEY).catch(() => {})
             await plaidApi.exchangePublicToken(success.publicToken)
             queryClient.invalidateQueries({ queryKey: ['plaid', 'items'] })
             queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })

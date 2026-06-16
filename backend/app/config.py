@@ -17,12 +17,28 @@ class Settings(BaseSettings):
     # Application Settings
     environment: str = "development"
     frontend_url: str = "http://localhost:5173"
+    # NOTE: JWT signing uses `effective_jwt_secret()` below — prefer
+    # `jwt_secret_key` (what Terraform injects as JWT_SECRET_KEY in prod),
+    # fall back to `secret_key` for legacy / local dev.
     secret_key: str = "change-me-in-production"
     jwt_secret_key: str = ""
-    
+
     # JWT Settings
     jwt_algorithm: str = "HS256"
-    jwt_expiration_hours: int = 24 * 7  # 7 days
+    jwt_expiration_hours: int = 24  # 24h; was 7 days — narrows the
+    # window an exfiltrated localStorage JWT stays usable. See task #50.
+
+    # Hard-coded default we MUST refuse to start with in production.
+    _DEFAULT_SECRET_KEY: str = "change-me-in-production"
+
+    def effective_jwt_secret(self) -> str:
+        """Single source of truth for JWT signing/verifying.
+
+        Prefer `JWT_SECRET_KEY` (what Terraform injects in prod). Fall back
+        to `SECRET_KEY` for local dev and pre-fix deployments. Return ""
+        if neither is set so callers can fail closed.
+        """
+        return (self.jwt_secret_key or self.secret_key or "").strip()
     
     # API Settings
     api_prefix: str = "/api/v1"

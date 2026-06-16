@@ -11,6 +11,25 @@ from app.routers import auth, families, expenses, budgets, notifications, invest
 settings = get_settings()
 
 
+def _enforce_production_jwt_secret() -> None:
+    """Refuse to boot if production is running with the hardcoded default
+    JWT secret. A weak or default signing key lets anyone forge a JWT for
+    any user — see docs/security-review-2026-06-15.md (Critical finding).
+    """
+    if settings.environment == "development":
+        return
+    sec = settings.effective_jwt_secret()
+    if not sec or sec == "change-me-in-production" or len(sec) < 32:
+        raise RuntimeError(
+            "Refusing to start: JWT signing secret is missing, the hardcoded "
+            "default, or too short (<32 chars). Set JWT_SECRET_KEY (or "
+            "SECRET_KEY) to a random 32+ byte value in the Cloud Run env."
+        )
+
+
+_enforce_production_jwt_secret()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start the MCP server's session manager alongside FastAPI."""

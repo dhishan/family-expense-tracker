@@ -28,7 +28,7 @@ import type {
   MerchantRuleCreate,
 } from '../types'
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
+import { API_BASE_URL } from '../config/apiBase'
 
 const api = axios.create({
   baseURL: `${API_BASE_URL}/api/v1`,

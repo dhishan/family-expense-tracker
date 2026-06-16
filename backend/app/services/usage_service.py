@@ -154,14 +154,19 @@ def get_monthly_cost(user_id: str) -> float:
         return 0.0
 
 
-def get_conversation_cost(conversation_id: str) -> float:
-    """Return cost_usd from a conversation doc. 0.0 if none."""
+def get_conversation_cost(conversation_id: str, user_id: str) -> float:
+    """Return cost_usd from a conversation doc owned by `user_id`. 0.0 if
+    missing OR owned by a different user — IDOR-safe (foreign IDs leak
+    nothing about whether the conversation exists)."""
     try:
         db = _db()
         doc = db.collection("chat_conversations").document(conversation_id).get()
-        if doc.exists:
-            return float(doc.to_dict().get("cost_usd", 0.0))
-        return 0.0
+        if not doc.exists:
+            return 0.0
+        data = doc.to_dict() or {}
+        if data.get("user_id") != user_id:
+            return 0.0
+        return float(data.get("cost_usd", 0.0))
     except Exception as e:
         logger.warning("usage_service: get_conversation_cost failed: %s", e)
         return 0.0

@@ -23,7 +23,7 @@ async def usage_quick(
     - month_cost_usd:   total cost for the current calendar month
     """
     session_cost = (
-        usage_service.get_conversation_cost(conversation_id)
+        usage_service.get_conversation_cost(conversation_id, current_user.id)
         if conversation_id
         else 0.0
     )
