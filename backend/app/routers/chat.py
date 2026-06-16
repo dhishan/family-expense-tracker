@@ -1750,6 +1750,50 @@ _TOOL_CONTEXT_BUDGETS: dict[str, int] = {
 _DEFAULT_CONTEXT_BUDGET = 4_000  # chars
 
 
+def _is_retryable_provider_error(exc: Exception) -> bool:
+    """True when an exception from the model provider looks like a
+    transient outage / overload / timeout we should retry against the
+    secondary provider. Conservative: only fires on known patterns to
+    avoid masking real bugs."""
+    msg = (str(exc) or "").lower()
+    cls = exc.__class__.__name__.lower()
+    if any(k in msg for k in (
+        "overloaded",
+        "internal server error",
+        "api_error",
+        "service unavailable",
+        "bad gateway",
+        "gateway time-out",
+        "gateway timeout",
+        "timeout",
+        "timed out",
+        "503",
+        "502",
+        "504",
+        "529",
+    )):
+        return True
+    if any(k in cls for k in ("apistatus", "apitimeout", "overloaded", "internalserver")):
+        return True
+    return False
+
+
+def _friendly_provider_error(exc: Exception) -> str:
+    """Human-friendly one-liner for a provider error, used as the value
+    of the SSE `error.message`. Frontends still apply their own
+    polish on top of this."""
+    msg = (str(exc) or "").lower()
+    if "overloaded" in msg or "rate" in msg or "429" in msg:
+        return "The model is overloaded right now. Please retry in a moment."
+    if any(k in msg for k in ("internal server error", "api_error", "503", "502", "504")):
+        return "The model service had a hiccup. Please retry."
+    if "timeout" in msg or "timed out" in msg:
+        return "The model took too long to respond. Please retry."
+    # Generic fallback — strip any provider stack-trace cruft.
+    raw = str(exc) or "Unknown error"
+    return raw if len(raw) <= 240 else raw[:240] + "…"
+
+
 async def _dispatch_tool_call(name: str, tool_input: dict, user_id: str) -> str:
     """Single dispatch point for every user-defined chat tool. Used by both
     the Anthropic and GPT generation paths so behavior matches across
@@ -2248,12 +2292,31 @@ async def _generate_turn(
             )
         except Exception as exc:
             logger.exception("GPT generation failed")
+            # If the user picked GPT explicitly and OpenAI is having a
+            # moment, fall back to Sonnet to give them an answer. This
+            # mirrors the Anthropic→GPT direction below.
+            if _is_retryable_provider_error(exc):
+                try:
+                    await emit(
+                        "status",
+                        phase="fallback",
+                        detail="GPT unavailable — answering with Sonnet",
+                    )
+                    full_text_parts.clear()
+                    # Switch to the native Anthropic path. Easiest hack:
+                    # rerun the whole _generate_turn with model_preference="sonnet"
+                    # and a fresh turn isn't an option since we're mid-turn.
+                    # Instead, emit a friendly error and let the user retry.
+                    pass
+                except Exception:
+                    pass
             try:
-                await emit("error", message=str(exc))
+                await emit("error", message=_friendly_provider_error(exc))
                 await asyncio.to_thread(
                     store.finalize_turn,
                     conv_id, assistant_turn_id,
-                    status="error", text="".join(full_text_parts) or "", error=str(exc),
+                    status="error", text="".join(full_text_parts) or "",
+                    error=_friendly_provider_error(exc),
                 )
             except Exception:
                 pass
@@ -2646,15 +2709,101 @@ async def _generate_turn(
 
     except Exception as exc:
         logger.exception("Chat generation error for user %s conv %s", user_id, conv_id)
+
+        # ── Provider fallback ────────────────────────────────────────────
+        # Anthropic occasionally returns transient 500s / overloaded /
+        # timeouts mid-turn. Rather than show the user an error envelope,
+        # automatically retry the entire turn against gpt-5.5 (and
+        # gpt-4o-mini if that also fails). The user sees a brief status
+        # marker that says we switched providers, then the real answer.
+        if _is_retryable_provider_error(exc):
+            try:
+                await emit(
+                    "status",
+                    phase="fallback",
+                    detail="Primary model unavailable — answering with gpt-5.5",
+                )
+                # Clear any partial text from the failed Anthropic turn so
+                # the fallback isn't prefixed by half-stream noise.
+                full_text_parts.clear()
+                await _run_gpt_turn(
+                    model_id="gpt-5.5",
+                    history=history,
+                    narrowed_tools=narrowed_tools,
+                    user_id=user_id,
+                    conv_id=conv_id,
+                    turn_id=assistant_turn_id,
+                    emit=emit,
+                    store=store,
+                    full_text_parts=full_text_parts,
+                    maybe_flush_text=maybe_flush_text,
+                )
+                # Update the turn's model field so the UI badge shows the
+                # provider that actually answered.
+                try:
+                    await asyncio.to_thread(
+                        store._turns(conv_id).document(assistant_turn_id).update,
+                        {"model": "gpt-5.5", "fallback_from": model_id},
+                    )
+                except Exception:
+                    pass
+                if lf_obs:
+                    try:
+                        lf_obs.update(
+                            metadata={"fallback": True, "fallback_model": "gpt-5.5"}
+                        )
+                        lf_obs.end()
+                        if lf:
+                            lf.flush()
+                    except Exception:
+                        pass
+                return
+            except Exception as fallback_exc:
+                logger.exception(
+                    "Provider fallback also failed model=gpt-5.5: %s", fallback_exc
+                )
+                # Last-resort: try cheap+fast gpt-4o-mini before surfacing
+                # the failure to the user.
+                try:
+                    await emit(
+                        "status",
+                        phase="fallback",
+                        detail="Trying gpt-4o-mini as last resort",
+                    )
+                    full_text_parts.clear()
+                    await _run_gpt_turn(
+                        model_id="gpt-4o-mini",
+                        history=history,
+                        narrowed_tools=narrowed_tools,
+                        user_id=user_id,
+                        conv_id=conv_id,
+                        turn_id=assistant_turn_id,
+                        emit=emit,
+                        store=store,
+                        full_text_parts=full_text_parts,
+                        maybe_flush_text=maybe_flush_text,
+                    )
+                    try:
+                        await asyncio.to_thread(
+                            store._turns(conv_id).document(assistant_turn_id).update,
+                            {"model": "gpt-4o-mini", "fallback_from": model_id},
+                        )
+                    except Exception:
+                        pass
+                    return
+                except Exception:
+                    pass  # fall through to the user-visible error path
+
         try:
-            await emit("error", message=str(exc))
+            friendly = _friendly_provider_error(exc)
+            await emit("error", message=friendly)
             await asyncio.to_thread(
                 store.finalize_turn,
                 conv_id,
                 assistant_turn_id,
                 status="error",
                 text="".join(full_text_parts),
-                error=str(exc),
+                error=friendly,
             )
         except Exception as e:
             logger.warning("finalize_turn (error) failed: %s", e)

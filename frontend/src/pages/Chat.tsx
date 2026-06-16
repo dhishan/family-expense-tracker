@@ -43,6 +43,37 @@ function humanizeToolName(name: string): string {
   return TOOL_LABELS[name] ?? name.replace(/_/g, ' ')
 }
 
+// Turn a noisy backend / provider error blob into a one-liner the user
+// can act on. The chat backend stringifies upstream exceptions so the
+// raw message often looks like {"type":"error","error":{"message":"..."}}.
+function friendlyChatError(raw: unknown): string {
+  if (!raw) return 'The model errored. Please try again.'
+  let text: string
+  if (typeof raw === 'string') text = raw
+  else {
+    try { text = JSON.stringify(raw) } catch { text = String(raw) }
+  }
+  if (/overloaded|rate.?limit|503|429/i.test(text)) {
+    return 'The model is overloaded right now — please retry in a moment.'
+  }
+  if (/Internal server error|api_error|503|502|504/i.test(text)) {
+    return 'The model service had a hiccup. Tap retry.'
+  }
+  if (/timeout/i.test(text)) {
+    return 'The model took too long to respond. Tap retry.'
+  }
+  try {
+    const obj = typeof raw === 'string' ? JSON.parse(raw) : raw
+    const inner =
+      (obj as { error?: { message?: string }; message?: string })?.error?.message ??
+      (obj as { message?: string })?.message
+    if (typeof inner === 'string' && inner.length > 0) {
+      return inner.length > 200 ? `${inner.slice(0, 200)}…` : inner
+    }
+  } catch { /* fallthrough */ }
+  return 'The model errored. Please try again.'
+}
+
 // Allow only known tool names from TOOL_LABELS plus any snake_case token
 // the model might emit. Keeps the [bracketed text] for actual prose
 // citations like "see [the docs]" untouched — those don't match.
@@ -571,12 +602,12 @@ export default function Chat() {
               void refetchUsage()
               break
             } else if (evType === 'error') {
-              throw new Error(event.message as string)
+              throw new Error(friendlyChatError(event.message))
             }
           }
         }
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err)
+        const errMsg = err instanceof Error ? err.message : friendlyChatError(err)
         setMessages((prev) =>
           prev.map((m, mi) => {
             if (mi !== msgIdx) return m
@@ -584,7 +615,7 @@ export default function Chat() {
               ...m,
               blocks: [
                 ...m.blocks,
-                { type: 'text', text: `Error: ${errMsg}` },
+                { type: 'text', text: errMsg },
               ],
             }
           })

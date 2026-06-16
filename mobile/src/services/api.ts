@@ -1,3 +1,46 @@
+/**
+ * Reduce a backend SSE error payload to a user-friendly one-liner.
+ * The chat backend stringifies the upstream provider exception so the
+ * raw blob looks like `{'type': 'error', 'error': {'message': '...'}}`.
+ * Pull out the inner message, otherwise return a generic phrase.
+ */
+function friendlyErrorMessage(raw: unknown): string {
+  if (!raw) return 'The model errored. Please try again.'
+  let text: string
+  if (typeof raw === 'string') {
+    text = raw
+  } else {
+    try {
+      text = JSON.stringify(raw)
+    } catch {
+      text = String(raw)
+    }
+  }
+  // Detect specific upstream error families.
+  if (/overloaded|rate.?limit|503|429/i.test(text)) {
+    return 'The model is overloaded right now — please retry in a moment.'
+  }
+  if (/Internal server error|api_error|503|502|504/i.test(text)) {
+    return 'The model service had a hiccup. Tap retry.'
+  }
+  if (/timeout/i.test(text)) {
+    return 'The model took too long to respond. Tap retry.'
+  }
+  // Try to extract a nested .message if present.
+  try {
+    const obj = typeof raw === 'string' ? JSON.parse(raw) : raw
+    const inner =
+      (obj as { error?: { message?: string }; message?: string })?.error?.message ??
+      (obj as { message?: string })?.message
+    if (typeof inner === 'string' && inner.length > 0) {
+      return inner.length > 200 ? `${inner.slice(0, 200)}…` : inner
+    }
+  } catch {
+    // fallthrough
+  }
+  return 'The model errored. Please try again.'
+}
+
 import axios from 'axios'
 import * as SecureStore from 'expo-secure-store'
 import type {
@@ -422,7 +465,7 @@ export const chatApi = {
           handlers.onDone?.()
         } else if (parsed.type === 'error') {
           cleanup()
-          handlers.onError?.(parsed.message ?? 'Server reported error')
+          handlers.onError?.(friendlyErrorMessage(parsed.message))
         }
       } catch {
         // ignore non-JSON keepalives
