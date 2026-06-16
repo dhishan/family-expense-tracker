@@ -122,7 +122,11 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-500 to-primary-700 px-4">
       <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="text-5xl mb-4">💰</div>
+          <img
+            src="/expense-tracker-icon.png"
+            alt=""
+            className="h-20 w-20 mx-auto mb-4 rounded-2xl shadow"
+          />
           <h1 className="text-2xl font-bold text-gray-900">Family Expense Tracker</h1>
           <p className="text-gray-600 mt-2">
             Track, budget, and manage your family's expenses together
