@@ -13,12 +13,35 @@ export default function AutoRules() {
   const queryClient = useQueryClient()
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
+  // Manual create form. The approval-time "Save as auto-rule" checkbox is
+  // still the easy path; this is the explicit fallback that was missing.
+  const [newMerchant, setNewMerchant] = useState('')
+  const [newCategory, setNewCategory] = useState<ExpenseCategory>('groceries')
+
   const { data, isLoading } = useQuery({
     queryKey: ['rules', 'merchant'],
     queryFn: rulesApi.list,
     enabled: !!user?.family_id,
   })
   const rules = data?.rules ?? []
+
+  const createMutation = useMutation({
+    mutationFn: rulesApi.create,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rules', 'merchant'] })
+      setNewMerchant('')
+      setNewCategory('groceries')
+      toast.success('Rule saved')
+    },
+    onError: (err: unknown) => {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 409) {
+        toast('Rule already exists for this merchant', { icon: 'ℹ️' })
+      } else {
+        toast.error('Failed to save rule')
+      }
+    },
+  })
 
   const deleteMutation = useMutation({
     mutationFn: rulesApi.delete,
@@ -30,12 +53,72 @@ export default function AutoRules() {
     onError: () => toast.error('Failed to delete rule'),
   })
 
+  const submitCreate = () => {
+    const m = newMerchant.trim()
+    if (!m) {
+      toast.error('Merchant name is required')
+      return
+    }
+    createMutation.mutate({
+      merchant_name: m,
+      category: newCategory,
+      budget_id: null,
+      beneficiary: null,
+    })
+  }
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Auto-categorization Rules</h1>
         <p className="mt-1 text-sm text-gray-500">
           When a pending transaction matches a merchant name, it gets pre-categorized automatically.
+        </p>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm p-4">
+        <h2 className="text-sm font-semibold text-gray-900 mb-3">Add a rule</h2>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex-1 min-w-[200px]">
+            <label htmlFor="merchant" className="block text-xs text-gray-500 mb-1">
+              Merchant name
+            </label>
+            <input
+              id="merchant"
+              type="text"
+              value={newMerchant}
+              onChange={(e) => setNewMerchant(e.target.value)}
+              placeholder="e.g. Costco, DoorDash, Whole Foods"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"
+              autoCapitalize="words"
+            />
+          </div>
+          <div>
+            <label htmlFor="category" className="block text-xs text-gray-500 mb-1">
+              Category
+            </label>
+            <select
+              id="category"
+              value={newCategory}
+              onChange={(e) => setNewCategory(e.target.value as ExpenseCategory)}
+              className="px-3 py-2 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-400"
+            >
+              {Object.entries(CATEGORY_INFO).map(([key, info]) => (
+                <option key={key} value={key}>{info.label}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={submitCreate}
+            disabled={createMutation.isPending || !newMerchant.trim()}
+            className="px-4 py-2 bg-primary-600 text-white rounded-md text-sm font-medium hover:bg-primary-700 disabled:opacity-50"
+          >
+            {createMutation.isPending ? 'Saving…' : 'Add rule'}
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-gray-400">
+          Match is case-insensitive against Plaid's merchant_name. Beneficiary + budget
+          defaults are picked from the matched transaction at sync time.
         </p>
       </div>
 

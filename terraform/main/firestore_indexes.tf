@@ -371,8 +371,8 @@ resource "google_firestore_index" "notifications_user_unread" {
   depends_on = [google_firestore_database.database]
 }
 
-# merchant_rules: lookup / list by family, ordered by merchant name.
-# Required by rule_service.list_rules and rule_service.find_match.
+# merchant_rules: list by family, ordered by display merchant_name (for the
+# Auto Rules settings page table).
 resource "google_firestore_index" "merchant_rules_family_merchant" {
   project    = var.project_id
   database   = google_firestore_database.database.name
@@ -385,6 +385,29 @@ resource "google_firestore_index" "merchant_rules_family_merchant" {
 
   fields {
     field_path = "merchant_name"
+    order      = "ASCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
+
+# merchant_rules: hot-path lookup by family + lowercased merchant name.
+# Used on every Plaid sync by rule_service.find_match — without this
+# index the query silently raises FailedPrecondition and find_match
+# returns None, so no auto-rules ever fire. See the bug fix for
+# "auto rules not working".
+resource "google_firestore_index" "merchant_rules_family_merchant_lower" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "merchant_rules"
+
+  fields {
+    field_path = "family_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "merchant_name_lower"
     order      = "ASCENDING"
   }
 
