@@ -6,6 +6,7 @@ so tests are hermetic.
 from __future__ import annotations
 
 import base64
+import datetime as _dt
 import json
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +16,18 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 
 import app.services.market_data as md
+
+
+# Forward-dated timestamps so the live-market filter in market_data.py keeps
+# our hermetic fixtures alive. Specific values aren't asserted on by tests.
+def _future_iso(days: int) -> str:
+    return (_dt.datetime.utcnow() + _dt.timedelta(days=days)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+
+def _future_epoch_ms(days: int) -> int:
+    return int((_dt.datetime.utcnow() + _dt.timedelta(days=days)).timestamp() * 1000)
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +52,7 @@ MANIFOLD_SEARCH_RESPONSE = [
         "question": "Will the Fed cut rates in September 2025?",
         "probability": 0.43,
         "volume": 12500.0,
-        "closeTime": 1756684800000,
+        "closeTime": _future_epoch_ms(90),
         "url": "https://manifold.markets/user/will-fed-cut-sep",
         "isResolved": False,
         "outcomeType": "BINARY",
@@ -50,7 +63,7 @@ MANIFOLD_SEARCH_RESPONSE = [
         "question": "Will the Fed cut rates before year-end 2025?",
         "probability": 0.71,
         "volume": 8900.0,
-        "closeTime": 1767225600000,
+        "closeTime": _future_epoch_ms(180),
         "url": "https://manifold.markets/user/will-fed-cut-yearend",
         "isResolved": False,
         "outcomeType": "BINARY",
@@ -66,7 +79,7 @@ POLYMARKET_SEARCH_RESPONSE = [
         "outcomePrices": '["0.18", "0.82"]',
         "volume24hr": 45000.0,
         "liquidity": 120000.0,
-        "endDate": "2025-12-31T00:00:00Z",
+        "endDate": _future_iso(180),
         "closed": False,
     },
 ]
@@ -79,7 +92,7 @@ POLYMARKET_MULTI_OUTCOME_RESPONSE = [
         "outcomePrices": '["0.20", "0.18", "0.15", "0.14", "0.33"]',
         "volume24hr": 99000.0,
         "liquidity": 250000.0,
-        "endDate": "2026-07-20T00:00:00Z",
+        "endDate": _future_iso(300),
         "closed": False,
     },
 ]
@@ -94,7 +107,7 @@ KALSHI_MARKETS_RESPONSE = {
             "yes_ask": 64,
             "volume": 500000,
             "liquidity": 80000,
-            "close_time": "2025-09-30T23:59:59Z",
+            "close_time": _future_iso(90),
             "status": "open",
         },
     ]
@@ -109,7 +122,7 @@ KALSHI_SINGLE_MARKET_RESPONSE = {
         "yes_ask": 40,
         "volume": 1200000,
         "liquidity": 300000,
-        "close_time": "2025-09-18T18:00:00Z",
+        "close_time": _future_iso(60),
         "status": "open",
     }
 }

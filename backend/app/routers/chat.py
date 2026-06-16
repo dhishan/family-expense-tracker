@@ -567,16 +567,23 @@ TOOLS: list[dict] = [
     {
         "name": "manifold_search",
         "description": (
-            "Search Manifold Markets for prediction markets matching a query. "
+            "Search Manifold Markets for LIVE prediction markets matching a query. "
             "Manifold uses play money (mana), so prices reflect crowd sentiment rather than "
-            "real-money positioning. Good for political, tech, and macro questions. "
-            "Use when the user asks 'what does Manifold say about X' or wants crowd-sentiment odds."
+            "real-money positioning. Resolved markets and contracts ending before today are "
+            "filtered out by default — when no live contracts remain you get a single "
+            "`_no_live_markets` row and must say so instead of treating expired contracts as "
+            "forward signals."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search term, e.g. 'fed rate cut September'"},
                 "limit": {"type": "integer", "description": "Max markets to return (default 10)", "default": 10},
+                "ends_after_days": {
+                    "type": "integer",
+                    "description": "Only keep markets ending at least N days from today. Default 0 (today or later).",
+                    "default": 0,
+                },
             },
             "required": ["query"],
         },
@@ -595,16 +602,22 @@ TOOLS: list[dict] = [
     {
         "name": "polymarket_search",
         "description": (
-            "Search Polymarket for real-money USDC prediction markets. "
+            "Search Polymarket for LIVE real-money USDC prediction markets. "
             "Prices are 0-1 representing implied probability (e.g. 0.62 = 62% yes). "
-            "Note: Polymarket is US-restricted in many states. "
-            "Use when the user asks 'what does Polymarket say about X' or wants real-money market odds."
+            "Closed markets and contracts ending before today are filtered out by default. "
+            "Returns a `_no_live_markets` sentinel when nothing live matches — say so "
+            "instead of treating closed markets as forward signals."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search term, e.g. 'Israel Iran ceasefire'"},
                 "limit": {"type": "integer", "description": "Max markets to return (default 10)", "default": 10},
+                "ends_after_days": {
+                    "type": "integer",
+                    "description": "Only keep markets ending at least N days from today. Default 0.",
+                    "default": 0,
+                },
             },
             "required": ["query"],
         },
@@ -623,16 +636,21 @@ TOOLS: list[dict] = [
     {
         "name": "kalshi_search",
         "description": (
-            "Search Kalshi for CFTC-regulated real-money US prediction markets. "
+            "Search Kalshi for LIVE CFTC-regulated real-money US prediction markets. "
             "Prices are in 0-1 probability (converted from cents). "
-            "Requires KALSHI_API_KEY or KALSHI_EMAIL+KALSHI_PASSWORD in environment. "
-            "Use when the user asks 'what is Kalshi's price on X' or wants regulated market odds."
+            "Settled/closed markets are filtered out by default. Returns a "
+            "`_no_live_markets` sentinel when nothing live matches."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search term, e.g. 'NVDA $200 Q3'"},
                 "limit": {"type": "integer", "description": "Max markets to return (default 10)", "default": 10},
+                "ends_after_days": {
+                    "type": "integer",
+                    "description": "Only keep markets ending at least N days from today. Default 0.",
+                    "default": 0,
+                },
             },
             "required": ["query"],
         },
@@ -704,9 +722,11 @@ TOOLS: list[dict] = [
     {
         "name": "option_chain",
         "description": (
-            "Full option chain (calls and puts) for a symbol + expiration, with real Greeks "
-            "(delta, gamma, theta, vega, rho, IV). Use for 'NVDA call chain for next Friday', "
-            "'implied vol on AAPL 200 calls', etc."
+            "Option chain (calls and puts) for a symbol + expiration, with real Greeks "
+            "(delta, gamma, theta, vega, rho, IV). DEFAULTS to ~20 strikes either side of "
+            "spot (the ATM window) — that's almost always what you want; the deep wings "
+            "are noise. Pass strikes_near_spot=0 for the full chain (200+ rows possible). "
+            "Use for 'NVDA call chain for next Friday', 'implied vol on AAPL ATM puts', etc."
         ),
         "input_schema": {
             "type": "object",
@@ -717,6 +737,14 @@ TOOLS: list[dict] = [
                     "type": "boolean",
                     "description": "Include Greeks — default true",
                     "default": True,
+                },
+                "strikes_near_spot": {
+                    "type": "integer",
+                    "description": (
+                        "Return at most N strikes below spot + N above. Default 20. "
+                        "Set to 0 to disable narrowing and return every strike."
+                    ),
+                    "default": 20,
                 },
             },
             "required": ["symbol", "expiration"],
@@ -938,6 +966,66 @@ async def _classify_topics(query: str) -> tuple[bool, set[str]]:
     except Exception as e:
         logger.warning("topic classifier failed (using all tools): %s", e)
         return True, set(_TOPIC_TOOLS.keys())
+
+
+_TITLE_SYSTEM = (
+    "You write a 3-5 word title for the start of a financial chat. "
+    "Title-case. No punctuation, no quotes, no emoji, no leading verb like "
+    "'Discuss' or 'Analyze'. Capture the SUBJECT, not the question form. "
+    "Examples: 'TSLA Options Overview', 'Portfolio Rebalance Q3', "
+    "'Fed Cut Probability', 'Costco Spending Audit', 'Margin Cost Math'. "
+    "Return ONLY the title."
+)
+
+
+async def _generate_and_set_title(
+    conv_id: str, user_text: str, assistant_text: str
+) -> None:
+    """Best-effort Haiku call to generate a concise conversation title.
+    Failures are swallowed — the default first-message title stays."""
+    try:
+        client = anthropic.AsyncAnthropic()
+        resp = await client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=40,
+            system=_TITLE_SYSTEM,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"User asked: {(user_text or '').strip()[:400]}\n\n"
+                        f"Assistant replied: {(assistant_text or '').strip()[:600]}"
+                    ),
+                }
+            ],
+            timeout=10,
+        )
+        title = "".join(
+            b.text for b in resp.content if getattr(b, "type", None) == "text"
+        ).strip()
+        # Strip stray quotes/trailing punctuation Haiku sometimes adds
+        title = title.strip().strip('"').strip("'").rstrip(".!?").strip()
+        if not title or len(title) > 80:
+            return
+        store = get_chat_store()
+        await asyncio.to_thread(store.set_title, conv_id, title)
+        # Record usage (best-effort)
+        try:
+            from app.services import usage_service as _u
+            _u.record_usage(
+                user_id="system",
+                family_id=None,
+                source="title-generator",
+                model="claude-haiku-4-5",
+                conversation_id=conv_id,
+                turn_id=None,
+                usage=resp.usage,
+                duration_ms=0,
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        logger.warning("title generation failed: %s", e)
 
 
 def _tools_for_topics(topics: set[str]) -> list[dict]:
@@ -1163,6 +1251,7 @@ def _execute_prediction_market_tool(name: str, tool_input: dict) -> str:
             result = market_data.manifold_search(
                 query=tool_input["query"],
                 limit=tool_input.get("limit", 10),
+                ends_after_days=tool_input.get("ends_after_days", 0),
             )
         elif name == "manifold_market":
             result = market_data.manifold_market(id_or_slug=tool_input["id_or_slug"])
@@ -1170,6 +1259,7 @@ def _execute_prediction_market_tool(name: str, tool_input: dict) -> str:
             result = market_data.polymarket_search(
                 query=tool_input["query"],
                 limit=tool_input.get("limit", 10),
+                ends_after_days=tool_input.get("ends_after_days", 0),
             )
         elif name == "polymarket_market":
             result = market_data.polymarket_market(slug=tool_input["slug"])
@@ -1177,6 +1267,7 @@ def _execute_prediction_market_tool(name: str, tool_input: dict) -> str:
             result = market_data.kalshi_search(
                 query=tool_input["query"],
                 limit=tool_input.get("limit", 10),
+                ends_after_days=tool_input.get("ends_after_days", 0),
             )
         elif name == "kalshi_market":
             result = market_data.kalshi_market(ticker=tool_input["ticker"])
@@ -1225,6 +1316,7 @@ def _execute_tradier_tool(name: str, tool_input: dict) -> str:
                 symbol=tool_input["symbol"],
                 expiration=tool_input["expiration"],
                 greeks=tool_input.get("greeks", True),
+                strikes_near_spot=tool_input.get("strikes_near_spot", 20),
             )
         elif name == "option_strikes":
             result = market_data.option_strikes(
@@ -2228,6 +2320,20 @@ async def _generate_turn(
             )
         except Exception as e:
             logger.warning("finalize_turn (complete) failed: %s", e)
+
+        # Generate a concise Haiku title for the conversation after the
+        # FIRST assistant turn finishes. Cheap (~$0.0001) and async. Never
+        # blocks the user. Default title (first user message) keeps the
+        # chat searchable while this runs.
+        if is_first_user_turn:
+            assistant_text_for_title = "".join(full_text_parts)
+            asyncio.create_task(
+                _generate_and_set_title(
+                    conv_id=conv_id,
+                    user_text=last_user,
+                    assistant_text=assistant_text_for_title,
+                )
+            )
 
         if lf_obs:
             try:

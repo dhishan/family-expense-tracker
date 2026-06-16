@@ -312,6 +312,16 @@ class ChatStore:
             updates["turn_count"] = firestore.Increment(increment_turn_count)
         self._convs.document(conv_id).update(updates)
 
+    def set_title(self, conv_id: str, title: str) -> None:
+        """Overwrite the conversation title (e.g. with a Haiku-generated
+        summary). Called after the first assistant turn completes."""
+        clean = (title or "").strip().replace("\n", " ")
+        if not clean:
+            return
+        if len(clean) > TITLE_MAX_LEN:
+            clean = clean[: TITLE_MAX_LEN - 1].rstrip() + "…"
+        self._convs.document(conv_id).update({"title": clean, "updated_at": _now()})
+
 
 _store: ChatStore | None = None
 

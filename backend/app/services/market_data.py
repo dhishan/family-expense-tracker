@@ -10,6 +10,7 @@ when keys are absent (e.g. in unit tests that do not hit the real APIs).
 from __future__ import annotations
 
 import os
+import datetime as _dt
 from datetime import date, timedelta
 from typing import Optional
 
@@ -585,9 +586,94 @@ def edgar_insider_transactions(ticker: str, days: int = 90) -> list[dict]:
 # Prediction Markets
 # ---------------------------------------------------------------------------
 
+# --- Prediction-market live-contract helpers -------------------------------
+
+def _market_end_dt(row: dict) -> Optional[_dt.datetime]:
+    """Extract a market's resolution / close datetime, normalised to naive UTC.
+
+    Manifold uses `close_time` (ms epoch). Polymarket and Kalshi use ISO
+    `end_date` / `close_time`. Returns None when no usable date.
+    """
+    val = row.get("close_time") or row.get("end_date")
+    if val is None:
+        return None
+    # Manifold: epoch ms (int) or numeric string
+    try:
+        if isinstance(val, (int, float)) or (isinstance(val, str) and val.isdigit()):
+            return _dt.datetime.utcfromtimestamp(int(val) / 1000)
+    except Exception:
+        pass
+    # ISO 8601
+    if isinstance(val, str):
+        s = val.replace("Z", "+00:00")
+        try:
+            dt = _dt.datetime.fromisoformat(s)
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+            return dt
+        except Exception:
+            return None
+    return None
+
+
+def _filter_live_markets(rows: list[dict], ends_after_days: int = 0) -> list[dict]:
+    """Drop resolved/closed markets and contracts whose end is in the past
+    (or sooner than `today + ends_after_days`). Used by the chat tools so the
+    model never frames a settled question as forward-looking.
+
+    Returns a possibly-empty list. Callers append a `_no_live_markets` row
+    when zero pass so the model can say "no live contracts" instead of
+    silently grasping at expired ones.
+    """
+    if not isinstance(rows, list):
+        return rows
+    cutoff = _dt.datetime.utcnow() + _dt.timedelta(days=max(0, ends_after_days))
+    out: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if "error" in row:
+            continue
+        if row.get("is_resolved") or row.get("closed") or row.get("status") in (
+            "closed", "resolved", "settled", "finalized"
+        ):
+            continue
+        end = _market_end_dt(row)
+        if end is not None and end < cutoff:
+            continue
+        out.append(row)
+    return out
+
+
+def _live_or_sentinel(
+    rows: list[dict], ends_after_days: int, query: str | None = None
+) -> list[dict]:
+    """Apply `_filter_live_markets`; if everything was dropped, return a
+    single sentinel row the model can react to."""
+    live = _filter_live_markets(rows, ends_after_days)
+    if not live and isinstance(rows, list):
+        # Pass through upstream errors so callers see them; otherwise emit a
+        # sentinel marker.
+        upstream_error = next(
+            (r for r in rows if isinstance(r, dict) and "error" in r), None
+        )
+        if upstream_error:
+            return [upstream_error]
+        return [{
+            "_no_live_markets": True,
+            "checked": len([r for r in rows if isinstance(r, dict)]),
+            "query": query,
+            "note": (
+                "All returned markets were resolved, closed, or ending in the "
+                "past — do not treat them as forward signals."
+            ),
+        }]
+    return live
+
+
 # --- Manifold Markets (play money, no auth required) ---
 
-def manifold_search(query: str, limit: int = 10) -> list[dict]:
+def manifold_search(query: str, limit: int = 10, ends_after_days: int = 0) -> list[dict]:
     """Search Manifold Markets for prediction markets matching a query.
 
     Manifold uses play money (mana), so prices reflect crowd sentiment rather
@@ -609,7 +695,8 @@ def manifold_search(query: str, limit: int = 10) -> list[dict]:
         )
         resp.raise_for_status()
         markets = resp.json()
-        return [_normalize_manifold(m) for m in markets]
+        normalized = [_normalize_manifold(m) for m in markets]
+        return _live_or_sentinel(normalized, ends_after_days, query=query)
     except Exception as exc:
         return [{"error": str(exc), "query": query}]
 
@@ -650,7 +737,7 @@ def _normalize_manifold(m: dict) -> dict:
 
 # --- Polymarket (real-money USDC, US-restricted in many states) ---
 
-def polymarket_search(query: str, limit: int = 10) -> list[dict]:
+def polymarket_search(query: str, limit: int = 10, ends_after_days: int = 0) -> list[dict]:
     """Search Polymarket for prediction markets matching a query.
 
     Polymarket is a real-money USDC market (US users restricted in many states).
@@ -675,7 +762,8 @@ def polymarket_search(query: str, limit: int = 10) -> list[dict]:
         # gamma-api may return a list or a dict with "markets" key
         if isinstance(markets, dict):
             markets = markets.get("markets", [])
-        return [_normalize_polymarket(m) for m in markets[:limit]]
+        normalized = [_normalize_polymarket(m) for m in markets[:limit]]
+        return _live_or_sentinel(normalized, ends_after_days, query=query)
     except Exception as exc:
         return [{"error": str(exc), "query": query}]
 
@@ -820,7 +908,7 @@ def _kalshi_headers(method: str, path: str) -> dict:
     }
 
 
-def kalshi_search(query: str, limit: int = 10) -> list[dict]:
+def kalshi_search(query: str, limit: int = 10, ends_after_days: int = 0) -> list[dict]:
     """Search Kalshi for CFTC-regulated prediction markets matching a query.
 
     Kalshi is a US real-money regulated prediction market. Prices are in cents
@@ -859,7 +947,8 @@ def kalshi_search(query: str, limit: int = 10) -> list[dict]:
         ]
         # If no match, return top results anyway
         result_markets = filtered[:limit] if filtered else markets[:limit]
-        return [_normalize_kalshi(m) for m in result_markets]
+        normalized = [_normalize_kalshi(m) for m in result_markets]
+        return _live_or_sentinel(normalized, ends_after_days, query=query)
     except Exception as exc:
         return [{"error": str(exc), "query": query}]
 
@@ -1400,21 +1489,88 @@ def option_strikes(symbol: str, expiration: str) -> list:
     return alpaca_option_strikes(symbol, expiration)
 
 
-def option_chain(symbol: str, expiration: str, greeks: bool = True) -> list[dict]:
+def _row_strike(row: dict) -> float | None:
+    """Extract the strike off a chain row. Both Tradier and Alpaca emit
+    `strike` at the top level; tolerate missing/odd shapes."""
+    if not isinstance(row, dict):
+        return None
+    s = row.get("strike")
+    if isinstance(s, (int, float)):
+        return float(s)
+    if isinstance(s, str):
+        try:
+            return float(s)
+        except ValueError:
+            return None
+    return None
+
+
+def _narrow_chain_around_spot(
+    rows: list[dict], spot: float | None, n_each_side: int
+) -> tuple[list[dict], bool]:
+    """Keep at most `n_each_side` strikes below spot and `n_each_side` above.
+    Returns (filtered_rows, truncated)."""
+    if not spot or not rows:
+        return rows, False
+    # Collect unique strikes, sort.
+    strikes = sorted({_row_strike(r) for r in rows if _row_strike(r) is not None})
+    if not strikes:
+        return rows, False
+    below = [s for s in strikes if s <= spot][-n_each_side:]
+    above = [s for s in strikes if s > spot][:n_each_side]
+    keep = set(below) | set(above)
+    if len(keep) >= len(strikes):
+        return rows, False
+    out = [r for r in rows if _row_strike(r) in keep]
+    return out, True
+
+
+def option_chain(
+    symbol: str,
+    expiration: str,
+    greeks: bool = True,
+    strikes_near_spot: int = 20,
+) -> list[dict]:
     """Tradier first (real Greeks), Alpaca fallback (Greeks=null).
 
-    On fallback, each row carries `_provider: "alpaca"` so callers can
-    surface that Greeks aren't available. Tradier rows get `_provider:
-    "tradier"`.
+    By default the chain is NARROWED to ~the ATM±N strike window (N
+    each side of spot, default 20). Prevents the model getting a 200+
+    row chain where the most relevant ATM strikes are dropped by
+    downstream context-budget truncation (the failure mode seen in the
+    TSLA chat: $400-$410 strikes vanished).
+
+    Pass strikes_near_spot=0 to return the full chain unfiltered.
+
+    Each row carries `_provider: "tradier"` or `_provider: "alpaca"`. If
+    narrowing actually removed rows we also stamp `_truncated: True` on
+    every row so the model knows the slice was not exhaustive.
     """
     tr = tradier_option_chain(symbol, expiration, greeks=greeks)
     if not _tradier_returned_error(tr):
         for row in tr:
             row["_provider"] = "tradier"
-        return tr
-    al = alpaca_option_chain(symbol, expiration, greeks=greeks)
-    if isinstance(al, list):
-        for row in al:
-            if isinstance(row, dict):
-                row["_provider"] = "alpaca"
-    return al
+        rows: list[dict] = tr
+    else:
+        al = alpaca_option_chain(symbol, expiration, greeks=greeks)
+        if isinstance(al, list):
+            for row in al:
+                if isinstance(row, dict):
+                    row["_provider"] = "alpaca"
+        rows = al if isinstance(al, list) else []
+
+    if strikes_near_spot and strikes_near_spot > 0 and rows:
+        try:
+            q = alpaca_quote(symbol)
+            spot = float(q.get("last_price")) if isinstance(q, dict) else None
+        except Exception:
+            spot = None
+        if spot:
+            narrowed, truncated = _narrow_chain_around_spot(rows, spot, strikes_near_spot)
+            if truncated:
+                for r in narrowed:
+                    if isinstance(r, dict):
+                        r["_truncated"] = True
+                        r["_strikes_window"] = f"±{strikes_near_spot} around spot {spot:.2f}"
+            rows = narrowed
+
+    return rows
