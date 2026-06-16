@@ -57,7 +57,10 @@ export default function Layout() {
         <div className="fixed inset-0 bg-gray-900/80" onClick={() => setSidebarOpen(false)} />
         <div className="fixed inset-y-0 left-0 w-64 bg-white">
           <div className="flex h-16 items-center justify-between px-6 border-b">
-            <span className="text-xl font-bold text-primary-600">💰 Expenses</span>
+            <span className="flex items-center gap-2 text-xl font-bold text-primary-600">
+              <img src="/expense-tracker-icon.png" alt="" className="h-7 w-7 rounded-md" />
+              Expenses
+            </span>
             <button onClick={() => setSidebarOpen(false)}>
               <XMarkIcon className="h-6 w-6 text-gray-500" />
             </button>
@@ -97,7 +100,10 @@ export default function Layout() {
       <div className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col">
         <div className="flex flex-col flex-1 bg-white border-r border-gray-200">
           <div className="flex h-16 items-center px-6 border-b">
-            <span className="text-xl font-bold text-primary-600">💰 Family Expenses</span>
+            <span className="flex items-center gap-2 text-xl font-bold text-primary-600">
+              <img src="/expense-tracker-icon.png" alt="" className="h-7 w-7 rounded-md" />
+              Family Expenses
+            </span>
           </div>
           <nav className="flex-1 px-4 py-4">
             {navigation.map((item) => (
