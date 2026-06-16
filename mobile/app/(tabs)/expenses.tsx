@@ -16,6 +16,7 @@ import {
 } from 'react-native'
 import Slider from '@react-native-community/slider'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useLocalSearchParams } from 'expo-router'
 import { expensesApi, plaidApi, budgetsApi, rulesApi } from '@/services/api'
 import { useAuthStore } from '@/store/auth'
 import { CATEGORY_INFO } from '@/types'
@@ -1532,7 +1533,9 @@ function PendingReviewSection({
   onDiscard,
   onSaveUncategorized,
 }: PendingReviewSectionProps) {
-  const [collapsed, setCollapsed] = useState(false)
+  // Default collapsed — the section is noisy when you have many
+  // pending items and most opens of the screen aren't a review session.
+  const [collapsed, setCollapsed] = useState(true)
 
   if (pendingItems.length === 0) return null
 
@@ -1796,8 +1799,45 @@ export default function TransactionsScreen() {
   const [showModal, setShowModal] = useState(false)
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
   const [page, setPage] = useState(1)
-  const { user, familyMembers } = useAuthStore()
+  const { user, family, familyMembers } = useAuthStore()
   const queryClient = useQueryClient()
+
+  // URL-hydrated filter set so dashboard taps can deep-link. Same shape
+  // as the web side; setters reset to page 1.
+  const localParams = useLocalSearchParams<{
+    beneficiary?: string
+    category?: string
+    payment_method?: string
+    start_date?: string
+    end_date?: string
+  }>()
+  const [filters, setFilters] = useState<{
+    beneficiary?: string
+    category?: ExpenseCategory
+    payment_method?: PaymentMethod
+    start_date?: string
+    end_date?: string
+  }>({})
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  useEffect(() => {
+    const next: typeof filters = {}
+    if (localParams.beneficiary) next.beneficiary = String(localParams.beneficiary)
+    if (localParams.category) next.category = String(localParams.category) as ExpenseCategory
+    if (localParams.payment_method) next.payment_method = String(localParams.payment_method) as PaymentMethod
+    if (localParams.start_date) next.start_date = String(localParams.start_date)
+    if (localParams.end_date) next.end_date = String(localParams.end_date)
+    if (Object.keys(next).length > 0) {
+      setFilters(next)
+      setFiltersOpen(true)
+      setPage(1)
+    }
+  }, [
+    localParams.beneficiary,
+    localParams.category,
+    localParams.payment_method,
+    localParams.start_date,
+    localParams.end_date,
+  ])
 
   // Plaid pending state
   const [approvingPending, setApprovingPending] = useState<PendingTransaction | null>(null)
@@ -1809,8 +1849,8 @@ export default function TransactionsScreen() {
   const discardTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   const { data, isLoading } = useQuery({
-    queryKey: ['expenses', page],
-    queryFn: () => expensesApi.list({ page, page_size: 20 }),
+    queryKey: ['expenses', page, filters],
+    queryFn: () => expensesApi.list({ page, page_size: 20, ...filters }),
     enabled: !!user?.family_id,
   })
 
@@ -2057,10 +2097,83 @@ export default function TransactionsScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Transactions</Text>
-        <TouchableOpacity style={styles.addBtn} onPress={openAdd} testID="add-expense-btn">
-          <Text style={styles.addBtnText}>+ Add</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 6 }}>
+          <TouchableOpacity
+            style={[styles.addBtn, { backgroundColor: filtersOpen ? '#eef2ff' : '#f1f5f9' }]}
+            onPress={() => setFiltersOpen((v) => !v)}
+            testID="toggle-filters-btn"
+          >
+            <Text style={[styles.addBtnText, { color: filtersOpen ? '#4338ca' : '#475569' }]}>
+              Filter{Object.keys(filters).length > 0 ? ` (${Object.keys(filters).length})` : ''}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.addBtn} onPress={openAdd} testID="add-expense-btn">
+            <Text style={styles.addBtnText}>+ Add</Text>
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {filtersOpen && (
+        <View style={filterStyles.panel}>
+          <Text style={filterStyles.label}>Person</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={filterStyles.chipsRow}>
+            <TouchableOpacity
+              onPress={() => setFilters((f) => ({ ...f, beneficiary: undefined }))}
+              style={[filterStyles.chip, !filters.beneficiary && filterStyles.chipActive]}
+            >
+              <Text style={[filterStyles.chipText, !filters.beneficiary && filterStyles.chipTextActive]}>Whole family</Text>
+            </TouchableOpacity>
+            {familyMembers.map((m) => {
+              const active = filters.beneficiary === m.id
+              const label = family?.beneficiary_labels?.[m.id] || m.display_name
+              return (
+                <TouchableOpacity
+                  key={m.id}
+                  onPress={() => setFilters((f) => ({ ...f, beneficiary: active ? undefined : m.id }))}
+                  style={[filterStyles.chip, active && filterStyles.chipActive]}
+                >
+                  <Text style={[filterStyles.chipText, active && filterStyles.chipTextActive]}>{label}</Text>
+                </TouchableOpacity>
+              )
+            })}
+          </ScrollView>
+
+          <Text style={filterStyles.label}>Category</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={filterStyles.chipsRow}>
+            <TouchableOpacity
+              onPress={() => setFilters((f) => ({ ...f, category: undefined }))}
+              style={[filterStyles.chip, !filters.category && filterStyles.chipActive]}
+            >
+              <Text style={[filterStyles.chipText, !filters.category && filterStyles.chipTextActive]}>All</Text>
+            </TouchableOpacity>
+            {(family?.categories ?? Object.keys(CATEGORY_INFO)).map((cat) => {
+              const active = filters.category === cat
+              const label = CATEGORY_INFO[cat as ExpenseCategory]?.label || cat
+              return (
+                <TouchableOpacity
+                  key={cat}
+                  onPress={() => setFilters((f) => ({ ...f, category: active ? undefined : (cat as ExpenseCategory) }))}
+                  style={[filterStyles.chip, active && filterStyles.chipActive]}
+                >
+                  <Text style={[filterStyles.chipText, active && filterStyles.chipTextActive]}>{label}</Text>
+                </TouchableOpacity>
+              )
+            })}
+          </ScrollView>
+
+          {Object.keys(filters).length > 0 && (
+            <TouchableOpacity
+              onPress={() => {
+                setFilters({})
+                setPage(1)
+              }}
+              style={{ alignSelf: 'flex-end', marginTop: 4 }}
+            >
+              <Text style={{ color: '#2563eb', fontSize: 13 }}>Clear all</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {isLoading ? (
         <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 40 }} />
@@ -2183,6 +2296,31 @@ export default function TransactionsScreen() {
     </View>
   )
 }
+
+const filterStyles = StyleSheet.create({
+  panel: {
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  label: { fontSize: 12, color: '#6b7280', fontWeight: '600', marginTop: 4 },
+  chipsRow: { gap: 6, paddingVertical: 6 },
+  chip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  chipActive: { backgroundColor: '#eef2ff', borderColor: '#6366f1' },
+  chipText: { fontSize: 12, color: '#475569' },
+  chipTextActive: { color: '#4338ca', fontWeight: '600' },
+})
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f9fafb' },

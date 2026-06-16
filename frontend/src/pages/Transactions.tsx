@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import { useForm } from 'react-hook-form'
@@ -162,10 +163,50 @@ export default function Transactions() {
     category?: ExpenseCategory
     start_date?: string
     end_date?: string
+    beneficiary?: string
+    payment_method?: PaymentMethod
   }>({})
+  // URL → filters: deep-linking from the Dashboard ("Spending by person"
+  // tap) and shareable filter views. Keys we honour: beneficiary,
+  // category, payment_method, start_date, end_date.
+  const [searchParams, setSearchParams] = useSearchParams()
   const [showFilters, setShowFilters] = useState(false)
   const [page, setPage] = useState(1)
-  const [pendingHidden, setPendingHidden] = useState(false)
+  // Hydrate filters + auto-open the panel when the URL has any filter param.
+  useEffect(() => {
+    const next: typeof filters = {}
+    const b = searchParams.get('beneficiary')
+    const c = searchParams.get('category')
+    const pm = searchParams.get('payment_method')
+    const sd = searchParams.get('start_date')
+    const ed = searchParams.get('end_date')
+    if (b) next.beneficiary = b
+    if (c) next.category = c as ExpenseCategory
+    if (pm) next.payment_method = pm as PaymentMethod
+    if (sd) next.start_date = sd
+    if (ed) next.end_date = ed
+    if (Object.keys(next).length > 0) {
+      setFilters(next)
+      setShowFilters(true)
+      setPage(1)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
+  // filters → URL: keep the address bar in sync so the view is shareable
+  // and survives reload. Run after the initial URL→state hydration.
+  useEffect(() => {
+    const params: Record<string, string> = {}
+    if (filters.beneficiary) params.beneficiary = filters.beneficiary
+    if (filters.category) params.category = filters.category
+    if (filters.payment_method) params.payment_method = filters.payment_method
+    if (filters.start_date) params.start_date = filters.start_date
+    if (filters.end_date) params.end_date = filters.end_date
+    setSearchParams(params, { replace: true })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters])
+  // Pending review section collapsed by default — it's noisy and rarely
+  // the reason users open this page. Click "Show" to expand.
+  const [pendingHidden, setPendingHidden] = useState(true)
   const [approveBudgetId, setApproveBudgetId] = useState<string | undefined>(undefined)
   const [splitMode, setSplitMode] = useState(false)
   const [splits, setSplits] = useState<SplitRow[]>([])
@@ -728,11 +769,26 @@ export default function Transactions() {
       {/* Filters */}
       {showFilters && (
         <div className="bg-white rounded-xl shadow-sm p-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Category
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Person</label>
+              <select
+                value={filters.beneficiary || ''}
+                onChange={(e) =>
+                  setFilters({ ...filters, beneficiary: e.target.value || undefined })
+                }
+                className="w-full border border-gray-300 rounded-lg px-3 py-2"
+              >
+                <option value="">Whole family</option>
+                {familyMembers.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {family?.beneficiary_labels?.[m.id] || m.display_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
               <select
                 value={filters.category || ''}
                 onChange={(e) =>
@@ -740,7 +796,7 @@ export default function Transactions() {
                 }
                 className="w-full border border-gray-300 rounded-lg px-3 py-2"
               >
-                <option value="">All Categories</option>
+                <option value="">All categories</option>
                 {categories.map((cat) => (
                   <option key={cat} value={cat}>
                     {CATEGORY_INFO[cat as ExpenseCategory]?.label || cat.charAt(0).toUpperCase() + cat.slice(1)}
@@ -749,9 +805,26 @@ export default function Transactions() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Start Date
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Payment</label>
+              <select
+                value={filters.payment_method || ''}
+                onChange={(e) =>
+                  setFilters({ ...filters, payment_method: (e.target.value as PaymentMethod) || undefined })
+                }
+                className="w-full border border-gray-300 rounded-lg px-3 py-2"
+              >
+                <option value="">Any method</option>
+                <option value="credit">Credit</option>
+                <option value="debit">Debit</option>
+                <option value="cash">Cash</option>
+                <option value="bank_transfer">Bank transfer</option>
+                <option value="venmo">Venmo</option>
+                <option value="paypal">PayPal</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Start date</label>
               <input
                 type="date"
                 value={filters.start_date || ''}
@@ -762,9 +835,7 @@ export default function Transactions() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                End Date
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">End date</label>
               <input
                 type="date"
                 value={filters.end_date || ''}
@@ -776,7 +847,10 @@ export default function Transactions() {
             </div>
           </div>
           <button
-            onClick={() => setFilters({})}
+            onClick={() => {
+              setFilters({})
+              setPage(1)
+            }}
             className="mt-4 text-sm text-primary-600 hover:text-primary-700"
           >
             Clear filters

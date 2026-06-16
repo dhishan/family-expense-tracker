@@ -6,10 +6,12 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from 'react-native'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { useAuthStore } from '@/store/auth'
 import { expensesApi, budgetsApi } from '@/services/api'
+import { CATEGORY_INFO } from '@/types'
 
 function toLocalISODate(d: Date = new Date()) {
   const y = d.getFullYear()
@@ -75,13 +77,50 @@ export default function DashboardScreen() {
     '#22c55e', '#eab308', '#3b82f6', '#06b6d4', '#6b7280',
   ]
 
+  const [breakdown, setBreakdown] = useState<'person' | 'category' | 'budget'>('person')
+
   const personRows = Object.entries(summary?.by_beneficiary || {})
-    .map(([key, amount]) => ({ key, amount }))
+    .map(([key, amount]) => ({ key, label: beneficiaryLabel(key), amount: amount as number }))
     .sort((a, b) => b.amount - a.amount)
-  const personTotal = personRows.reduce((s, r) => s + r.amount, 0) || 1
+  const categoryRows = Object.entries(summary?.by_category || {})
+    .map(([key, amount]) => ({
+      key,
+      label: (CATEGORY_INFO as Record<string, { label: string }>)[key]?.label || key,
+      amount: amount as number,
+    }))
+    .sort((a, b) => b.amount - a.amount)
+  const budgetRows = (budgetsData?.budgets ?? [])
+    .map((b) => ({
+      key: b.budget.id,
+      label: b.budget.name,
+      amount: b.spent,
+      total: b.budget.amount,
+      isOver: b.is_over_budget,
+    }))
+    .sort((a, b) => b.amount - a.amount)
+  const activeRows =
+    breakdown === 'person'
+      ? personRows
+      : breakdown === 'category'
+        ? categoryRows
+        : budgetRows.map((b) => ({ key: b.key, label: b.label, amount: b.amount }))
+  const rowsTotal = activeRows.reduce((s, r) => s + r.amount, 0) || 1
 
   const monthTotal = expensesData?.expenses.reduce((s, e) => s + e.amount, 0) ?? 0
   const overBudgetCount = budgetsData?.budgets.filter((b) => b.is_over_budget).length ?? 0
+
+  const goToFiltered = (
+    bucket: 'person' | 'category' | 'budget',
+    key: string,
+  ) => {
+    if (bucket === 'person') {
+      router.push({ pathname: '/(tabs)/expenses', params: { beneficiary: key } })
+    } else if (bucket === 'category') {
+      router.push({ pathname: '/(tabs)/expenses', params: { category: key } })
+    } else {
+      router.push({ pathname: '/(tabs)/budgets' })
+    }
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -122,29 +161,67 @@ export default function DashboardScreen() {
         </View>
       </View>
 
-      {/* Spending by person */}
+      {/* Spending breakdown — Person / Category / Budget */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Spending by person</Text>
+          <Text style={styles.sectionTitle}>Spending by</Text>
+          <View style={{ flexDirection: 'row', gap: 6 }}>
+            {(['person', 'category', 'budget'] as const).map((opt) => (
+              <TouchableOpacity
+                key={opt}
+                onPress={() => setBreakdown(opt)}
+                style={[
+                  styles.breakdownChip,
+                  breakdown === opt && styles.breakdownChipActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.breakdownChipText,
+                    breakdown === opt && styles.breakdownChipTextActive,
+                  ]}
+                >
+                  {opt[0].toUpperCase() + opt.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
         {loadingSummary ? (
           <ActivityIndicator size="small" color="#2563eb" style={{ marginTop: 8 }} />
-        ) : personRows.length === 0 ? (
+        ) : activeRows.length === 0 ? (
           <Text style={styles.emptyText}>No expenses this month.</Text>
         ) : (
-          personRows.map((row, idx) => {
-            const pct = (row.amount / personTotal) * 100
+          activeRows.map((row, idx) => {
+            const pct = (row.amount / rowsTotal) * 100
             const color = PERSON_COLORS[idx % PERSON_COLORS.length]
+            const overFlag =
+              breakdown === 'budget'
+                ? budgetRows.find((b) => b.key === row.key)?.isOver
+                : false
             return (
-              <View key={row.key} style={styles.personRow}>
+              <TouchableOpacity
+                key={row.key}
+                style={styles.personRow}
+                onPress={() => goToFiltered(breakdown, row.key)}
+              >
                 <View style={styles.personLabelRow}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                    <View style={[styles.personDot, { backgroundColor: color }]} />
+                    <View
+                      style={[
+                        styles.personDot,
+                        { backgroundColor: overFlag ? '#dc2626' : color },
+                      ]}
+                    />
                     <Text style={styles.personName} numberOfLines={1}>
-                      {beneficiaryLabel(row.key)}
+                      {row.label}
                     </Text>
                   </View>
-                  <Text style={styles.personAmount}>{fmtUSD(row.amount)}</Text>
+                  <Text
+                    style={[styles.personAmount, overFlag && { color: '#dc2626' }]}
+                  >
+                    {fmtUSD(row.amount)}
+                  </Text>
                 </View>
                 <View style={styles.progressTrack}>
                   <View
@@ -152,13 +229,17 @@ export default function DashboardScreen() {
                       styles.progressFill,
                       {
                         width: `${Math.max(2, Math.min(pct, 100))}%` as `${number}%`,
-                        backgroundColor: color,
+                        backgroundColor: overFlag ? '#dc2626' : color,
                       },
                     ]}
                   />
                 </View>
-                <Text style={styles.personPct}>{pct.toFixed(1)}% of family</Text>
-              </View>
+                <Text style={styles.personPct}>
+                  {breakdown === 'budget'
+                    ? `${fmtUSD(row.amount)} of ${fmtUSD(budgetRows.find((b) => b.key === row.key)?.total ?? 0)}`
+                    : `${pct.toFixed(1)}% of total`}
+                </Text>
+              </TouchableOpacity>
             )
           })
         )}
@@ -323,4 +404,15 @@ const styles = StyleSheet.create({
   personName: { fontSize: 14, fontWeight: '500', color: '#111827', flexShrink: 1 },
   personAmount: { fontSize: 14, fontWeight: '600', color: '#111827' },
   personPct: { fontSize: 12, color: '#9ca3af', marginTop: 4 },
+  breakdownChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  breakdownChipActive: { backgroundColor: '#eef2ff', borderColor: '#6366f1' },
+  breakdownChipText: { fontSize: 12, color: '#475569' },
+  breakdownChipTextActive: { color: '#4338ca', fontWeight: '600' },
 })

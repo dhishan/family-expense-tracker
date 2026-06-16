@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { format, startOfMonth, endOfMonth, subMonths, getDaysInMonth } from 'date-fns'
 import {
   Chart as ChartJS,
@@ -20,6 +21,7 @@ import type { ExpenseCategory } from '../types'
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title)
 
 export default function Dashboard() {
+  const navigate = useNavigate()
   const { user, family, familyMembers } = useAuthStore()
   const [selectedMonth, setSelectedMonth] = useState(new Date())
   const [budgetView, setBudgetView] = useState<'period' | 'monthly'>('period')
@@ -302,9 +304,17 @@ export default function Dashboard() {
                     if (!els.length) return
                     const idx = els[0].index
                     const keys = Object.keys(familySummary?.by_beneficiary || {})
-                    setFilterBeneficiary((prev) =>
-                      prev === keys[idx] ? null : keys[idx],
-                    )
+                    const key = keys[idx]
+                    if (!key) return
+                    // Deep-link to the transactions view filtered to this
+                    // person + the selected month's date range. Honoured by
+                    // the Transactions URL→filters hydration effect.
+                    const params = new URLSearchParams({
+                      beneficiary: key,
+                      start_date: startDate,
+                      end_date: endDate,
+                    })
+                    navigate(`/transactions?${params.toString()}`)
                   },
                 }}
               />
