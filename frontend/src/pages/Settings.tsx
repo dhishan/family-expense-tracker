@@ -13,16 +13,17 @@ import {
   ExclamationTriangleIcon,
   TrashIcon,
 } from '@heroicons/react/24/outline'
-import { familyApi, plaidApi } from '../services/api'
+import { familyApi, plaidApi, investmentsApi } from '../services/api'
+import type { InvestmentAccount } from '../services/api'
 import { useAuthStore } from '../store/auth'
 import { usePlaidLink } from 'react-plaid-link'
 import type { PlaidItem } from '../types'
 
 // ---------------------------------------------------------------------------
-// Connected Accounts sub-component
+// Banks & Cards sub-component (Plaid)
 // ---------------------------------------------------------------------------
 
-function ConnectedAccounts() {
+function BanksAndCards() {
   const queryClient = useQueryClient()
   const { user } = useAuthStore()
   const [linkToken, setLinkToken] = useState<string | null>(null)
@@ -160,9 +161,12 @@ function ConnectedAccounts() {
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-sm p-6">
+    <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-gray-900">Connected Accounts</h2>
+        <div>
+          <h3 className="text-base font-semibold text-gray-900">Banks & Cards</h3>
+          <p className="text-xs text-gray-500 mt-0.5">Drives expenses and pending transactions (via Plaid)</p>
+        </div>
         <button
           onClick={handleConnectBank}
           className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 transition-colors"
@@ -295,6 +299,220 @@ function ConnectedAccounts() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Brokerages sub-component (SnapTrade)
+// ---------------------------------------------------------------------------
+
+const BROKERS = [
+  { id: 'ROBINHOOD', label: 'Robinhood' },
+  { id: 'ETRADE', label: 'E*TRADE' },
+  { id: null, label: 'Other / pick on next screen' },
+]
+
+function BrokerageConnectModal({ onClose }: { onClose: () => void }) {
+  const [selected, setSelected] = useState<string | null>('ROBINHOOD')
+  const [linked, setLinked] = useState(false)
+  const queryClient = useQueryClient()
+
+  const connectMutation = useMutation({
+    mutationFn: async () => {
+      await investmentsApi.register()
+      return investmentsApi.connect(selected)
+    },
+    onSuccess: ({ redirectURI }) => {
+      window.open(redirectURI, '_blank')
+      setLinked(true)
+    },
+    onError: () => toast.error('Failed to start brokerage connection'),
+  })
+
+  const handleRefresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['investments', 'accounts'] })
+    onClose()
+    toast.success('Accounts refreshed')
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Connect a brokerage</h2>
+        {!linked ? (
+          <>
+            <div className="space-y-2 mb-6">
+              {BROKERS.map((b) => (
+                <button
+                  key={String(b.id)}
+                  onClick={() => setSelected(b.id)}
+                  className={`w-full text-left px-4 py-3 rounded-lg border transition-colors ${
+                    selected === b.id
+                      ? 'border-primary-500 bg-primary-50 text-primary-800'
+                      : 'border-gray-200 text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={onClose}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => connectMutation.mutate()}
+                disabled={connectMutation.isPending}
+                className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50"
+              >
+                {connectMutation.isPending ? 'Opening...' : 'Continue'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="text-center">
+            <p className="text-sm text-gray-600 mb-6">
+              A brokerage tab was opened. Complete the link there, then come back and refresh.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={onClose}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Not yet
+              </button>
+              <button
+                onClick={handleRefresh}
+                className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 flex items-center justify-center gap-2"
+              >
+                <ArrowPathIcon className="h-4 w-4" />
+                Refresh accounts
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Brokerages() {
+  const { user } = useAuthStore()
+  const [showConnect, setShowConnect] = useState(false)
+  const [confirmDeregister, setConfirmDeregister] = useState(false)
+  const queryClient = useQueryClient()
+
+  const { data: accounts = [], isLoading } = useQuery({
+    queryKey: ['investments', 'accounts'],
+    queryFn: investmentsApi.accounts,
+    enabled: !!user?.family_id,
+  })
+
+  const deregisterMutation = useMutation({
+    mutationFn: investmentsApi.deregister,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['investments'] })
+      setConfirmDeregister(false)
+      toast.success('All brokerages disconnected')
+    },
+    onError: () => toast.error('Failed to disconnect'),
+  })
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-base font-semibold text-gray-900">Brokerages</h3>
+          <p className="text-xs text-gray-500 mt-0.5">Drives Investments and portfolio analysis (via SnapTrade)</p>
+        </div>
+        <button
+          onClick={() => setShowConnect(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 transition-colors"
+        >
+          <PlusIcon className="h-4 w-4" />
+          Connect a brokerage
+        </button>
+      </div>
+
+      {isLoading ? (
+        <p className="text-sm text-gray-500">Loading…</p>
+      ) : accounts.length === 0 ? (
+        <p className="text-sm text-gray-500">No brokerages connected yet. Connect a brokerage to see holdings and portfolio P&L.</p>
+      ) : (
+        <div className="space-y-3">
+          {accounts.map((acc: InvestmentAccount) => (
+            <div key={acc.id} className="border border-gray-200 rounded-lg p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <BanknotesIcon className="h-8 w-8 text-primary-600 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="font-medium text-gray-900 truncate">{acc.institution_name || acc.name}</p>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      {acc.name}{acc.number ? ` · ${acc.number}` : ''}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+          <button
+            onClick={() => setConfirmDeregister(true)}
+            className="text-xs text-gray-400 hover:text-red-600 underline mt-2"
+          >
+            Disconnect all brokerages
+          </button>
+        </div>
+      )}
+
+      {showConnect && <BrokerageConnectModal onClose={() => setShowConnect(false)} />}
+
+      {confirmDeregister && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Disconnect all brokerages?</h3>
+            <p className="text-sm text-gray-600 mb-6">
+              SnapTrade doesn't support per-brokerage disconnect yet — this removes <strong>all</strong> linked brokerages. You'll need to reconnect each one to restore holdings.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmDeregister(false)}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deregisterMutation.mutate()}
+                disabled={deregisterMutation.isPending}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm"
+              >
+                {deregisterMutation.isPending ? 'Disconnecting…' : 'Disconnect all'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Connections wrapper — groups Banks & Cards (Plaid) + Brokerages (SnapTrade)
+// ---------------------------------------------------------------------------
+
+function Connections() {
+  return (
+    <div className="bg-white rounded-xl shadow-sm p-6 space-y-8">
+      <div>
+        <h2 className="text-lg font-semibold text-gray-900">Connections</h2>
+        <p className="text-sm text-gray-500 mt-0.5">Link external accounts so the app can sync transactions and holdings.</p>
+      </div>
+      <BanksAndCards />
+      <div className="border-t border-gray-100" />
+      <Brokerages />
     </div>
   )
 }
@@ -837,8 +1055,8 @@ export default function Settings() {
         </div>
       )}
 
-      {/* Connected Accounts (only show if user is in a family) */}
-      {family && <ConnectedAccounts />}
+      {/* Connections — Banks & Cards (Plaid) + Brokerages (SnapTrade) */}
+      {family && <Connections />}
 
       {/* App info */}
       <div className="bg-white rounded-xl shadow-sm p-6">

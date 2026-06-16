@@ -233,6 +233,11 @@ export const investmentsApi = {
     const response = await api.get<HoldingGroup[]>('/investments/holdings')
     return response.data
   },
+
+  deregister: async (): Promise<{ deleted: boolean }> => {
+    const response = await api.delete<{ deleted: boolean }>('/investments/registration')
+    return response.data
+  },
 }
 
 // ─── Chat ─────────────────────────────────────────────────────────────────────

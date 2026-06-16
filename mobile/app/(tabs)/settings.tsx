@@ -15,7 +15,8 @@ import Constants from 'expo-constants'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useAuthStore } from '@/store/auth'
-import { authApi, plaidApi } from '@/services/api'
+import { authApi, plaidApi, investmentsApi } from '@/services/api'
+import type { InvestmentAccount } from '@/types'
 import { create, open } from 'react-native-plaid-link-sdk'
 import type { PlaidItem } from '@/types'
 
@@ -166,12 +167,60 @@ export default function SettingsScreen() {
   const appVersion = Constants.expoConfig?.version ?? '1.0.0'
   const queryClient = useQueryClient()
   const [connectingBank, setConnectingBank] = useState(false)
+  const [connectingBrokerage, setConnectingBrokerage] = useState(false)
 
   const { data: itemsData, isLoading: itemsLoading } = useQuery({
     queryKey: ['plaid', 'items'],
     queryFn: () => plaidApi.listItems(),
     enabled: !!user?.family_id,
   })
+
+  const { data: brokerageAccountsData, isLoading: brokerageLoading } = useQuery({
+    queryKey: ['investments', 'accounts'],
+    queryFn: () => investmentsApi.accounts(),
+    enabled: !!user?.family_id,
+  })
+
+  const deregisterMutation = useMutation({
+    mutationFn: () => investmentsApi.deregister(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['investments'] })
+      Alert.alert('Disconnected', 'All brokerages disconnected.')
+    },
+    onError: () => Alert.alert('Error', 'Failed to disconnect brokerages.'),
+  })
+
+  const handleConnectBrokerage = async () => {
+    try {
+      setConnectingBrokerage(true)
+      await investmentsApi.register()
+      const { redirectURI } = await investmentsApi.connect(null)
+      await Linking.openURL(redirectURI)
+      Alert.alert(
+        'Brokerage connection started',
+        'Complete the link in your browser, then pull to refresh this screen.',
+      )
+    } catch {
+      Alert.alert('Error', 'Failed to start brokerage connection.')
+    } finally {
+      setConnectingBrokerage(false)
+    }
+  }
+
+  const handleDisconnectAllBrokerages = () => {
+    Alert.alert(
+      'Disconnect all brokerages?',
+      "SnapTrade doesn't support per-brokerage disconnect yet — this removes ALL linked brokerages. You'll need to reconnect each one.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect all',
+          style: 'destructive',
+          onPress: () => deregisterMutation.mutate(),
+        },
+      ],
+    )
+  }
 
   const renameMutation = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) => plaidApi.renameItem(id, name),
@@ -296,9 +345,13 @@ export default function SettingsScreen() {
         )}
       </View>
 
-      {/* Connected Accounts */}
+      {/* Connections — Banks & Cards (Plaid) + Brokerages (SnapTrade) */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Connected Accounts</Text>
+        <Text style={styles.sectionTitle}>Connections</Text>
+
+        {/* Banks & Cards */}
+        <Text style={styles.subSectionTitle}>Banks & Cards</Text>
+        <Text style={styles.subSectionHint}>Drives expenses & pending transactions (Plaid)</Text>
         <TouchableOpacity
           style={styles.connectBtn}
           onPress={handleConnectBank}
@@ -329,6 +382,48 @@ export default function SettingsScreen() {
             />
           ))
         )}
+
+        {/* Brokerages */}
+        <Text style={[styles.subSectionTitle, { marginTop: 20 }]}>Brokerages</Text>
+        <Text style={styles.subSectionHint}>Drives Investments & portfolio analysis (SnapTrade)</Text>
+        <TouchableOpacity
+          style={styles.connectBtn}
+          onPress={handleConnectBrokerage}
+          disabled={connectingBrokerage}
+          testID="connect-brokerage-btn"
+        >
+          {connectingBrokerage ? (
+            <ActivityIndicator size="small" color="#2563eb" />
+          ) : (
+            <Text style={styles.connectBtnText}>+ Connect a brokerage</Text>
+          )}
+        </TouchableOpacity>
+        {brokerageLoading ? (
+          <ActivityIndicator size="small" color="#9ca3af" style={{ margin: 16 }} />
+        ) : (brokerageAccountsData?.length ?? 0) === 0 ? (
+          <View style={styles.row}>
+            <Text style={styles.rowValue}>No connected brokerages</Text>
+          </View>
+        ) : (
+          <>
+            {(brokerageAccountsData ?? []).map((acc: InvestmentAccount) => (
+              <View key={acc.id} style={styles.bankCard}>
+                <Text style={styles.bankName}>{acc.institution_name || acc.name}</Text>
+                <Text style={styles.bankSubtitle}>
+                  {acc.name}{acc.number ? ` · ${acc.number}` : ''}
+                </Text>
+              </View>
+            ))}
+            <TouchableOpacity
+              onPress={handleDisconnectAllBrokerages}
+              style={{ alignSelf: 'flex-start', marginTop: 8, paddingVertical: 4 }}
+            >
+              <Text style={{ fontSize: 12, color: '#9ca3af', textDecorationLine: 'underline' }}>
+                Disconnect all brokerages
+              </Text>
+            </TouchableOpacity>
+          </>
+        )}
       </View>
 
       {/* Automation */}
@@ -350,13 +445,6 @@ export default function SettingsScreen() {
         <Text style={styles.sectionTitle}>More</Text>
         <TouchableOpacity style={styles.linkRow} onPress={openWebApp}>
           <Text style={styles.linkText}>Open web app</Text>
-          <Text style={styles.linkArrow}>→</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.linkRow}
-          onPress={() => Linking.openURL('https://ui.expense-tracker.blueelephants.org/investments')}
-        >
-          <Text style={styles.linkText}>Link brokerage account (web)</Text>
           <Text style={styles.linkArrow}>→</Text>
         </TouchableOpacity>
       </View>
@@ -422,6 +510,27 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
   },
+  subSectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    paddingHorizontal: 14,
+    paddingTop: 12,
+  },
+  subSectionHint: {
+    fontSize: 12,
+    color: '#9ca3af',
+    paddingHorizontal: 14,
+    paddingBottom: 4,
+  },
+  bankCard: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  bankName: { fontSize: 15, fontWeight: '500', color: '#111827' },
+  bankSubtitle: { fontSize: 13, color: '#6b7280', marginTop: 2 },
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
