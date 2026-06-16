@@ -1,0 +1,406 @@
+{
+  "results": {
+    "smart-sonnet": [
+      {
+        "ok": true,
+        "latency_s": 5.43,
+        "prompt_tokens": 135,
+        "completion_tokens": 146,
+        "cost_usd": 0.002595,
+        "answer": "**The Fed funds rate is currently 4.25%\u20134.50%** (held steady at the December 2024 FOMC meeting, unchanged since then).\n\nFor tech stocks, this level keeps pressure on high-multiple names because elevated discount rates compress the present value of long-duration earnings. However, markets have largely priced this in \u2014 the real driver now is whether the Fed cuts in 2025; futures currently imply 1-2 cuts, which would be modestly supportive for growth/tech but not a major re-rating catalyst. Sticky inflation data remains the key risk that could keep rates higher longer and weigh on NASDAQ valuations.",
+        "query": "What's the Fed funds rate right now and what does it imply for tech stocks?"
+      },
+      {
+        "ok": true,
+        "latency_s": 6.76,
+        "prompt_tokens": 149,
+        "completion_tokens": 235,
+        "cost_usd": 0.003972,
+        "answer": "**Rebalance \u2014 don't add to NVDA.** You're already heavily concentrated in AI tech, so adding $5,000 more to NVDA increases correlated risk without meaningfully moving the needle on a $750K portfolio (it's less than 0.7% of NAV).\n\n**Better moves with the $5,000:**\n- **Diversify sector exposure** \u2014 energy (XLE), financials (XLF), or healthcare (XLV) all have low correlation to AI tech right now\n- **International hedge** \u2014 VXUS or EEM reduces US-tech concentration\n- **Short-duration Treasuries** (SGOV, BIL) if you want dry powder with 5%+ yield while AI valuations stay stretched\n\n**The core issue:** If NVDA and AI peers drop 30-40% (not unusual for high-multiple growth stocks), your $750K portfolio takes a severe hit. This $5,000 is a good forcing function to start building a buffer \u2014 not deepen the bet.",
+        "query": "I have $5,000 to invest this month and a $750K portfolio heavily long AI tech. Add to NVDA or rebalance?"
+      },
+      {
+        "ok": true,
+        "latency_s": 4.3,
+        "prompt_tokens": 135,
+        "completion_tokens": 145,
+        "cost_usd": 0.00258,
+        "answer": "A **Traditional IRA** gives you a tax deduction on contributions now, your money grows tax-deferred, and you pay ordinary income tax on withdrawals in retirement. A **Roth IRA** offers no upfront deduction, but qualified withdrawals in retirement are completely tax-free, including all growth. The core trade-off is **now vs. later**: Traditional wins if you expect a lower tax rate in retirement; Roth wins if you expect a higher one (or want tax-free flexibility). Roth also has no required minimum distributions (RMDs), making it superior for estate planning or if you don't need the income immediately at 73.",
+        "query": "Explain the difference between a Roth and a Traditional IRA in one paragraph."
+      },
+      {
+        "ok": true,
+        "latency_s": 5.07,
+        "prompt_tokens": 131,
+        "completion_tokens": 169,
+        "cost_usd": 0.002928,
+        "answer": "I don't have real-time market data, so I can't give you live IV figures for AAPL options.\n\nFor current implied volatility, check these sources directly:\n- **Market Chameleon** or **Barchart** \u2014 free IV rank/percentile and term structure\n- **Thinkorswim / tastytrade** \u2014 IV rank vs. 52-week range\n- **CBOE** \u2014 for broader context against VIX\n\nKey things to look at: **IV Rank (IVR)** and **IV Percentile** to know if vol is cheap or rich relative to history, plus the **term structure** to spot any kinks around earnings or events. Want help interpreting the numbers once you pull them?",
+        "query": "What's implied vol on AAPL look like right now?"
+      },
+      {
+        "ok": true,
+        "latency_s": 5.5,
+        "prompt_tokens": 143,
+        "completion_tokens": 165,
+        "cost_usd": 0.002904,
+        "answer": "**Yes, the spread looks attractive, but it's not that simple.**\n\nA 30% expected return vs. 5.5% margin cost gives you a +24.5% net spread \u2014 strong on paper. But NVDA's realized volatility (~50-60%) means a 30% drawdown is entirely plausible, triggering margin calls before your thesis plays out. Leverage amplifies both sides, and forced liquidation at the bottom is the real risk, not the interest cost.\n\n**Bottom line:** If you have high conviction, a small levered position (1.2-1.5x) is defensible. Going heavily margined on a single high-beta name at any rate is a risk-management problem, not a math problem.",
+        "query": "If margin rate is 5.5% and my NVDA forward upside is 30%, should I lever up?"
+      },
+      {
+        "ok": true,
+        "latency_s": 3.58,
+        "prompt_tokens": 132,
+        "completion_tokens": 96,
+        "cost_usd": 0.001836,
+        "answer": "I don't have real-time access to Polymarket or any live prediction market data, so I can't give you the current odds. Check **polymarket.com** directly and search for \"Fed rate cut\" \u2014 those markets are highly liquid and update continuously.\n\nFor context, Fed rate-cut probabilities are also tracked in real time via **CME FedWatch** (fed funds futures), which is the institutional standard alongside prediction markets.",
+        "query": "What does Polymarket say about a Fed rate cut by year end?"
+      },
+      {
+        "ok": true,
+        "latency_s": 2.39,
+        "prompt_tokens": 132,
+        "completion_tokens": 69,
+        "cost_usd": 0.001431,
+        "answer": "I don't have access to real-time filings or the internet, so I can't pull Tesla's latest 10-Q. Check SEC EDGAR directly (sec.gov) or Tesla's investor relations page for the most recent filing \u2014 TSLA typically reports quarterly within 40 days of period-end.",
+        "query": "Summarize the latest 10-Q from Tesla in two sentences."
+      },
+      {
+        "ok": true,
+        "latency_s": 11.26,
+        "prompt_tokens": 127,
+        "completion_tokens": 59,
+        "cost_usd": 0.001266,
+        "answer": "I don't have access to your personal financial accounts, transaction history, or spending data. I can only work with information you share directly in our conversation.\n\nIf you paste your Costco transactions or a spending summary here, I'd be happy to help you analyze it!",
+        "query": "What was my Costco spending last month?"
+      },
+      {
+        "ok": true,
+        "latency_s": 2.14,
+        "prompt_tokens": 129,
+        "completion_tokens": 49,
+        "cost_usd": 0.001122,
+        "answer": "That's outside my scope \u2014 I only cover financial topics like portfolios, markets, budgets, and banking.\n\nI can help you with something like analyzing HN-listed company stocks, or anything else finance-related.",
+        "query": "Write a Python script that scrapes Hacker News."
+      },
+      {
+        "ok": true,
+        "latency_s": 3.57,
+        "prompt_tokens": 126,
+        "completion_tokens": 100,
+        "cost_usd": 0.001878,
+        "answer": "**Gamma measures how fast your delta changes as the stock price moves.**\n\nDelta tells you how much an option's price moves when the stock moves $1. Gamma tells you how much that delta itself shifts with each $1 move \u2014 so it's the \"acceleration\" of your option. High gamma (common in short-dated, at-the-money options) means your position's sensitivity can change rapidly, making it both a bigger opportunity and a bigger risk.",
+        "query": "Explain options gamma to a beginner."
+      }
+    ],
+    "opus": [
+      {
+        "ok": true,
+        "latency_s": 4.87,
+        "prompt_tokens": 203,
+        "completion_tokens": 185,
+        "cost_usd": 0.00564,
+        "answer": "The Fed funds target range is 4.25\u20134.50% as of my last update, following the Fed's December 2024 cut, with markets pricing limited further easing in 2025 amid sticky inflation.\n\nFor tech: still a headwind versus the ZIRP era, but valuations have already adjusted, and mega-cap names (MSFT, GOOGL, META, NVDA) are cash-rich and largely rate-insensitive. Smaller, unprofitable tech remains most exposed to \"higher for longer.\"\n\nCheck the current rate before acting \u2014 my data may be stale.",
+        "query": "What's the Fed funds rate right now and what does it imply for tech stocks?"
+      },
+      {
+        "ok": true,
+        "latency_s": 5.43,
+        "prompt_tokens": 221,
+        "completion_tokens": 147,
+        "cost_usd": 0.00478,
+        "answer": "Rebalance. With $750K already heavily long AI tech, adding $5K to NVDA is a rounding error that increases concentration risk without meaningfully changing upside.\n\nDeploy the $5K into uncorrelated diversifiers \u2014 international (VXUS), small-cap value (AVUV), or short-duration Treasuries \u2014 depending on what your portfolio lacks. The bigger question: at what AI-tech weight do you start trimming winners?",
+        "query": "I have $5,000 to invest this month and a $750K portfolio heavily long AI tech. Add to NVDA or rebalance?"
+      },
+      {
+        "ok": true,
+        "latency_s": 3.92,
+        "prompt_tokens": 205,
+        "completion_tokens": 222,
+        "cost_usd": 0.006575,
+        "answer": "Roth IRAs use after-tax contributions but grow and withdraw tax-free in retirement, while Traditional IRAs use pre-tax (deductible) contributions that grow tax-deferred and are taxed as ordinary income on withdrawal. Roth favors you if you expect higher taxes later (or want no RMDs and more flexibility), Traditional favors you if you expect lower taxes in retirement and want the deduction now. Both share the 2024/2025 contribution limit of $7,000 ($8,000 if 50+), but Roth has income phase-outs while Traditional deduction phase-outs apply only if you (or a spouse) have a workplace plan.",
+        "query": "Explain the difference between a Roth and a Traditional IRA in one paragraph."
+      },
+      {
+        "ok": true,
+        "latency_s": 3.81,
+        "prompt_tokens": 194,
+        "completion_tokens": 133,
+        "cost_usd": 0.004295,
+        "answer": "I don't have live market data access, so I can't quote current AAPL IV. Check your broker, OptionStrat, or barchart.com for the IV term structure and skew.\n\nFor context: AAPL 30-day IV typically sits 20-30% in calm periods and spikes to 35-50%+ around earnings. Next earnings catalyst is the key driver \u2014 let me know if you want help interpreting a specific number.",
+        "query": "What's implied vol on AAPL look like right now?"
+      },
+      {
+        "ok": true,
+        "latency_s": 4.39,
+        "prompt_tokens": 210,
+        "completion_tokens": 171,
+        "cost_usd": 0.005325,
+        "answer": "Mathematically yes, but practically be careful \u2014 a 30% expected return vs 5.5% borrow cost gives ~24.5% spread, but that's only attractive if your conviction and time horizon justify the risk.\n\nNVDA's realized vol is ~50%+; a 2x lever turns a routine 20% drawdown into 40%, risking margin calls near the lows. If you do it, size small (e.g., 1.2-1.3x), set a hard stop, and remember forward \"upside\" is a guess, not a yield.",
+        "query": "If margin rate is 5.5% and my NVDA forward upside is 30%, should I lever up?"
+      },
+      {
+        "ok": true,
+        "latency_s": 6.1,
+        "prompt_tokens": 199,
+        "completion_tokens": 154,
+        "cost_usd": 0.004845,
+        "answer": "I don't have live access to Polymarket odds. To check, search Polymarket for contracts like \"Fed decision in December\" or \"Fed rate cuts in 2025\" \u2014 those typically show implied probabilities for 25bp/50bp cuts at the remaining FOMC meetings.\n\nFor context, CME FedWatch (futures-implied) is the more liquid benchmark traders cross-reference against Polymarket. Want me to discuss how to interpret the spread between the two?",
+        "query": "What does Polymarket say about a Fed rate cut by year end?"
+      },
+      {
+        "ok": true,
+        "latency_s": 3.02,
+        "prompt_tokens": 201,
+        "completion_tokens": 72,
+        "cost_usd": 0.002805,
+        "answer": "I don't have access to Tesla's latest 10-Q filing or real-time SEC data. Check Tesla's investor relations page or SEC EDGAR directly for TSLA's most recent quarterly filing.",
+        "query": "Summarize the latest 10-Q from Tesla in two sentences."
+      },
+      {
+        "ok": true,
+        "latency_s": 3.69,
+        "prompt_tokens": 189,
+        "completion_tokens": 88,
+        "cost_usd": 0.003145,
+        "answer": "I don't have access to your transaction data or accounts in this conversation \u2014 I can only reason about figures you share with me.\n\nIf you paste your Costco transactions (or a monthly total), I'll break it down by category, flag trends vs. prior months, or fold it into a budget view.",
+        "query": "What was my Costco spending last month?"
+      },
+      {
+        "ok": true,
+        "latency_s": 2.4,
+        "prompt_tokens": 195,
+        "completion_tokens": 63,
+        "cost_usd": 0.00255,
+        "answer": "Out of scope \u2014 I'm a financial assistant focused on portfolios, expenses, markets, and related topics. Happy to help with budgeting, investment analysis, or market questions instead.",
+        "query": "Write a Python script that scrapes Hacker News."
+      },
+      {
+        "ok": true,
+        "latency_s": 4.26,
+        "prompt_tokens": 191,
+        "completion_tokens": 204,
+        "cost_usd": 0.006055,
+        "answer": "Gamma measures how fast an option's delta changes when the underlying stock moves $1 \u2014 it's the \"acceleration\" to delta's \"speed.\"\n\nExample: a call with delta 0.50 and gamma 0.05 will have delta ~0.55 after the stock rises $1, meaning your position gets more sensitive to further moves. Gamma is highest for at-the-money options near expiration, and long options (calls or puts) always have positive gamma while short options have negative gamma.\n\nPractical takeaway: high gamma = explosive P&L swings in both directions, which is why short-dated ATM options feel like a rollercoaster.",
+        "query": "Explain options gamma to a beginner."
+      }
+    ],
+    "gpt-4o": [
+      {
+        "ok": true,
+        "latency_s": 2.24,
+        "prompt_tokens": 126,
+        "completion_tokens": 80,
+        "cost_usd": 0.001115,
+        "answer": "As of the latest update in October 2023, the Federal Reserve's target federal funds rate is 5.25% to 5.50%. A higher Fed funds rate generally implies higher borrowing costs, which can negatively affect tech stocks due to their reliance on future earnings growth and investment in innovation. This environment might lead investors to favor value stocks over growth stocks like those in the tech sector.",
+        "query": "What's the Fed funds rate right now and what does it imply for tech stocks?"
+      },
+      {
+        "ok": true,
+        "latency_s": 1.13,
+        "prompt_tokens": 139,
+        "completion_tokens": 54,
+        "cost_usd": 0.000888,
+        "answer": "Rebalance your portfolio to reduce risk. Since it's heavily long in AI tech, diversifying into other sectors or asset classes can mitigate potential volatility and exposure. Consider allocating the $5,000 to sectors like healthcare, consumer staples, or bonds to balance your current holdings.",
+        "query": "I have $5,000 to invest this month and a $750K portfolio heavily long AI tech. Add to NVDA or rebalance?"
+      },
+      {
+        "ok": true,
+        "latency_s": 1.41,
+        "prompt_tokens": 124,
+        "completion_tokens": 108,
+        "cost_usd": 0.00139,
+        "answer": "The primary difference between a Roth and a Traditional IRA lies in their tax treatment. Contributions to a Traditional IRA are typically tax-deductible, meaning you pay taxes on the funds upon withdrawal in retirement, potentially lowering your taxable income in the contribution year. In contrast, Roth IRA contributions are made with after-tax dollars, so withdrawals, including earnings, are tax-free in retirement if certain conditions are met. Additionally, Roth IRAs do not have required minimum distributions (RMDs) during the account holder's lifetime, unlike Traditional IRAs.",
+        "query": "Explain the difference between a Roth and a Traditional IRA in one paragraph."
+      },
+      {
+        "ok": true,
+        "latency_s": 1.01,
+        "prompt_tokens": 121,
+        "completion_tokens": 49,
+        "cost_usd": 0.000793,
+        "answer": "As of the latest available data in October 2023, implied volatility for AAPL is relatively moderate, reflecting typical market conditions without significant anticipated volatility spikes. For precise and current figures, you should check a financial platform offering real-time options data.",
+        "query": "What's implied vol on AAPL look like right now?"
+      },
+      {
+        "ok": true,
+        "latency_s": 0.94,
+        "prompt_tokens": 134,
+        "completion_tokens": 64,
+        "cost_usd": 0.000975,
+        "answer": "Leveraging up depends on your risk tolerance and confidence in your NVDA forecast. If you're highly confident in a 30% upside and can handle potential losses, leveraging with a 5.5% margin rate could be beneficial. However, consider market volatility and potential for loss if NVDA does not perform as expected.",
+        "query": "If margin rate is 5.5% and my NVDA forward upside is 30%, should I lever up?"
+      },
+      {
+        "ok": true,
+        "latency_s": 1.23,
+        "prompt_tokens": 125,
+        "completion_tokens": 42,
+        "cost_usd": 0.000733,
+        "answer": "As of the latest data, Polymarket indicates a low probability of a Fed rate cut by the end of the year. This suggests that traders do not widely expect a decrease in interest rates within this timeframe.",
+        "query": "What does Polymarket say about a Fed rate cut by year end?"
+      },
+      {
+        "ok": true,
+        "latency_s": 1.25,
+        "prompt_tokens": 124,
+        "completion_tokens": 51,
+        "cost_usd": 0.00082,
+        "answer": "Tesla's latest 10-Q reports a decline in net income due to increased expenses and lower vehicle prices, despite a rise in overall revenue driven by higher vehicle deliveries. The company also highlighted ongoing investments in capacity expansion and technology development, impacting its operating margins.",
+        "query": "Summarize the latest 10-Q from Tesla in two sentences."
+      },
+      {
+        "ok": true,
+        "latency_s": 1.03,
+        "prompt_tokens": 118,
+        "completion_tokens": 30,
+        "cost_usd": 0.000595,
+        "answer": "I can't access your personal financial data, so I don't know your Costco spending last month. Check your bank or credit card statements to find this information.",
+        "query": "What was my Costco spending last month?"
+      },
+      {
+        "ok": true,
+        "latency_s": 0.86,
+        "prompt_tokens": 120,
+        "completion_tokens": 38,
+        "cost_usd": 0.00068,
+        "answer": "I'm here to assist with financial topics, so I can't provide a script for web scraping. However, if you have questions about personal finance, investments, or markets, feel free to ask!",
+        "query": "Write a Python script that scrapes Hacker News."
+      },
+      {
+        "ok": true,
+        "latency_s": 2.97,
+        "prompt_tokens": 117,
+        "completion_tokens": 67,
+        "cost_usd": 0.000963,
+        "answer": "Gamma measures the rate of change of an option's delta relative to a 1-point move in the underlying asset's price. It indicates how much the delta will change as the asset price moves, with higher gamma suggesting a more sensitive delta. This is important for traders to understand how their option positions might behave as the market fluctuates.",
+        "query": "Explain options gamma to a beginner."
+      }
+    ],
+    "gpt-4o-mini": [
+      {
+        "ok": true,
+        "latency_s": 1.14,
+        "prompt_tokens": 126,
+        "completion_tokens": 55,
+        "cost_usd": 5.2e-05,
+        "answer": "The current Fed funds rate is 5.25%-5.50%. Higher interest rates typically increase borrowing costs, which can negatively impact tech stocks that rely on growth financing, as investors may shift to safer assets. This environment may lead to increased volatility in tech stock valuations.",
+        "query": "What's the Fed funds rate right now and what does it imply for tech stocks?"
+      },
+      {
+        "ok": true,
+        "latency_s": 1.12,
+        "prompt_tokens": 139,
+        "completion_tokens": 44,
+        "cost_usd": 4.7e-05,
+        "answer": "Consider rebalancing your portfolio. While NVDA is a strong player in AI tech, over-concentration can increase risk. Diversifying into other sectors or stocks can help mitigate potential downturns and improve overall portfolio stability.",
+        "query": "I have $5,000 to invest this month and a $750K portfolio heavily long AI tech. Add to NVDA or rebalance?"
+      },
+      {
+        "ok": true,
+        "latency_s": 1.99,
+        "prompt_tokens": 124,
+        "completion_tokens": 91,
+        "cost_usd": 7.3e-05,
+        "answer": "A Roth IRA allows contributions to be made with after-tax dollars, enabling tax-free withdrawals in retirement, while a Traditional IRA permits pre-tax contributions, offering immediate tax deductions but taxing withdrawals as ordinary income during retirement. Additionally, Roth IRAs have no required minimum distributions (RMDs) during the account holder's lifetime, whereas Traditional IRAs require RMDs starting at age 73. This fundamental difference in tax treatment can influence retirement planning strategies significantly.",
+        "query": "Explain the difference between a Roth and a Traditional IRA in one paragraph."
+      },
+      {
+        "ok": true,
+        "latency_s": 1.12,
+        "prompt_tokens": 121,
+        "completion_tokens": 45,
+        "cost_usd": 4.5e-05,
+        "answer": "Implied volatility for AAPL is currently around 21.5%. This reflects market expectations for future price fluctuations and can vary based on upcoming earnings reports or market conditions. Always check real-time data for the most accurate figure.",
+        "query": "What's implied vol on AAPL look like right now?"
+      },
+      {
+        "ok": true,
+        "latency_s": 1.16,
+        "prompt_tokens": 134,
+        "completion_tokens": 53,
+        "cost_usd": 5.2e-05,
+        "answer": "Yes, leveraging up could be beneficial since your expected upside of 30% exceeds the margin rate of 5.5%. However, consider the risks involved with margin trading, as losses can also be amplified. Ensure your overall portfolio risk aligns with your investment strategy.",
+        "query": "If margin rate is 5.5% and my NVDA forward upside is 30%, should I lever up?"
+      },
+      {
+        "ok": true,
+        "latency_s": 1.24,
+        "prompt_tokens": 125,
+        "completion_tokens": 63,
+        "cost_usd": 5.7e-05,
+        "answer": "Polymarket currently indicates a probability of approximately 35.0% for a Fed rate cut by the end of 2023. This reflects market expectations that the Fed may ease monetary policy if inflation continues to decline or economic conditions weaken. Keep monitoring for updates, as these probabilities can change with new economic data.",
+        "query": "What does Polymarket say about a Fed rate cut by year end?"
+      },
+      {
+        "ok": true,
+        "latency_s": 1.16,
+        "prompt_tokens": 124,
+        "completion_tokens": 59,
+        "cost_usd": 5.4e-05,
+        "answer": "Tesla's latest 10-Q reports a revenue increase of 10.2% year-over-year, driven by strong demand for its vehicles and energy products. The company also highlights ongoing investments in production capacity and advancements in technology, though it faces challenges such as supply chain disruptions and inflationary pressures.",
+        "query": "Summarize the latest 10-Q from Tesla in two sentences."
+      },
+      {
+        "ok": true,
+        "latency_s": 0.64,
+        "prompt_tokens": 118,
+        "completion_tokens": 25,
+        "cost_usd": 3.3e-05,
+        "answer": "I cannot access your personal spending data. You can check your Costco spending by reviewing your bank statements or receipts from last month.",
+        "query": "What was my Costco spending last month?"
+      },
+      {
+        "ok": true,
+        "latency_s": 0.92,
+        "prompt_tokens": 120,
+        "completion_tokens": 34,
+        "cost_usd": 3.8e-05,
+        "answer": "I'm focused on finance-related topics, but I can guide you on financial data scraping or analysis. If you have specific financial data or portfolio questions, feel free to ask!",
+        "query": "Write a Python script that scrapes Hacker News."
+      },
+      {
+        "ok": true,
+        "latency_s": 1.2,
+        "prompt_tokens": 117,
+        "completion_tokens": 68,
+        "cost_usd": 5.8e-05,
+        "answer": "Options gamma measures the rate of change in an option's delta relative to changes in the underlying asset's price. It indicates how sensitive the delta (the option's price movement in relation to the underlying asset) is to price fluctuations. A high gamma means the delta can change significantly with small movements in the underlying asset, making options more volatile.",
+        "query": "Explain options gamma to a beginner."
+      }
+    ]
+  },
+  "summary": [
+    {
+      "model": "smart-sonnet",
+      "n_ok": 10,
+      "n_total": 10,
+      "avg_latency_s": 5.0,
+      "total_cost_usd": 0.0225,
+      "avg_cost_per_query_usd": 0.0023
+    },
+    {
+      "model": "opus",
+      "n_ok": 10,
+      "n_total": 10,
+      "avg_latency_s": 4.19,
+      "total_cost_usd": 0.046,
+      "avg_cost_per_query_usd": 0.0046
+    },
+    {
+      "model": "gpt-4o",
+      "n_ok": 10,
+      "n_total": 10,
+      "avg_latency_s": 1.41,
+      "total_cost_usd": 0.009,
+      "avg_cost_per_query_usd": 0.0009
+    },
+    {
+      "model": "gpt-4o-mini",
+      "n_ok": 10,
+      "n_total": 10,
+      "avg_latency_s": 1.17,
+      "total_cost_usd": 0.0005,
+      "avg_cost_per_query_usd": 0.0001
+    }
+  ]
+}

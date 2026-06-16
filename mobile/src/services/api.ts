@@ -350,11 +350,13 @@ export const chatApi = {
     conversation_id?: string | null
     message: string
     family_id?: string | null
+    model?: 'smart' | 'opus' | 'sonnet' | 'gpt'
   }): Promise<StartChatResponse> => {
     const r = await api.post<StartChatResponse>('/chat/start', {
       conversation_id: params.conversation_id ?? null,
       message: params.message,
       family_id: params.family_id ?? null,
+      model: params.model ?? 'smart',
     })
     return r.data
   },

@@ -1746,6 +1746,47 @@ _TOOL_CONTEXT_BUDGETS: dict[str, int] = {
 _DEFAULT_CONTEXT_BUDGET = 4_000  # chars
 
 
+async def _dispatch_tool_call(name: str, tool_input: dict, user_id: str) -> str:
+    """Single dispatch point for every user-defined chat tool. Used by both
+    the Anthropic and GPT generation paths so behavior matches across
+    providers."""
+    if name in _EXPENSE_TOOLS:
+        return await _execute_expense_tool(name, tool_input, user_id)
+    if name in _PLAID_TOOLS:
+        return await _execute_plaid_tool(name, tool_input, user_id)
+    if name in _PREDICTION_MARKET_TOOLS:
+        return _execute_prediction_market_tool(name, tool_input)
+    if name in _ALPACA_TOOLS:
+        return _execute_alpaca_tool(name, tool_input)
+    if name in _TRADIER_TOOLS:
+        return _execute_tradier_tool(name, tool_input)
+    return _execute_snaptrade_tool(name, tool_input, user_id)
+
+
+def _anthropic_tool_to_openai(tool: dict) -> dict | None:
+    """Translate an Anthropic-format tool definition to OpenAI/LiteLLM
+    format. Returns None for server-side Anthropic tools (web_search) that
+    have no OpenAI equivalent — callers should drop those when targeting
+    GPT."""
+    if not isinstance(tool, dict):
+        return None
+    # Anthropic server-side tools like {"type": "web_search_20260209"} have
+    # no schema we can hand to OpenAI; skip them for GPT runs.
+    if tool.get("type") and not tool.get("input_schema"):
+        return None
+    name = tool.get("name")
+    if not name:
+        return None
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": tool.get("description", ""),
+            "parameters": tool.get("input_schema") or {"type": "object", "properties": {}},
+        },
+    }
+
+
 def _wrap_tool_result(name: str, content: str) -> str:
     """Wrap a tool result in an untrusted-data envelope so the model treats
     the body as evidence rather than instructions. Pairs with the
@@ -1835,6 +1876,163 @@ def _extract_container_id(final_msg: Any) -> str | None:
     return getattr(container, "id", None) or getattr(container, "container_id", None)
 
 
+async def _run_gpt_turn(
+    *,
+    model_id: str,
+    history: list[dict],
+    narrowed_tools: list[dict],
+    user_id: str,
+    conv_id: str,
+    turn_id: str,
+    emit,
+    store,
+    full_text_parts: list[str],
+    maybe_flush_text,
+) -> None:
+    """Agentic loop against an OpenAI-family model via LiteLLM. Mirrors the
+    Anthropic path: streams text deltas, executes tool calls, loops until
+    the model returns a final text response. Emits the same Firestore
+    event shapes (text/tool_call/tool_result/done) so the SSE consumers
+    on web + mobile don't need to know which provider produced the turn.
+    """
+    import litellm  # imported lazily so OPENAI_API_KEY is read at call time
+
+    # Convert Anthropic tool definitions to OpenAI/function-calling format.
+    # Server-side Anthropic tools (e.g. web_search) are dropped — GPT has
+    # no native equivalent in this code path.
+    openai_tools = [
+        t for t in (_anthropic_tool_to_openai(x) for x in narrowed_tools) if t
+    ]
+
+    # Inject SYSTEM_PROMPT + today's date as a single system message at the
+    # head of the history. (OpenAI doesn't have multi-block system arrays
+    # like Anthropic, so we concatenate.)
+    today_str = date.today().isoformat()
+    sys_text = (
+        SYSTEM_PROMPT
+        + f"\n\nToday is {today_str}. Use this when discussing time-sensitive "
+          f"data (Fed meetings, prediction markets, earnings dates, expirations)."
+        + "\n\nNote: web_search is unavailable in this session — if the user asks "
+          "for live web data, say so and use cached or tool-backed sources instead."
+    )
+    msgs: list[dict] = [{"role": "system", "content": sys_text}]
+    for m in history:
+        msgs.append({"role": m["role"], "content": m["content"] or ""})
+
+    turn_idx = 0
+    while True:
+        turn_idx += 1
+        await emit("status", phase="thinking")
+        try:
+            resp = await asyncio.to_thread(
+                litellm.completion,
+                model=model_id,
+                messages=msgs,
+                tools=openai_tools or None,
+                tool_choice="auto" if openai_tools else None,
+                max_tokens=4000,
+                temperature=0.7,
+            )
+        except Exception as exc:
+            logger.exception("litellm.completion failed model=%s", model_id)
+            raise
+
+        choice = resp.choices[0]
+        message = choice.message
+        # OpenAI returns either content (text) or tool_calls (list) per turn.
+        text_out = (getattr(message, "content", None) or "")
+        tool_calls = getattr(message, "tool_calls", None) or []
+
+        # Record usage best-effort (LiteLLM normalizes the .usage shape).
+        try:
+            from app.services import usage_service as _usage_svc
+            _usage_svc.record_usage(
+                user_id=user_id,
+                family_id=None,
+                source="chat-gpt",
+                model=model_id,
+                conversation_id=conv_id,
+                turn_id=turn_id,
+                usage=getattr(resp, "usage", None),
+                duration_ms=0,
+            )
+        except Exception:
+            pass
+
+        if tool_calls:
+            # Append the assistant message that asked for tools so the next
+            # turn's history is valid OpenAI format.
+            msgs.append(
+                {
+                    "role": "assistant",
+                    "content": text_out or None,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc in tool_calls
+                    ],
+                }
+            )
+
+            # If the model emitted some prelude text alongside the tool calls,
+            # still surface it (rare but happens).
+            if text_out:
+                await emit("text", text=text_out)
+                full_text_parts.append(text_out)
+                await maybe_flush_text()
+
+            for tc in tool_calls:
+                name = tc.function.name
+                try:
+                    args = json.loads(tc.function.arguments or "{}")
+                except Exception:
+                    args = {}
+                await emit("tool_call", id=tc.id, name=name, input=args)
+                try:
+                    result_content = await _dispatch_tool_call(name, args, user_id)
+                except Exception as e:
+                    result_content = json.dumps({"error": str(e)})
+                context_content = _truncate_tool_result(name, result_content)
+                wrapped = _wrap_tool_result(name, context_content)
+                await emit(
+                    "tool_result",
+                    id=tc.id,
+                    name=name,
+                    content_preview=result_content[:500],
+                )
+                msgs.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "name": name,
+                        "content": wrapped,
+                    }
+                )
+            # Loop and ask GPT for its synthesis of the tool results.
+            continue
+
+        # No tool calls — model returned the final answer.
+        if text_out:
+            await emit("text", text=text_out)
+            full_text_parts.append(text_out)
+            await maybe_flush_text(force=True)
+        await emit("done")
+        await asyncio.to_thread(
+            store.finalize_turn,
+            conv_id, turn_id,
+            status="complete",
+            text="".join(full_text_parts),
+            error=None,
+        )
+        return
+
+
 async def _generate_turn(
     *,
     conv_id: str,
@@ -1842,6 +2040,7 @@ async def _generate_turn(
     user_id: str,
     session_id: str,
     history: list[dict],
+    model_preference: str = "smart",
 ) -> None:
     """Background generation task. Writes every event to Firestore so the
     chat survives client disconnects. Never raises — terminal errors are
@@ -1932,8 +2131,25 @@ async def _generate_turn(
         "",
     ).lower()
     is_deep = any(kw in last_user for kw in DEEP_KEYWORDS)
-    model_id = "claude-opus-4-7" if is_deep else "claude-sonnet-4-6"
-    effort_level = "high" if is_deep else "medium"
+
+    # Apply explicit model preference from the request, falling back to the
+    # existing smart routing logic (Sonnet default, Opus on deep keywords).
+    # GPT is dispatched to a separate (LiteLLM-backed) generation path below.
+    use_gpt = False
+    if model_preference == "opus":
+        model_id = "claude-opus-4-7"
+        effort_level = "high"
+    elif model_preference == "sonnet":
+        model_id = "claude-sonnet-4-6"
+        effort_level = "medium"
+    elif model_preference == "gpt":
+        model_id = "gpt-4o"
+        effort_level = "medium"
+        use_gpt = True
+    else:
+        # smart / default
+        model_id = "claude-opus-4-7" if is_deep else "claude-sonnet-4-6"
+        effort_level = "high" if is_deep else "medium"
 
     # Topic-based tool subsetting: classify the user's latest query with
     # Haiku and pass only the relevant tools to the main model. Cuts the
@@ -1991,6 +2207,42 @@ async def _generate_turn(
         )
     except Exception as e:
         logger.warning("Firestore model write failed: %s", e)
+
+    # ── GPT branch: agentic loop via LiteLLM ──────────────────────────────
+    # We don't share the Anthropic stream machinery — GPT's events are
+    # shaped differently. Reuses the same emit/store/tool dispatch.
+    if use_gpt:
+        try:
+            await _run_gpt_turn(
+                model_id=model_id,
+                history=history,
+                narrowed_tools=narrowed_tools,
+                user_id=user_id,
+                conv_id=conv_id,
+                turn_id=assistant_turn_id,
+                emit=emit,
+                store=store,
+                full_text_parts=full_text_parts,
+                maybe_flush_text=maybe_flush_text,
+            )
+        except Exception as exc:
+            logger.exception("GPT generation failed")
+            try:
+                await emit("error", message=str(exc))
+                await asyncio.to_thread(
+                    store.finalize_turn,
+                    conv_id, assistant_turn_id,
+                    status="error", text="".join(full_text_parts) or "", error=str(exc),
+                )
+            except Exception:
+                pass
+        try:
+            if lf_obs:
+                lf_obs.update(metadata={"provider": "openai", "model": model_id})
+                lf_obs.end()
+        except Exception:
+            pass
+        return
 
     # Working copy of the messages list for the agentic loop.
     msgs: list[dict] = [{"role": m["role"], "content": m["content"]} for m in history]
@@ -2405,6 +2657,13 @@ class StartChatRequest(BaseModel):
     conversation_id: str | None = None
     message: str
     family_id: str | None = None  # carried through for tool scoping
+    # Model preference per question:
+    #   None / "smart" — use the existing Haiku-routed Sonnet/Opus logic
+    #   "opus"   — claude-opus-4-7
+    #   "sonnet" — claude-sonnet-4-6
+    #   "gpt"    — gpt-4o via LiteLLM (cheaper, fast, broad knowledge)
+    # Gemini is reserved in the UI but not wired here yet.
+    model: str | None = None
 
 
 class StartChatResponse(BaseModel):
@@ -2506,6 +2765,12 @@ async def chat_start(
     # Schedule generation. Cloud Run terraform sets cpu_idle=false and
     # min_instances=1 so this task survives the HTTP response completing
     # and continues even if the client backgrounds.
+    # Validate model param against the allowed set; anything unknown is
+    # treated as "smart" so a future UI option doesn't 500 today's server.
+    requested_model = (body.model or "smart").strip().lower()
+    if requested_model not in ("smart", "opus", "sonnet", "gpt"):
+        requested_model = "smart"
+
     task = asyncio.create_task(
         _generate_turn(
             conv_id=conv_id,
@@ -2513,6 +2778,7 @@ async def chat_start(
             user_id=current_user.id,
             session_id=session_id,
             history=history,
+            model_preference=requested_model,
         )
     )
     _BG_TASKS.add(task)

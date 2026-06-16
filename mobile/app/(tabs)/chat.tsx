@@ -302,6 +302,8 @@ export default function ChatScreen() {
   const listRef = useRef<FlatList>(null)
   // Reactive mirror of convIdRef.current — needed for React Query key.
   const [conversationId, setConversationId] = useState<string | null>(null)
+  // Per-question model: 'smart' | 'opus' | 'sonnet' | 'gpt'
+  const [model, setModel] = useState<'smart' | 'opus' | 'sonnet' | 'gpt'>('smart')
   const streamingIdRef = useRef<string | null>(null)
   // Tracks transient SSE-disconnect retries within a single in-flight
   // assistant turn. We allow up to MAX_SSE_RECONNECTS automatic
@@ -567,6 +569,7 @@ export default function ChatScreen() {
           conversation_id: convIdRef.current,
           message: text,
           family_id: user?.family_id ?? null,
+          model,
         })
       } catch (e) {
         const errMsg = (e as Error)?.message ?? 'Failed to start chat'
@@ -802,6 +805,22 @@ export default function ChatScreen() {
         onContentSizeChange={scrollToBottom}
       />
 
+      {/* Model picker */}
+      <View style={styles.modelRow}>
+        {(['smart', 'opus', 'sonnet', 'gpt'] as const).map((m) => (
+          <TouchableOpacity
+            key={m}
+            onPress={() => setModel(m)}
+            disabled={isStreaming}
+            style={[styles.modelChip, model === m && styles.modelChipActive]}
+          >
+            <Text style={[styles.modelChipText, model === m && styles.modelChipTextActive]}>
+              {m === 'smart' ? '✨ Smart' : m === 'opus' ? 'Opus' : m === 'sonnet' ? 'Sonnet' : 'GPT'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       {/* Input */}
       <View style={styles.inputRow}>
         <TextInput
@@ -968,6 +987,37 @@ const styles = StyleSheet.create({
   retryText: {
     color: '#2563eb',
     fontSize: 13,
+    fontWeight: '600',
+  },
+  modelRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 4,
+    gap: 6,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+  },
+  modelChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  modelChipActive: {
+    backgroundColor: '#eef2ff',
+    borderColor: '#6366f1',
+  },
+  modelChipText: {
+    fontSize: 11,
+    color: '#475569',
+    fontWeight: '500',
+  },
+  modelChipTextActive: {
+    color: '#4338ca',
     fontWeight: '600',
   },
   inputRow: {

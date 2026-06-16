@@ -372,6 +372,9 @@ export default function Chat() {
   // conversation; once set, subsequent sends continue the same one
   // server-side. Reset by "New chat".
   const [conversationId, setConversationId] = useState<string | null>(null)
+  // Per-question model preference: 'smart' | 'opus' | 'sonnet' | 'gpt'
+  // (Gemini reserved in the UI but disabled until wired)
+  const [model, setModel] = useState<'smart' | 'opus' | 'sonnet' | 'gpt'>('smart')
   const [historyOpen, setHistoryOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -449,6 +452,7 @@ export default function Chat() {
           body: JSON.stringify({
             conversation_id: conversationId,
             message: text.trim(),
+            model,
           }),
         })
         if (!startResp.ok) {
@@ -589,7 +593,7 @@ export default function Chat() {
         setStreaming(false)
       }
     },
-    [messages, streaming, token, conversationId, refetchUsage]
+    [messages, streaming, token, conversationId, refetchUsage, model]
   )
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -726,7 +730,24 @@ export default function Chat() {
 
       {/* Composer */}
       <div className="shrink-0 border-t border-gray-200 bg-white px-4 sm:px-6 py-3">
-        <div className="flex items-end gap-3 max-w-4xl mx-auto">
+        <div className="max-w-4xl mx-auto space-y-2">
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <label htmlFor="model-select" className="shrink-0">Model:</label>
+            <select
+              id="model-select"
+              value={model}
+              onChange={(e) => setModel(e.target.value as typeof model)}
+              disabled={streaming}
+              className="bg-white border border-gray-300 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary-400"
+            >
+              <option value="smart">✨ Smart (auto)</option>
+              <option value="opus">Claude Opus 4.7 — deep</option>
+              <option value="sonnet">Claude Sonnet 4.6 — balanced</option>
+              <option value="gpt">GPT-4o — fast, cheap</option>
+              <option value="gemini" disabled>Gemini (coming soon)</option>
+            </select>
+          </div>
+        <div className="flex items-end gap-3">
           <textarea
             ref={textareaRef}
             value={draft}
@@ -754,6 +775,7 @@ export default function Chat() {
         <p className="text-center text-xs text-gray-400 mt-2">
           Press Enter to send &middot; Shift+Enter for newline
         </p>
+        </div>
       </div>
 
       <HistoryDrawer
