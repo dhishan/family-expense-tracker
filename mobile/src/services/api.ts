@@ -496,6 +496,11 @@ export const chatApi = {
     return r.data
   },
 
+  renameConversation: async (convId: string, title: string): Promise<{ id: string; title: string }> => {
+    const r = await api.patch(`/chat/conversations/${convId}`, { title })
+    return r.data
+  },
+
   deleteConversation: async (convId: string): Promise<void> => {
     await api.delete(`/chat/conversations/${encodeURIComponent(convId)}`)
   },

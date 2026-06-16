@@ -3284,3 +3284,32 @@ async def delete_conversation(
     if not ok:
         raise HTTPException(status_code=404, detail="conversation not found")
     return {"deleted": True}
+
+
+class ConversationPatch(BaseModel):
+    title: str
+
+
+@router.patch("/conversations/{conv_id}")
+async def update_conversation(
+    conv_id: str,
+    body: ConversationPatch,
+    current_user: User = Depends(get_current_user),
+):
+    """Rename a chat conversation. Owner-only — verifies ownership before
+    writing so a foreign conv_id returns 404, not 403."""
+    title = (body.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title must not be empty")
+    if len(title) > 80:
+        title = title[:79].rstrip() + "…"
+    store = get_chat_store()
+    conv = store.get_conversation(conv_id, user_id=current_user.id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    try:
+        await asyncio.to_thread(store.set_title, conv_id, title)
+    except Exception as e:
+        logger.exception("rename conversation failed: %s", e)
+        raise HTTPException(status_code=500, detail="rename failed")
+    return {"id": conv_id, "title": title}

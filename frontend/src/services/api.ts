@@ -456,6 +456,11 @@ export const chatApi = {
   deleteConversation: async (conversationId: string): Promise<void> => {
     await api.delete(`/chat/conversations/${conversationId}`)
   },
+
+  renameConversation: async (conversationId: string, title: string): Promise<{ id: string; title: string }> => {
+    const response = await api.patch(`/chat/conversations/${conversationId}`, { title })
+    return response.data
+  },
 }
 
 export const usageApi = {

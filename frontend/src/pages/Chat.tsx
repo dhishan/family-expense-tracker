@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '../store/auth'
-import { PaperAirplaneIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon, ClockIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline'
+import { PaperAirplaneIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon, ClockIcon, TrashIcon, XMarkIcon, PencilSquareIcon } from '@heroicons/react/24/outline'
 import { expensesApi, budgetsApi, investmentsApi, chatApi, usageApi, type ChatConversationSummary } from '../services/api'
 import type { HoldingGroup } from '../services/api'
 import type { BudgetStatus } from '../types'
@@ -868,6 +868,8 @@ interface HistoryDrawerProps {
 }
 
 function HistoryDrawer({ open, onClose, currentConversationId, onSelect }: HistoryDrawerProps) {
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
   const { data, refetch, isLoading } = useQuery({
     queryKey: ['chat', 'conversations'],
     queryFn: () => chatApi.listConversations(50),
@@ -887,6 +889,28 @@ function HistoryDrawer({ open, onClose, currentConversationId, onSelect }: Histo
       refetch()
     } catch {
       alert('Failed to delete conversation')
+    }
+  }
+
+  const startRename = (e: React.MouseEvent, id: string, currentTitle: string) => {
+    e.stopPropagation()
+    setRenamingId(id)
+    setRenameDraft(currentTitle || '')
+  }
+
+  const commitRename = async (id: string) => {
+    const next = renameDraft.trim()
+    if (!next) {
+      setRenamingId(null)
+      return
+    }
+    try {
+      await chatApi.renameConversation(id, next)
+      refetch()
+    } catch {
+      alert('Failed to rename conversation')
+    } finally {
+      setRenamingId(null)
     }
   }
 
@@ -933,31 +957,64 @@ function HistoryDrawer({ open, onClose, currentConversationId, onSelect }: Histo
                 const active = c.id === currentConversationId
                 return (
                   <li key={c.id}>
-                    <button
-                      type="button"
-                      onClick={() => onSelect(c.id)}
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => renamingId !== c.id && onSelect(c.id)}
+                      onKeyDown={(e) => {
+                        if ((e.key === 'Enter' || e.key === ' ') && renamingId !== c.id) onSelect(c.id)
+                      }}
                       className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors flex items-start gap-2 ${
                         active ? 'bg-indigo-50' : ''
                       }`}
                     >
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">
-                          {c.title || 'Untitled conversation'}
-                        </p>
+                        {renamingId === c.id ? (
+                          <input
+                            autoFocus
+                            value={renameDraft}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            onBlur={() => commitRename(c.id)}
+                            onKeyDown={(e) => {
+                              e.stopPropagation()
+                              if (e.key === 'Enter') commitRename(c.id)
+                              if (e.key === 'Escape') setRenamingId(null)
+                            }}
+                            className="w-full text-sm font-medium text-gray-900 bg-white border border-indigo-300 rounded px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                          />
+                        ) : (
+                          <p className="text-sm font-medium text-gray-900 truncate">
+                            {c.title || 'Untitled conversation'}
+                          </p>
+                        )}
                         <p className="text-xs text-gray-500 mt-0.5">
                           {formatDate(c.updated_at)}
                           {c.turn_count > 0 && ` · ${c.turn_count} turn${c.turn_count !== 1 ? 's' : ''}`}
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={(e) => handleDelete(e, c.id)}
-                        aria-label="Delete conversation"
-                        className="p-1 text-gray-400 hover:text-red-600 shrink-0"
-                      >
-                        <TrashIcon className="h-4 w-4" />
-                      </button>
-                    </button>
+                      {renamingId !== c.id && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={(e) => startRename(e, c.id, c.title)}
+                            aria-label="Rename conversation"
+                            className="p-1 text-gray-400 hover:text-indigo-600 shrink-0"
+                            title="Rename"
+                          >
+                            <PencilSquareIcon className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDelete(e, c.id)}
+                            aria-label="Delete conversation"
+                            className="p-1 text-gray-400 hover:text-red-600 shrink-0"
+                          >
+                            <TrashIcon className="h-4 w-4" />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </li>
                 )
               })}

@@ -45,6 +45,36 @@ export default function ChatHistoryScreen() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['chat', 'conversations'] }),
   })
 
+  const renameMut = useMutation({
+    mutationFn: ({ convId, title }: { convId: string; title: string }) =>
+      chatApi.renameConversation(convId, title),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['chat', 'conversations'] }),
+    onError: () => Alert.alert('Error', 'Failed to rename chat.'),
+  })
+
+  const promptRename = useCallback(
+    (conv: ChatConversationSummary) => {
+      Alert.prompt(
+        'Rename chat',
+        'New title:',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Save',
+            onPress: (next?: string) => {
+              const v = (next || '').trim()
+              if (!v) return
+              renameMut.mutate({ convId: conv.id, title: v })
+            },
+          },
+        ],
+        'plain-text',
+        conv.title || '',
+      )
+    },
+    [renameMut],
+  )
+
   const openConv = useCallback(
     (id: string) => {
       // Routes through the (tabs)/chat screen which reads conversation_id
@@ -89,6 +119,14 @@ export default function ChatHistoryScreen() {
           </Text>
         </View>
         <TouchableOpacity
+          onPress={() => promptRename(item)}
+          hitSlop={8}
+          style={styles.deleteBtn}
+          testID={`chat-rename-${item.id}`}
+        >
+          <Ionicons name="pencil-outline" size={18} color="#94a3b8" />
+        </TouchableOpacity>
+        <TouchableOpacity
           onPress={() => confirmDelete(item)}
           hitSlop={8}
           style={styles.deleteBtn}
@@ -98,7 +136,7 @@ export default function ChatHistoryScreen() {
         </TouchableOpacity>
       </TouchableOpacity>
     ),
-    [openConv, confirmDelete],
+    [openConv, confirmDelete, promptRename],
   )
 
   return (
