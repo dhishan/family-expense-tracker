@@ -267,6 +267,33 @@ export const investmentsApi = {
     const response = await api.delete<{ deleted: boolean }>('/investments/registration')
     return response.data
   },
+
+  listConnections: async (): Promise<{ connections: BrokerageConnection[] }> => {
+    const response = await api.get<{ connections: BrokerageConnection[] }>('/investments/connections')
+    return response.data
+  },
+
+  updateConnectionShare: async (
+    authorizationId: string,
+    sharedWithFamily: boolean,
+  ): Promise<BrokerageConnection> => {
+    const response = await api.patch<BrokerageConnection>(
+      `/investments/connections/${authorizationId}`,
+      { shared_with_family: sharedWithFamily },
+    )
+    return response.data
+  },
+}
+
+export interface BrokerageConnection {
+  authorization_id: string
+  owner_user_id: string
+  family_id: string | null
+  brokerage: string | null
+  shared_with_family: boolean
+  is_owner: boolean
+  added_at?: string
+  updated_at?: string
 }
 
 export interface InvestmentAccount {

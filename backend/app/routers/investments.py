@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.auth.dependencies import get_current_user
 from app.models.user import User
-from app.services import snaptrade_service
+from app.services import snaptrade_connections, snaptrade_service
 
 router = APIRouter()
 
@@ -88,3 +88,48 @@ async def snapshot(current_user: User = Depends(get_current_user)):
 @router.delete("/registration")
 async def deregister(current_user: User = Depends(get_current_user)):
     return snaptrade_service.delete_user(current_user.id)
+
+
+# ─── Per-user connection visibility + family share toggle ─────────────────────
+
+
+@router.get("/connections")
+async def list_connections(current_user: User = Depends(get_current_user)):
+    """Connections the caller can see — own + family-shared. The `is_owner`
+    flag tells the UI whether to render the share-with-family toggle."""
+    return {
+        "connections": snaptrade_connections.list_connections_visible_to(
+            user_id=current_user.id, family_id=current_user.family_id
+        )
+    }
+
+
+class ConnectionShareUpdate(BaseModel):
+    shared_with_family: bool
+
+
+@router.patch("/connections/{authorization_id}")
+async def update_connection_share(
+    authorization_id: str,
+    body: ConnectionShareUpdate,
+    current_user: User = Depends(get_current_user),
+):
+    """Owner toggles whether their brokerage is visible to the rest of the
+    family. Non-owners get 403."""
+    try:
+        row = snaptrade_connections.set_shared_with_family(
+            authorization_id=authorization_id,
+            owner_user_id=current_user.id,
+            shared=body.shared_with_family,
+        )
+    except ValueError as e:
+        msg = str(e)
+        if msg == "not_found":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="connection not found")
+        if msg == "not_owner":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the brokerage owner can change family sharing",
+            )
+        raise
+    return row

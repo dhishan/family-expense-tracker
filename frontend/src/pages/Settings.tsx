@@ -412,6 +412,25 @@ function Brokerages() {
     enabled: !!user?.family_id,
   })
 
+  // Connection-level metadata for the family share toggle. Each row is a
+  // brokerage connection (potentially containing multiple accounts).
+  const { data: connectionsResp } = useQuery({
+    queryKey: ['investments', 'connections'],
+    queryFn: investmentsApi.listConnections,
+    enabled: !!user?.family_id,
+  })
+  const connections = connectionsResp?.connections ?? []
+
+  const shareMutation = useMutation({
+    mutationFn: ({ authorizationId, shared }: { authorizationId: string; shared: boolean }) =>
+      investmentsApi.updateConnectionShare(authorizationId, shared),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['investments', 'connections'] })
+      queryClient.invalidateQueries({ queryKey: ['investments', 'accounts'] })
+    },
+    onError: () => toast.error('Failed to update sharing'),
+  })
+
   const deregisterMutation = useMutation({
     mutationFn: investmentsApi.deregister,
     onSuccess: () => {
@@ -459,6 +478,40 @@ function Brokerages() {
               </div>
             </div>
           ))}
+          {/* Family-sharing toggles, one per brokerage connection you own */}
+          {connections.filter((c) => c.is_owner).length > 0 && (
+            <div className="mt-2 pt-3 border-t border-gray-100">
+              <p className="text-xs text-gray-500 mb-2">
+                Share my brokerages with the rest of the family
+              </p>
+              {connections
+                .filter((c) => c.is_owner)
+                .map((c) => (
+                  <label
+                    key={c.authorization_id}
+                    className="flex items-center justify-between py-2 cursor-pointer"
+                  >
+                    <span className="text-sm text-gray-700">
+                      {c.brokerage || 'Brokerage'}{' '}
+                      <span className="text-xs text-gray-400">
+                        · {c.authorization_id.slice(0, 8)}…
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={c.shared_with_family}
+                      onChange={(e) =>
+                        shareMutation.mutate({
+                          authorizationId: c.authorization_id,
+                          shared: e.target.checked,
+                        })
+                      }
+                      className="h-4 w-4 text-primary-600 rounded focus:ring-primary-500"
+                    />
+                  </label>
+                ))}
+            </div>
+          )}
           <button
             onClick={() => setConfirmDeregister(true)}
             className="text-xs text-gray-400 hover:text-red-600 underline mt-2"

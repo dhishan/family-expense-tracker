@@ -433,3 +433,24 @@ resource "google_firestore_index" "usage_events_user_source_created" {
 
   depends_on = [google_firestore_database.database]
 }
+
+# snaptrade_connections: per-family share lookups
+# Query: where family_id == X and shared_with_family == true
+# Owner-side queries use only owner_user_id (single field, no composite needed).
+resource "google_firestore_index" "snaptrade_connections_family_shared" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "snaptrade_connections"
+
+  fields {
+    field_path = "family_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "shared_with_family"
+    order      = "ASCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}

@@ -7,6 +7,7 @@ import {
   Alert,
   ScrollView,
   Linking,
+  Switch,
   TextInput,
   ActivityIndicator,
 } from 'react-native'
@@ -179,6 +180,23 @@ export default function SettingsScreen() {
     queryKey: ['investments', 'accounts'],
     queryFn: () => investmentsApi.accounts(),
     enabled: !!user?.family_id,
+  })
+
+  const { data: brokerageConnsData } = useQuery({
+    queryKey: ['investments', 'connections'],
+    queryFn: () => investmentsApi.listConnections(),
+    enabled: !!user?.family_id,
+  })
+  const brokerageConns = brokerageConnsData?.connections ?? []
+
+  const shareMutation = useMutation({
+    mutationFn: ({ authorizationId, shared }: { authorizationId: string; shared: boolean }) =>
+      investmentsApi.updateConnectionShare(authorizationId, shared),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['investments', 'connections'] })
+      queryClient.invalidateQueries({ queryKey: ['investments', 'accounts'] })
+    },
+    onError: () => Alert.alert('Error', 'Failed to update sharing.'),
   })
 
   const deregisterMutation = useMutation({
@@ -427,6 +445,45 @@ export default function SettingsScreen() {
                 </Text>
               </View>
             ))}
+
+            {/* Owner-only family share toggles */}
+            {brokerageConns.filter((c) => c.is_owner).length > 0 && (
+              <View style={{ paddingHorizontal: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#f3f4f6' }}>
+                <Text style={{ fontSize: 12, color: '#6b7280', marginBottom: 6 }}>
+                  Share my brokerages with family
+                </Text>
+                {brokerageConns
+                  .filter((c) => c.is_owner)
+                  .map((c) => (
+                    <View
+                      key={c.authorization_id}
+                      style={{
+                        flexDirection: 'row',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        paddingVertical: 6,
+                      }}
+                    >
+                      <Text style={{ fontSize: 14, color: '#374151', flex: 1 }} numberOfLines={1}>
+                        {c.brokerage || 'Brokerage'}{' '}
+                        <Text style={{ fontSize: 11, color: '#9ca3af' }}>
+                          · {c.authorization_id.slice(0, 8)}…
+                        </Text>
+                      </Text>
+                      <Switch
+                        value={c.shared_with_family}
+                        onValueChange={(v) =>
+                          shareMutation.mutate({
+                            authorizationId: c.authorization_id,
+                            shared: v,
+                          })
+                        }
+                      />
+                    </View>
+                  ))}
+              </View>
+            )}
+
             <TouchableOpacity
               onPress={handleDisconnectAllBrokerages}
               style={{ alignSelf: 'flex-start', marginTop: 8, paddingVertical: 4 }}
