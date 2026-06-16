@@ -23,6 +23,7 @@
     "axios": "^1.7.0",
     "expo": "~53.0.0",
     "expo-auth-session": "~6.2.1",
+    "expo-build-properties": "^56.0.19",
     "expo-constants": "~17.1.8",
     "expo-crypto": "~14.1.5",
     "expo-font": "~13.3.0",

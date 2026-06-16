@@ -56,7 +56,16 @@
       "expo-router",
       "expo-secure-store",
       "./plugins/withFmtConstevalFix",
-      "@react-native-google-signin/google-signin"
+      "@react-native-google-signin/google-signin",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "16.4",
+            "useFrameworks": "static"
+          }
+        }
+      ]
     ],
     "scheme": "family-expense-tracker",
     "experiments": {
