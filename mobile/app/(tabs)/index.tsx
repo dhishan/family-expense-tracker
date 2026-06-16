@@ -29,10 +29,12 @@ function fmtUSD(n: number) {
 }
 
 export default function DashboardScreen() {
-  const { user, family } = useAuthStore()
+  const { user, family, familyMembers } = useAuthStore()
 
   const today = new Date()
   const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1)
+  const startStr = toLocalISODate(firstOfMonth)
+  const endStr = toLocalISODate(today)
 
   const { data: expensesData, isLoading: loadingExpenses } = useQuery({
     queryKey: ['expenses', 'dashboard'],
@@ -40,8 +42,8 @@ export default function DashboardScreen() {
       expensesApi.list({
         page: 1,
         page_size: 5,
-        start_date: toLocalISODate(firstOfMonth),
-        end_date: toLocalISODate(today),
+        start_date: startStr,
+        end_date: endStr,
       }),
     enabled: !!user?.family_id,
   })
@@ -51,6 +53,32 @@ export default function DashboardScreen() {
     queryFn: budgetsApi.list,
     enabled: !!user?.family_id,
   })
+
+  // Spending-by-person bar list (mobile-friendly alternative to a pie).
+  const { data: summary, isLoading: loadingSummary } = useQuery({
+    queryKey: ['expenses', 'summary', startStr, endStr],
+    queryFn: () =>
+      expensesApi.getSummary({ start_date: startStr, end_date: endStr }),
+    enabled: !!user?.family_id,
+  })
+
+  const beneficiaryLabel = (key: string): string => {
+    if (!key || key === 'family' || key === 'all') return 'Whole family'
+    const override = family?.beneficiary_labels?.[key]
+    if (override) return override
+    const member = familyMembers.find((m) => m.id === key)
+    return member?.display_name || key
+  }
+
+  const PERSON_COLORS = [
+    '#6366f1', '#14b8a6', '#f97316', '#ec4899', '#a855f7',
+    '#22c55e', '#eab308', '#3b82f6', '#06b6d4', '#6b7280',
+  ]
+
+  const personRows = Object.entries(summary?.by_beneficiary || {})
+    .map(([key, amount]) => ({ key, amount }))
+    .sort((a, b) => b.amount - a.amount)
+  const personTotal = personRows.reduce((s, r) => s + r.amount, 0) || 1
 
   const monthTotal = expensesData?.expenses.reduce((s, e) => s + e.amount, 0) ?? 0
   const overBudgetCount = budgetsData?.budgets.filter((b) => b.is_over_budget).length ?? 0
@@ -92,6 +120,48 @@ export default function DashboardScreen() {
             </Text>
           )}
         </View>
+      </View>
+
+      {/* Spending by person */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Spending by person</Text>
+        </View>
+        {loadingSummary ? (
+          <ActivityIndicator size="small" color="#2563eb" style={{ marginTop: 8 }} />
+        ) : personRows.length === 0 ? (
+          <Text style={styles.emptyText}>No expenses this month.</Text>
+        ) : (
+          personRows.map((row, idx) => {
+            const pct = (row.amount / personTotal) * 100
+            const color = PERSON_COLORS[idx % PERSON_COLORS.length]
+            return (
+              <View key={row.key} style={styles.personRow}>
+                <View style={styles.personLabelRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                    <View style={[styles.personDot, { backgroundColor: color }]} />
+                    <Text style={styles.personName} numberOfLines={1}>
+                      {beneficiaryLabel(row.key)}
+                    </Text>
+                  </View>
+                  <Text style={styles.personAmount}>{fmtUSD(row.amount)}</Text>
+                </View>
+                <View style={styles.progressTrack}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      {
+                        width: `${Math.max(2, Math.min(pct, 100))}%` as `${number}%`,
+                        backgroundColor: color,
+                      },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.personPct}>{pct.toFixed(1)}% of family</Text>
+              </View>
+            )
+          })
+        )}
       </View>
 
       {/* Recent expenses */}
@@ -238,4 +308,19 @@ const styles = StyleSheet.create({
   progressTrack: { height: 6, backgroundColor: '#e5e7eb', borderRadius: 3, marginBottom: 4 },
   progressFill: { height: 6, borderRadius: 3 },
   budgetAmounts: { fontSize: 12, color: '#9ca3af' },
+  personRow: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  personLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  personDot: { width: 10, height: 10, borderRadius: 5, marginRight: 8 },
+  personName: { fontSize: 14, fontWeight: '500', color: '#111827', flexShrink: 1 },
+  personAmount: { fontSize: 14, fontWeight: '600', color: '#111827' },
+  personPct: { fontSize: 12, color: '#9ca3af', marginTop: 4 },
 })

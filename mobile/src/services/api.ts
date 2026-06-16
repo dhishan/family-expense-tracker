@@ -10,6 +10,7 @@ import type {
   ExpenseCreate,
   ExpenseUpdate,
   ExpenseListResponse,
+  ExpenseSummary,
   Budget,
   BudgetCreate,
   BudgetUpdate,
@@ -149,6 +150,15 @@ export const expensesApi = {
 
   delete: async (expenseId: string): Promise<void> => {
     await api.delete(`/expenses/${expenseId}`)
+  },
+
+  getSummary: async (params?: {
+    start_date?: string
+    end_date?: string
+    beneficiary?: string
+  }): Promise<ExpenseSummary> => {
+    const response = await api.get<ExpenseSummary>('/expenses/summary', { params })
+    return response.data
   },
 }
 

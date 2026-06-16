@@ -20,17 +20,34 @@ import type { ExpenseCategory } from '../types'
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title)
 
 export default function Dashboard() {
-  const { user, family } = useAuthStore()
+  const { user, family, familyMembers } = useAuthStore()
   const [selectedMonth, setSelectedMonth] = useState(new Date())
   const [budgetView, setBudgetView] = useState<'period' | 'monthly'>('period')
+  // null = whole family (default). Otherwise a specific member's user_id.
+  const [filterBeneficiary, setFilterBeneficiary] = useState<string | null>(null)
 
   const startDate = format(startOfMonth(selectedMonth), 'yyyy-MM-dd')
   const endDate = format(endOfMonth(selectedMonth), 'yyyy-MM-dd')
 
-  // Fetch expense summary
+  // Fetch expense summary — narrows to the selected beneficiary when set.
+  // The category pie + the totals cards all re-render off this same call.
   const { data: summary, isLoading: summaryLoading } = useQuery({
-    queryKey: ['expenses', 'summary', startDate, endDate],
-    queryFn: () => expensesApi.getSummary({ start_date: startDate, end_date: endDate }),
+    queryKey: ['expenses', 'summary', startDate, endDate, filterBeneficiary],
+    queryFn: () =>
+      expensesApi.getSummary({
+        start_date: startDate,
+        end_date: endDate,
+        ...(filterBeneficiary ? { beneficiary: filterBeneficiary } : {}),
+      }),
+    enabled: !!user?.family_id,
+  })
+
+  // Always-unfiltered family summary so the Spending-by-Person pie shows
+  // the full member breakdown regardless of the active beneficiary filter.
+  const { data: familySummary } = useQuery({
+    queryKey: ['expenses', 'summary', startDate, endDate, '__all__'],
+    queryFn: () =>
+      expensesApi.getSummary({ start_date: startDate, end_date: endDate }),
     enabled: !!user?.family_id,
   })
 
@@ -58,6 +75,32 @@ export default function Dashboard() {
         backgroundColor: [
           '#22c55e', '#f97316', '#3b82f6', '#a855f7', '#ec4899',
           '#14b8a6', '#eab308', '#06b6d4', '#6366f1', '#6b7280',
+        ],
+        borderWidth: 0,
+      },
+    ],
+  }
+
+  // Translate a beneficiary key (user_id or 'family'/'all') into a label.
+  // Family doc may also carry beneficiary_labels overrides.
+  const beneficiaryLabel = (key: string): string => {
+    if (!key || key === 'family' || key === 'all') return 'Whole family'
+    const override = family?.beneficiary_labels?.[key]
+    if (override) return override
+    const member = familyMembers.find((m) => m.id === key)
+    return member?.display_name || key
+  }
+
+  const personChartData = {
+    labels: Object.entries(familySummary?.by_beneficiary || {}).map(([k]) =>
+      beneficiaryLabel(k),
+    ),
+    datasets: [
+      {
+        data: Object.values(familySummary?.by_beneficiary || {}),
+        backgroundColor: [
+          '#6366f1', '#14b8a6', '#f97316', '#ec4899', '#a855f7',
+          '#22c55e', '#eab308', '#3b82f6', '#06b6d4', '#6b7280',
         ],
         borderWidth: 0,
       },
@@ -103,24 +146,41 @@ export default function Dashboard() {
           </p>
         </div>
         
-        {/* Month selector */}
-        <div className="flex items-center gap-2 bg-white rounded-lg px-4 py-2 shadow-sm">
-          <button
-            onClick={handlePrevMonth}
-            className="p-1 hover:bg-gray-100 rounded"
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Person filter — applies to category pie + totals cards */}
+          <select
+            value={filterBeneficiary ?? ''}
+            onChange={(e) => setFilterBeneficiary(e.target.value || null)}
+            className="bg-white rounded-lg px-3 py-2 shadow-sm text-sm font-medium text-gray-900 border-0 focus:ring-2 focus:ring-primary-500"
+            aria-label="Filter by person"
           >
-            ←
-          </button>
-          <span className="font-medium text-gray-900 min-w-[120px] text-center">
-            {format(selectedMonth, 'MMMM yyyy')}
-          </span>
-          <button
-            onClick={handleNextMonth}
-            disabled={selectedMonth >= new Date()}
-            className="p-1 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            →
-          </button>
+            <option value="">Whole family</option>
+            {familyMembers.map((m) => (
+              <option key={m.id} value={m.id}>
+                {family?.beneficiary_labels?.[m.id] || m.display_name}
+              </option>
+            ))}
+          </select>
+
+          {/* Month selector */}
+          <div className="flex items-center gap-2 bg-white rounded-lg px-4 py-2 shadow-sm">
+            <button
+              onClick={handlePrevMonth}
+              className="p-1 hover:bg-gray-100 rounded"
+            >
+              ←
+            </button>
+            <span className="font-medium text-gray-900 min-w-[120px] text-center">
+              {format(selectedMonth, 'MMMM yyyy')}
+            </span>
+            <button
+              onClick={handleNextMonth}
+              disabled={selectedMonth >= new Date()}
+              className="p-1 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              →
+            </button>
+          </div>
         </div>
       </div>
 
@@ -173,9 +233,16 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Category breakdown */}
         <div className="bg-white rounded-xl shadow-sm p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
-            Spending by Category
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">
+              Spending by Category
+            </h2>
+            {filterBeneficiary && (
+              <span className="text-xs px-2 py-0.5 bg-primary-50 text-primary-700 rounded-full font-medium">
+                {beneficiaryLabel(filterBeneficiary)}
+              </span>
+            )}
+          </div>
           {summaryLoading ? (
             <div className="h-64 flex items-center justify-center">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
@@ -191,6 +258,53 @@ export default function Dashboard() {
                     legend: {
                       position: 'right',
                     },
+                  },
+                }}
+              />
+            </div>
+          ) : (
+            <div className="h-64 flex items-center justify-center text-gray-500">
+              No expenses this month
+            </div>
+          )}
+        </div>
+
+        {/* Spending by Person */}
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">
+            Spending by Person
+          </h2>
+          {summaryLoading ? (
+            <div className="h-64 flex items-center justify-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+            </div>
+          ) : Object.keys(familySummary?.by_beneficiary || {}).length > 0 ? (
+            <div className="h-64">
+              <Doughnut
+                data={personChartData}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { position: 'right' },
+                    tooltip: {
+                      callbacks: {
+                        label: (ctx) => {
+                          const total = (familySummary?.total_amount || 0) || 1
+                          const val = ctx.parsed
+                          const pct = ((val / total) * 100).toFixed(1)
+                          return `${ctx.label}: $${val.toFixed(2)} (${pct}%)`
+                        },
+                      },
+                    },
+                  },
+                  onClick: (_, els) => {
+                    if (!els.length) return
+                    const idx = els[0].index
+                    const keys = Object.keys(familySummary?.by_beneficiary || {})
+                    setFilterBeneficiary((prev) =>
+                      prev === keys[idx] ? null : keys[idx],
+                    )
                   },
                 }}
               />
