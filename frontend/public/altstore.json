@@ -21,6 +21,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.8",
+          "buildVersion": "1",
+          "date": "2026-06-16T17:42:12Z",
+          "localizedDescription": "What's changed:\n- \"What's new\" sheet + richer OTA messages\n- chat: GPT chat option \u2192 gpt-5.5 reasoning; router/title \u2192 gpt-4o-mini\n- model switcher \u2014 Smart / Opus / Sonnet / GPT via LiteLLM\n- allow E2E sandbox to boot; wire OPENAI_API_KEY into Cloud Run\n- per-user SnapTrade isolation + opt-in family share\n- clear error when SnapTrade Personal plan blocks 2nd user\n- spending-by-person \u2014 pie filter on web, bar list on mobile",
+          "downloadURL": "https://github.com/dhishan/family-expense-tracker/releases/download/mobile-v1.0.8/Expenses.ipa",
+          "size": 14060628,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.7",
           "buildVersion": "1",
           "date": "2026-06-16T02:51:41Z",
