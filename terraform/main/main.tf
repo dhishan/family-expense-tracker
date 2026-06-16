@@ -201,6 +201,16 @@ resource "google_secret_manager_secret" "anthropic_api_key" {
   depends_on = [google_project_service.secretmanager]
 }
 
+# OpenAI API key — used by LiteLLM for the model switcher (Smart/GPT
+# options). The secret was provisioned manually via gcloud (one-time),
+# so reference it as a data source. Rotate the value with:
+#   echo -n "$KEY" | gcloud secrets versions add \
+#     expense-tracker-backend-openai-api-key --data-file=- \
+#     --project personal-projects-473219
+data "google_secret_manager_secret" "openai_api_key" {
+  secret_id = "${var.backend_service_name}-openai-api-key"
+}
+
 # Cloudflare Access AUD tag (values populated manually via gcloud - see runbook)
 resource "google_secret_manager_secret" "cf_access_aud" {
   secret_id = "${var.backend_service_name}-cf-access-aud"
@@ -566,6 +576,16 @@ resource "google_cloud_run_service" "backend" {
           value_from {
             secret_key_ref {
               name = google_secret_manager_secret.anthropic_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "OPENAI_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = data.google_secret_manager_secret.openai_api_key.secret_id
               key  = "latest"
             }
           }

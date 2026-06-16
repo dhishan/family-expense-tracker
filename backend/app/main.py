@@ -16,7 +16,13 @@ def _enforce_production_jwt_secret() -> None:
     JWT secret. A weak or default signing key lets anyone forge a JWT for
     any user — see docs/security-review-2026-06-15.md (Critical finding).
     """
-    if settings.environment == "development":
+    # Skip the guard in local dev + test/e2e sandboxes. Production
+    # (environment="production") must provide a real secret. Note: our
+    # Cloud Run deploys use environment="dev" but DO have a strong
+    # JWT_SECRET_KEY injected via Secret Manager — the guard correctly
+    # passes there because the secret is real, not because env was
+    # whitelisted.
+    if settings.environment in ("development", "test", "sandbox", "e2e"):
         return
     sec = settings.effective_jwt_secret()
     if not sec or sec == "change-me-in-production" or len(sec) < 32:
