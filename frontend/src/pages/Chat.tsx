@@ -743,7 +743,7 @@ export default function Chat() {
               <option value="smart">✨ Smart (auto)</option>
               <option value="opus">Claude Opus 4.7 — deep</option>
               <option value="sonnet">Claude Sonnet 4.6 — balanced</option>
-              <option value="gpt">GPT-4o — fast, cheap</option>
+              <option value="gpt">GPT-5.5 — reasoning</option>
               <option value="gemini" disabled>Gemini (coming soon)</option>
             </select>
           </div>

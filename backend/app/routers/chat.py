@@ -919,26 +919,29 @@ SCOPE_REDIRECT_TEXT = (
 
 
 async def _classify_topics(query: str) -> tuple[bool, set[str]]:
-    """Run a Haiku classifier; return (is_financial, topic subset). Falls back
-    to (True, all topics) on any error so the chat is never blocked."""
+    """Run a gpt-4o classifier; return (is_financial, topic subset). Falls
+    back to (True, all topics) on any error so the chat is never blocked.
+
+    Routing/auxiliary tasks intentionally use gpt-4o (cheaper + faster than
+    Haiku for this size of prompt). The user-facing chat models are
+    Sonnet/Opus/gpt-5.5 chosen via the model switcher.
+    """
     if not query or not query.strip():
         return True, set(_TOPIC_TOOLS.keys())
     try:
-        client = anthropic.AsyncAnthropic()
-        resp = await client.messages.create(
-            model="claude-haiku-4-5",
+        import litellm  # local import — only loaded when classifier runs
+        resp = await asyncio.to_thread(
+            litellm.completion,
+            model="gpt-4o-mini",
             max_tokens=120,
-            system=_TOPIC_CLASSIFIER_SYSTEM,
-            messages=[{"role": "user", "content": query[:1000]}],
+            messages=[
+                {"role": "system", "content": _TOPIC_CLASSIFIER_SYSTEM},
+                {"role": "user", "content": query[:1000]},
+            ],
+            response_format={"type": "json_object"},
             timeout=10,
         )
-        raw = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
-        # Tolerate ```json fences
-        if raw.startswith("```"):
-            raw = raw.strip("`")
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.strip()
+        raw = (resp.choices[0].message.content or "").strip()
         parsed = json.loads(raw)
         # Tolerate legacy bare-list return shape during deploy rollout
         if isinstance(parsed, list):
@@ -957,7 +960,7 @@ async def _classify_topics(query: str) -> tuple[bool, set[str]]:
                 user_id="system",
                 family_id=None,
                 source="topic-classifier",
-                model="claude-haiku-4-5",
+                model="gpt-4o-mini",
                 conversation_id=None,
                 turn_id=None,
                 usage=resp.usage,
@@ -985,29 +988,30 @@ _TITLE_SYSTEM = (
 async def _generate_and_set_title(
     conv_id: str, user_text: str, assistant_text: str
 ) -> None:
-    """Best-effort Haiku call to generate a concise conversation title.
-    Failures are swallowed — the default first-message title stays."""
+    """Best-effort gpt-4o-mini call to generate a concise conversation title.
+    Failures are swallowed — the default first-message title stays. Uses
+    gpt-4o-mini to match the rest of the internal-routing tier (cheap,
+    fast, deterministic)."""
     try:
-        client = anthropic.AsyncAnthropic()
-        resp = await client.messages.create(
-            model="claude-haiku-4-5",
+        import litellm
+        resp = await asyncio.to_thread(
+            litellm.completion,
+            model="gpt-4o-mini",
             max_tokens=40,
-            system=_TITLE_SYSTEM,
             messages=[
+                {"role": "system", "content": _TITLE_SYSTEM},
                 {
                     "role": "user",
                     "content": (
                         f"User asked: {(user_text or '').strip()[:400]}\n\n"
                         f"Assistant replied: {(assistant_text or '').strip()[:600]}"
                     ),
-                }
+                },
             ],
             timeout=10,
         )
-        title = "".join(
-            b.text for b in resp.content if getattr(b, "type", None) == "text"
-        ).strip()
-        # Strip stray quotes/trailing punctuation Haiku sometimes adds
+        title = (resp.choices[0].message.content or "").strip()
+        # Strip stray quotes/trailing punctuation the model sometimes adds
         title = title.strip().strip('"').strip("'").rstrip(".!?").strip()
         if not title or len(title) > 80:
             return
@@ -1020,7 +1024,7 @@ async def _generate_and_set_title(
                 user_id="system",
                 family_id=None,
                 source="title-generator",
-                model="claude-haiku-4-5",
+                model="gpt-4o-mini",
                 conversation_id=conv_id,
                 turn_id=None,
                 usage=resp.usage,
@@ -1919,20 +1923,35 @@ async def _run_gpt_turn(
     for m in history:
         msgs.append({"role": m["role"], "content": m["content"] or ""})
 
+    # Reasoning families (gpt-5*, o-series) reject `temperature` and use
+    # `max_completion_tokens` instead of `max_tokens`. Detect by prefix.
+    is_reasoning = (
+        model_id.startswith("gpt-5")
+        or model_id.startswith("o1")
+        or model_id.startswith("o3")
+        or model_id.startswith("o4")
+    )
+
     turn_idx = 0
     while True:
         turn_idx += 1
         await emit("status", phase="thinking")
+        kwargs: dict = {
+            "model": model_id,
+            "messages": msgs,
+            "tools": openai_tools or None,
+            "tool_choice": "auto" if openai_tools else None,
+        }
+        if is_reasoning:
+            kwargs["max_completion_tokens"] = 4000
+            # Default reasoning effort. Could be parameterized later via
+            # the chat /start `effort` knob if we expose one.
+            kwargs["reasoning_effort"] = "medium"
+        else:
+            kwargs["max_tokens"] = 4000
+            kwargs["temperature"] = 0.7
         try:
-            resp = await asyncio.to_thread(
-                litellm.completion,
-                model=model_id,
-                messages=msgs,
-                tools=openai_tools or None,
-                tool_choice="auto" if openai_tools else None,
-                max_tokens=4000,
-                temperature=0.7,
-            )
+            resp = await asyncio.to_thread(litellm.completion, **kwargs)
         except Exception as exc:
             logger.exception("litellm.completion failed model=%s", model_id)
             raise
@@ -2143,7 +2162,9 @@ async def _generate_turn(
         model_id = "claude-sonnet-4-6"
         effort_level = "medium"
     elif model_preference == "gpt":
-        model_id = "gpt-4o"
+        # User-facing GPT option is the reasoning model. Internal
+        # router/classifier/title tasks below still use gpt-4o.
+        model_id = "gpt-5.5"
         effort_level = "medium"
         use_gpt = True
     else:
