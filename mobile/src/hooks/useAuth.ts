@@ -6,14 +6,11 @@ import {
 import { useAuthStore } from '../store/auth'
 import { authApi, familyApi } from '../services/api'
 
-// Use the iOS client for native sign-in. Fall back to the web client only
-// because expo-auth-session used to require it; the native module needs the
-// iOS client when running on iOS, Android client when running on Android.
-const IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? ''
-const WEB_CLIENT_ID =
-  process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ??
-  process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ??
-  ''
+// OAuth client IDs come from src/config/auth — env var if present, fall back
+// to the public hardcoded values so CI release builds (which don't inject
+// EXPO_PUBLIC_GOOGLE_* env vars) still configure GoogleSignin correctly
+// instead of crashing on first sign-in tap.
+import { IOS_CLIENT_ID, WEB_CLIENT_ID } from '../config/auth'
 
 // Configure once at module load — happens before any sign-in attempt.
 // The native SDK opens Google's bottom-sheet auth UI and returns an
