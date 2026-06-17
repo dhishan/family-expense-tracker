@@ -151,6 +151,12 @@ jobs:
 
       - name: Archive
         working-directory: mobile/ios
+        env:
+          # Sentry's Xcode build phase tries to upload sourcemaps. Without
+          # SENTRY_AUTH_TOKEN configured the upload errors out and fails the
+          # whole archive. Disable auto-upload — crashes still report, just
+          # with minified stacks until a token is wired up.
+          SENTRY_DISABLE_AUTO_UPLOAD: 'true'
         run: |
           xcodebuild \
             -workspace Expenses.xcworkspace \
