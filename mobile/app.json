@@ -37,9 +37,7 @@
           }
         ]
       },
-      "runtimeVersion": {
-        "policy": "appVersion"
-      }
+      "runtimeVersion": "1.0.0"
     },
     "android": {
       "adaptiveIcon": {
@@ -81,8 +79,6 @@
     "updates": {
       "url": "https://u.expo.dev/f0a01ff7-8619-4945-a824-4243c15c4f5a"
     },
-    "runtimeVersion": {
-      "policy": "appVersion"
-    }
+    "runtimeVersion": "1.0.0"
   }
 }

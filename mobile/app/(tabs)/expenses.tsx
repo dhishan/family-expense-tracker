@@ -1848,11 +1848,31 @@ export default function TransactionsScreen() {
   const [snackbar, setSnackbar] = useState<SnackbarItem | null>(null)
   const discardTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['expenses', page, filters],
-    queryFn: () => expensesApi.list({ page, page_size: 20, ...filters }),
+  // Paginated infinite query — accumulates expenses across pages so
+  // "Load more" appends rows beneath instead of replacing the page (and
+  // scrolling back to the top, which the previous useQuery+page state
+  // was doing). `page` is kept around to invalidate on filter change.
+  const {
+    data: expensesPages,
+    isLoading,
+    fetchNextPage: fetchNextExpenses,
+    hasNextPage: hasMoreExpenses,
+    isFetchingNextPage: isFetchingMoreExpenses,
+  } = useInfiniteQuery({
+    queryKey: ['expenses', filters],
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) =>
+      expensesApi.list({ page: pageParam as number, page_size: 20, ...filters }),
+    getNextPageParam: (last) => (last.has_more ? last.page + 1 : undefined),
     enabled: !!user?.family_id,
   })
+  // Flattened list across all loaded pages for the FlatList.
+  const data = expensesPages
+    ? {
+        expenses: expensesPages.pages.flatMap((p) => p.expenses),
+        has_more: expensesPages.pages[expensesPages.pages.length - 1]?.has_more ?? false,
+      }
+    : undefined
 
   // Budgets are fetched at the parent so the AddEditModal can pre-fill
   // its Budget dropdown without each child re-querying. ApproveModal also
@@ -2248,13 +2268,26 @@ export default function TransactionsScreen() {
               </View>
             )
           }}
+          onEndReachedThreshold={0.4}
+          onEndReached={() => {
+            if (hasMoreExpenses && !isFetchingMoreExpenses) {
+              fetchNextExpenses()
+            }
+          }}
           ListFooterComponent={
-            data?.has_more ? (
+            hasMoreExpenses ? (
               <TouchableOpacity
                 style={styles.loadMore}
-                onPress={() => setPage((p) => p + 1)}
+                onPress={() => {
+                  if (!isFetchingMoreExpenses) fetchNextExpenses()
+                }}
+                disabled={isFetchingMoreExpenses}
               >
-                <Text style={styles.loadMoreText}>Load more</Text>
+                {isFetchingMoreExpenses ? (
+                  <ActivityIndicator size="small" color="#2563eb" />
+                ) : (
+                  <Text style={styles.loadMoreText}>Load more</Text>
+                )}
               </TouchableOpacity>
             ) : null
           }
