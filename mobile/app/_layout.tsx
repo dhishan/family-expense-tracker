@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { ActivityIndicator, Linking, View, Keyboard } from 'react-native'
+import { ActivityIndicator, Linking, View, Keyboard, Image } from 'react-native'
 import { Stack, router } from 'expo-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { StatusBar } from 'expo-status-bar'
@@ -111,6 +111,11 @@ export default function RootLayout() {
             backgroundColor: '#2563eb',
           }}
         >
+          <Image
+            source={require('../assets/splash-icon.png')}
+            style={{ width: 160, height: 160, marginBottom: 24 }}
+            resizeMode="contain"
+          />
           <ActivityIndicator size="large" color="#ffffff" />
         </View>
       ) : (
