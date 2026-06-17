@@ -217,7 +217,6 @@ class BudgetService:
                 category=budget.category,
                 beneficiary=bud_beneficiary,
                 budget_id=budget.id,
-                pinned_ignore_date=True,
             )
             periods_elapsed = self._ytd_period_count(period, today_ref)
             effective_amount = budget.amount * periods_elapsed
@@ -245,7 +244,6 @@ class BudgetService:
                 category=budget.category,
                 beneficiary=bud_beneficiary,
                 budget_id=budget.id,
-                pinned_ignore_date=True,
             ),
             self._compute_rollover(
                 budget=budget,
@@ -476,7 +474,6 @@ class BudgetService:
                 category=budget.category,
                 beneficiary=bud_beneficiary,
                 budget_id=budget.id,
-                pinned_ignore_date=True,
             )
             periods_elapsed = self._ytd_period_count(period, today_ref)
             effective_amount = budget.amount * periods_elapsed
@@ -502,7 +499,6 @@ class BudgetService:
                 category=budget.category,
                 beneficiary=bud_beneficiary,
                 budget_id=budget.id,
-                pinned_ignore_date=True,
             ),
             self._compute_rollover(
                 budget=budget,

@@ -269,7 +269,10 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
 
             <View style={{ marginBottom: 16 }}>
               <TouchableOpacity
-                onPress={() => setForm((prev) => ({ ...prev, rollover_enabled: !prev.rollover_enabled }))}
+                onPress={() => setForm((prev) => {
+                  const next = !prev.rollover_enabled
+                  return { ...prev, rollover_enabled: next, ytd_view: next ? false : prev.ytd_view }
+                })}
                 style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}
               >
                 <View
@@ -293,7 +296,10 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
 
             <View style={{ marginBottom: 16 }}>
               <TouchableOpacity
-                onPress={() => setForm((prev) => ({ ...prev, ytd_view: !prev.ytd_view }))}
+                onPress={() => setForm((prev) => {
+                  const next = !prev.ytd_view
+                  return { ...prev, ytd_view: next, rollover_enabled: next ? false : prev.rollover_enabled }
+                })}
                 style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}
               >
                 <View

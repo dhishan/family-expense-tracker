@@ -172,8 +172,15 @@ export default function Transactions() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [showFilters, setShowFilters] = useState(false)
   const [page, setPage] = useState(1)
-  // Hydrate filters + auto-open the panel when the URL has any filter param.
+  // Hydrate filters from the URL ONCE on mount. Subsequent filter changes
+  // flow through state → URL, never the other way, so there's no
+  // ping-pong loop. Without this guard, setSearchParams's replace would
+  // tick searchParams' identity → re-run this effect → setFilters with a
+  // fresh object → trigger the URL writer → loop.
+  const hydratedFromUrl = useRef(false)
   useEffect(() => {
+    if (hydratedFromUrl.current) return
+    hydratedFromUrl.current = true
     const next: typeof filters = {}
     const b = searchParams.get('beneficiary')
     const c = searchParams.get('category')
@@ -191,10 +198,11 @@ export default function Transactions() {
       setPage(1)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams])
+  }, [])
   // filters → URL: keep the address bar in sync so the view is shareable
-  // and survives reload. Run after the initial URL→state hydration.
+  // and survives reload.
   useEffect(() => {
+    if (!hydratedFromUrl.current) return
     const params: Record<string, string> = {}
     if (filters.beneficiary) params.beneficiary = filters.beneficiary
     if (filters.category) params.category = filters.category
@@ -774,9 +782,10 @@ export default function Transactions() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Person</label>
               <select
                 value={filters.beneficiary || ''}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setPage(1)
                   setFilters({ ...filters, beneficiary: e.target.value || undefined })
-                }
+                }}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2"
               >
                 <option value="">Whole family</option>
@@ -791,9 +800,10 @@ export default function Transactions() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
               <select
                 value={filters.category || ''}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setPage(1)
                   setFilters({ ...filters, category: e.target.value as ExpenseCategory || undefined })
-                }
+                }}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2"
               >
                 <option value="">All categories</option>
@@ -808,9 +818,10 @@ export default function Transactions() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Payment</label>
               <select
                 value={filters.payment_method || ''}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setPage(1)
                   setFilters({ ...filters, payment_method: (e.target.value as PaymentMethod) || undefined })
-                }
+                }}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2"
               >
                 <option value="">Any method</option>
@@ -828,9 +839,10 @@ export default function Transactions() {
               <input
                 type="date"
                 value={filters.start_date || ''}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setPage(1)
                   setFilters({ ...filters, start_date: e.target.value || undefined })
-                }
+                }}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2"
               />
             </div>
@@ -839,9 +851,10 @@ export default function Transactions() {
               <input
                 type="date"
                 value={filters.end_date || ''}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setPage(1)
                   setFilters({ ...filters, end_date: e.target.value || undefined })
-                }
+                }}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2"
               />
             </div>

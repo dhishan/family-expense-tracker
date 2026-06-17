@@ -70,7 +70,7 @@ export default function Budgets() {
     onError: () => toast.error('Failed to delete budget'),
   })
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<BudgetFormData>({
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<BudgetFormData>({
     defaultValues: {
       period: 'monthly',
       category: '',
@@ -402,7 +402,12 @@ export default function Budgets() {
                   <input
                     type="checkbox"
                     {...register('rollover_enabled')}
-                    className="mt-0.5 h-4 w-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                    disabled={watch('ytd_view')}
+                    onChange={(e) => {
+                      setValue('rollover_enabled', e.target.checked)
+                      if (e.target.checked) setValue('ytd_view', false)
+                    }}
+                    className="mt-0.5 h-4 w-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500 disabled:opacity-50"
                   />
                   <span className="text-sm">
                     <span className="font-medium text-gray-700">Roll over unused budget</span>
@@ -418,6 +423,10 @@ export default function Budgets() {
                   <input
                     type="checkbox"
                     {...register('ytd_view')}
+                    onChange={(e) => {
+                      setValue('ytd_view', e.target.checked)
+                      if (e.target.checked) setValue('rollover_enabled', false)
+                    }}
                     className="mt-0.5 h-4 w-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
                   />
                   <span className="text-sm">

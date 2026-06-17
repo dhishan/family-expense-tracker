@@ -1755,25 +1755,29 @@ def _is_retryable_provider_error(exc: Exception) -> bool:
     transient outage / overload / timeout we should retry against the
     secondary provider. Conservative: only fires on known patterns to
     avoid masking real bugs."""
-    msg = (str(exc) or "").lower()
+    # Prefer the SDK's typed status_code when available — far less brittle
+    # than substring matching error strings.
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and status in (408, 429, 500, 502, 503, 504, 529):
+        return True
     cls = exc.__class__.__name__.lower()
-    if any(k in msg for k in (
+    if any(k in cls for k in (
+        "apitimeout",
+        "apiconnection",
         "overloaded",
-        "internal server error",
-        "api_error",
-        "service unavailable",
-        "bad gateway",
-        "gateway time-out",
-        "gateway timeout",
-        "timeout",
-        "timed out",
-        "503",
-        "502",
-        "504",
-        "529",
+        "internalserver",
+        "serviceunavailable",
+        "badgateway",
+        "gatewaytimeout",
     )):
         return True
-    if any(k in cls for k in ("apistatus", "apitimeout", "overloaded", "internalserver")):
+    msg = (str(exc) or "").lower()
+    if any(k in msg for k in (
+        "overloaded_error",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+    )):
         return True
     return False
 
@@ -2292,24 +2296,6 @@ async def _generate_turn(
             )
         except Exception as exc:
             logger.exception("GPT generation failed")
-            # If the user picked GPT explicitly and OpenAI is having a
-            # moment, fall back to Sonnet to give them an answer. This
-            # mirrors the Anthropic→GPT direction below.
-            if _is_retryable_provider_error(exc):
-                try:
-                    await emit(
-                        "status",
-                        phase="fallback",
-                        detail="GPT unavailable — answering with Sonnet",
-                    )
-                    full_text_parts.clear()
-                    # Switch to the native Anthropic path. Easiest hack:
-                    # rerun the whole _generate_turn with model_preference="sonnet"
-                    # and a fresh turn isn't an option since we're mid-turn.
-                    # Instead, emit a friendly error and let the user retry.
-                    pass
-                except Exception:
-                    pass
             try:
                 await emit("error", message=_friendly_provider_error(exc))
                 await asyncio.to_thread(
