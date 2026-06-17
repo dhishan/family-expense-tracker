@@ -2,7 +2,7 @@
   "expo": {
     "name": "Expenses",
     "slug": "family-expense-tracker",
-    "version": "1.0.16",
+    "version": "1.0.17",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#2563eb"
+      "backgroundColor": "#ffffff"
     },
     "ios": {
       "supportsTablet": false,
@@ -42,7 +42,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#2563eb"
+        "backgroundColor": "#ffffff"
       },
       "package": "org.blueelephants.familyexpensetracker"
     },
