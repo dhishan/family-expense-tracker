@@ -21,6 +21,7 @@ import { expensesApi, plaidApi, budgetsApi, rulesApi } from '@/services/api'
 import { useAuthStore } from '@/store/auth'
 import { CATEGORY_INFO } from '@/types'
 import type { ExpenseCategory, ExpenseCreate, Expense, PendingTransaction, PaymentMethod, BudgetStatus, ApproveSplitPayload, MerchantRule } from '@/types'
+import { logEntry } from '@/utils/debugLog'
 
 const CATEGORY_EMOJI: Record<string, string> = {
   groceries: '🛒',
@@ -388,7 +389,8 @@ function ApproveModal({
     && existingRules.some((r) => r.merchant.toLowerCase() === merchantLower)
 
   useEffect(() => {
-    if (pending && visible) {
+    if (!pending || !visible) return
+    try {
       const rawAmt = Math.abs(pending.amount ?? 0)
       setAmount(String(rawAmt))
       const dateStr = pending.date ?? pending.authorized_date ?? toLocalISODate()
@@ -399,10 +401,9 @@ function ApproveModal({
       setPaymentMethod(derivePaymentMethod(accountType))
       setTags('')
       const suggestedBudget = pending.suggested_budget_id
-        ? budgets.find((b) => b.budget.id === pending.suggested_budget_id)?.budget
+        ? budgets.find((b) => b?.budget?.id === pending.suggested_budget_id)?.budget
         : undefined
       setBudgetId(pending.suggested_budget_id ?? null)
-      // Beneficiary follows the suggested budget when present; otherwise current user
       if (suggestedBudget) {
         setBeneficiary(suggestedBudget.beneficiary ?? '')
         if (suggestedBudget.category) {
@@ -415,6 +416,11 @@ function ApproveModal({
       setSaveAsRule(false)
       setSplitMode(false)
       setSplits([])
+    } catch (err) {
+      logEntry('error', 'ApproveModal seed failed', {
+        stack: (err as Error)?.stack,
+        context: { pendingId: pending?.id, hasBudgets: Array.isArray(budgets), budgetCount: budgets?.length ?? 0 },
+      }).catch(() => {})
     }
     // Intentionally NOT depending on `budgets`: it's a freshly-mapped
     // array on every render (`budgetsData?.budgets ?? []`), which would
