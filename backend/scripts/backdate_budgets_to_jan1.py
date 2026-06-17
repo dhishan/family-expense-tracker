@@ -14,7 +14,9 @@ from datetime import date, datetime
 
 from google.cloud import firestore
 
-from app.config import settings
+from app.config import get_settings
+
+settings = get_settings()
 
 
 def main():
@@ -26,7 +28,8 @@ def main():
         project=settings.gcp_project_id,
         database=settings.firestore_database,
     )
-    jan1 = datetime(date.today().year, 1, 1, 0, 0, 0)
+    from datetime import timezone
+    jan1 = datetime(date.today().year, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
     docs = list(db.collection("budgets").stream())
     print(f"Found {len(docs)} budgets in {settings.firestore_database}")
@@ -37,7 +40,9 @@ def main():
         sd = data.get("start_date")
         # Firestore returns either datetime or date
         if isinstance(sd, date) and not isinstance(sd, datetime):
-            sd = datetime.combine(sd, datetime.min.time())
+            sd = datetime.combine(sd, datetime.min.time(), tzinfo=timezone.utc)
+        if isinstance(sd, datetime) and sd.tzinfo is None:
+            sd = sd.replace(tzinfo=timezone.utc)
         if not isinstance(sd, datetime):
             print(f"  skip {doc.id} {data.get('name')!r} — no start_date")
             continue
