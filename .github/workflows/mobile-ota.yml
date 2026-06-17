@@ -58,6 +58,25 @@ jobs:
         working-directory: mobile
         run: npm ci
 
+      - name: Verify runtimeVersion is a fixed string
+        # If runtimeVersion is anything other than a literal string in
+        # app.json (e.g. {policy: "appVersion"}), the OTA will only land
+        # on phones whose IPA's baked runtime equals the version the
+        # release-ipa workflow injected at build time. That means JS-only
+        # updates silently miss installed phones. Fail the workflow so
+        # the regression is visible instead of soaking up an EAS update
+        # slot that no phone receives.
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open("mobile/app.json"))
+          rv = d.get("expo", {}).get("runtimeVersion")
+          if not isinstance(rv, str):
+              print(f"::error::mobile/app.json runtimeVersion must be a fixed string. Got: {rv!r}")
+              sys.exit(1)
+          print(f"runtimeVersion={rv}")
+          PY
+
       - name: Resolve update message
         id: msg
         # Build a single-line message listing every commit subject since
@@ -106,7 +125,8 @@ jobs:
 
       - name: Summary
         run: |
+          RV=$(python3 -c "import json; print(json.load(open('mobile/app.json'))['expo']['runtimeVersion'])")
           echo "### Mobile OTA pushed" >> $GITHUB_STEP_SUMMARY
           echo "- Channel: preview" >> $GITHUB_STEP_SUMMARY
           echo "- Message: ${{ steps.msg.outputs.message }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Runtime: 1.0.0 (must match the .ipa runtime, or this update is ignored)" >> $GITHUB_STEP_SUMMARY
+          echo "- Runtime: $RV (must match the .ipa runtime, or this update is ignored)" >> $GITHUB_STEP_SUMMARY

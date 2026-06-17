@@ -91,15 +91,25 @@ jobs:
         # AltStore validates that the IPA's CFBundleShortVersionString matches
         # the version in altstore.json. Write the new version into mobile/app.json
         # before prebuild so it lands in Info.plist.
+        #
+        # IMPORTANT: only `expo.version` changes per tag. `runtimeVersion` must
+        # stay a literal string ("1.0.0") so every IPA + OTA shares the same
+        # update channel. If you set `runtimeVersion.policy = "appVersion"` again,
+        # each IPA bakes a unique runtime and OTAs silently miss every phone.
+        # The guard below fails the build if that ever drifts back.
         run: |
           VER="${{ steps.ver.outputs.version }}"
           python3 - <<EOF
-          import json
+          import json, sys
           p = "mobile/app.json"
           d = json.load(open(p))
+          rv = d.get("expo", {}).get("runtimeVersion")
+          if not isinstance(rv, str):
+              print(f"::error::mobile/app.json runtimeVersion must be a fixed string. Got: {rv!r}")
+              sys.exit(1)
           d["expo"]["version"] = "$VER"
           json.dump(d, open(p, "w"), indent=2)
-          print("set version to", "$VER")
+          print(f"set version to $VER, runtimeVersion stays {rv}")
           EOF
 
       - name: Expo prebuild (iOS)
