@@ -21,6 +21,24 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.10",
+          "buildVersion": "1",
+          "date": "2026-06-17T00:26:09Z",
+          "localizedDescription": "What's changed:\n- infinite-scroll expenses + lock runtimeVersion so OTAs land",
+          "downloadURL": "https://github.com/dhishan/family-expense-tracker/releases/download/mobile-v1.0.10/Expenses.ipa",
+          "size": 14067173,
+          "minOSVersion": "16.0"
+        },
+        {
+          "version": "1.0.9",
+          "buildVersion": "1",
+          "date": "2026-06-17T00:15:33Z",
+          "localizedDescription": "What's changed:\n- filters, deep-links, breakdown selector\n- rename conversations from history (web + mobile)\n- backup model fallback + polished error messages",
+          "downloadURL": "https://github.com/dhishan/family-expense-tracker/releases/download/mobile-v1.0.9/Expenses.ipa",
+          "size": 14064750,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.8",
           "buildVersion": "1",
           "date": "2026-06-16T17:42:12Z",
