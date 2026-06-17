@@ -21,6 +21,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.12",
+          "buildVersion": "1",
+          "date": "2026-06-17T04:16:27Z",
+          "localizedDescription": "What's changed:\n- pin expo-channel-name=preview in IPA so OTAs land\n- Current vs YTD view toggle\n- backdate via start_date picker, drop YTD toggle\n- Since-start view shows pinned expenses regardless of date\n- budget spend inflation + audit bug pass",
+          "downloadURL": "https://github.com/dhishan/family-expense-tracker/releases/download/mobile-v1.0.12/Expenses.ipa",
+          "size": 14068854,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.11",
           "buildVersion": "1",
           "date": "2026-06-17T01:08:46Z",
