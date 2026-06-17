@@ -21,6 +21,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.13",
+          "buildVersion": "1",
+          "date": "2026-06-17T06:16:39Z",
+          "localizedDescription": "What's changed:\n- release: bump mobile version to 1.0.13 (approve crash fix baked in)\n- guard ApproveModal seed effect + log any failure\n- transaction search + mobile debug log capture + approve-modal crash fix",
+          "downloadURL": "https://github.com/dhishan/family-expense-tracker/releases/download/mobile-v1.0.13/Expenses.ipa",
+          "size": 14074747,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.12",
           "buildVersion": "1",
           "date": "2026-06-17T04:16:27Z",
