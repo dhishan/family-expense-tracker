@@ -32,6 +32,52 @@ try {
 } catch {
   // swallow — debug logging is non-essential
 }
+
+// OTA fetch diagnostics — log every expo-updates event so the Debug
+// Logs screen shows whether updates are reaching the device, whether
+// the bundle that's running is embedded vs OTA, and any errors during
+// check/fetch. Wrapped in try so a missing module never blocks boot.
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const Updates = require('expo-updates')
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { logEntry } = require('@/utils/debugLog')
+  logEntry('info', 'ota: boot state', {
+    context: {
+      isEmbeddedLaunch: Updates.isEmbeddedLaunch,
+      updateId: Updates.updateId ?? null,
+      channel: Updates.channel ?? null,
+      runtimeVersion: Updates.runtimeVersion ?? null,
+      createdAt: Updates.createdAt?.toISOString?.() ?? null,
+    },
+  }).catch(() => {})
+  Updates.addListener((ev: { type: string; manifest?: { id?: string }; message?: string }) => {
+    logEntry('info', `ota: ${ev.type}`, {
+      context: { manifestId: ev.manifest?.id, message: ev.message },
+    }).catch(() => {})
+  })
+  // Also force an immediate fetch attempt and log the result.
+  ;(async () => {
+    try {
+      const check = await Updates.checkForUpdateAsync()
+      await logEntry('info', 'ota: checkForUpdateAsync', {
+        context: { isAvailable: check.isAvailable, manifestId: check.manifest?.id ?? null },
+      })
+      if (check.isAvailable) {
+        const fetched = await Updates.fetchUpdateAsync()
+        await logEntry('info', 'ota: fetchUpdateAsync', {
+          context: { isNew: fetched.isNew, manifestId: fetched.manifest?.id ?? null },
+        })
+      }
+    } catch (e: unknown) {
+      await logEntry('error', 'ota: check/fetch failed', {
+        context: { message: e instanceof Error ? e.message : String(e) },
+      })
+    }
+  })()
+} catch {
+  // expo-updates not available (Expo Go dev) — skip silently.
+}
 import { create, open } from 'react-native-plaid-link-sdk'
 import { WhatsNewSheet } from '@/components/WhatsNewSheet'
 import '../global.css'
