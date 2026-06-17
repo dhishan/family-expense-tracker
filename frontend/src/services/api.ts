@@ -138,6 +138,7 @@ export const expensesApi = {
     category?: string
     beneficiary?: string
     payment_method?: string
+    search?: string
   }): Promise<ExpenseListResponse> => {
     const response = await api.get<ExpenseListResponse>('/expenses', { params })
     return response.data

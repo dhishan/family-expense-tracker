@@ -171,6 +171,8 @@ export const expensesApi = {
     start_date?: string
     end_date?: string
     beneficiary?: string
+    payment_method?: string
+    search?: string
   }): Promise<ExpenseListResponse> => {
     const response = await api.get<ExpenseListResponse>('/expenses', { params })
     return response.data

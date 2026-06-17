@@ -165,7 +165,9 @@ export default function Transactions() {
     end_date?: string
     beneficiary?: string
     payment_method?: PaymentMethod
+    search?: string
   }>({})
+  const [searchInput, setSearchInput] = useState('')
   // URL → filters: deep-linking from the Dashboard ("Spending by person"
   // tap) and shareable filter views. Keys we honour: beneficiary,
   // category, payment_method, start_date, end_date.
@@ -212,6 +214,15 @@ export default function Transactions() {
     setSearchParams(params, { replace: true })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters])
+  // Debounce the search input by 300ms so we don't fire a query on every keystroke.
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setPage(1)
+      setFilters((prev) => ({ ...prev, search: searchInput.trim() || undefined }))
+    }, 300)
+    return () => clearTimeout(handle)
+  }, [searchInput])
+
   // Pending review section collapsed by default — it's noisy and rarely
   // the reason users open this page. Click "Show" to expand.
   const [pendingHidden, setPendingHidden] = useState(true)
@@ -713,13 +724,22 @@ export default function Transactions() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h1 className="text-2xl font-bold text-gray-900">Transactions</h1>
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-        >
-          <FunnelIcon className="h-5 w-5" />
-          Filters
-        </button>
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <input
+            type="search"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search merchant or description"
+            className="flex-1 sm:w-64 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
+            <FunnelIcon className="h-5 w-5" />
+            Filters
+          </button>
+        </div>
       </div>
 
       {/* Pending Review section */}

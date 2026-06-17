@@ -165,35 +165,58 @@ class ExpenseService:
         
         # Order by date descending
         query = query.order_by("date", direction="DESCENDING")
-        
+
+        # Search path: Firestore has no substring index, so when a search
+        # term is present we stream all docs that match the other filters
+        # and filter in-memory on description/merchant. Capped at 5000
+        # for safety. For a personal-finance app this is fine.
+        search_term = (filters.search.strip().lower() if filters and filters.search else "") if filters else ""
+        if search_term:
+            stream_query = query.limit(5000)
+            all_matched = []
+            for doc in stream_query.stream():
+                data = doc.to_dict()
+                desc = (data.get("description") or "").lower()
+                merch = (data.get("merchant") or "").lower()
+                if search_term in desc or search_term in merch:
+                    data["id"] = doc.id
+                    if isinstance(data.get("date"), datetime):
+                        data["date"] = data["date"].date()
+                    all_matched.append(ExpenseResponse(**data))
+            total = len(all_matched)
+            offset = (page - 1) * page_size
+            page_slice = all_matched[offset: offset + page_size]
+            has_more = (offset + page_size) < total
+            return page_slice, total, has_more
+
         # Get total count (separate query)
         count_query = query.count()
         count_result = count_query.get()
         total = count_result[0][0].value
-        
+
         # Apply pagination
         offset = (page - 1) * page_size
         query = query.offset(offset).limit(page_size + 1)  # +1 to check has_more
-        
+
         # Execute query
         docs = query.stream()
-        
+
         expenses = []
         for doc in docs:
             data = doc.to_dict()
             data["id"] = doc.id
-            
+
             # Convert timestamp to date
             if isinstance(data.get("date"), datetime):
                 data["date"] = data["date"].date()
-            
+
             expenses.append(ExpenseResponse(**data))
-        
+
         # Check if there are more results
         has_more = len(expenses) > page_size
         if has_more:
             expenses = expenses[:page_size]
-        
+
         return expenses, total, has_more
     
     async def get_summary(

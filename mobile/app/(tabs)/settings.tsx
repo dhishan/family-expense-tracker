@@ -517,6 +517,14 @@ export default function SettingsScreen() {
           <Text style={styles.linkText}>Open web app</Text>
           <Text style={styles.linkArrow}>→</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.linkRow}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          onPress={() => router.push('/debug' as any)}
+        >
+          <Text style={styles.linkText}>Debug logs</Text>
+          <Text style={styles.linkArrow}>→</Text>
+        </TouchableOpacity>
       </View>
 
       {/* App info */}

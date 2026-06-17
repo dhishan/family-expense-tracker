@@ -416,7 +416,12 @@ function ApproveModal({
       setSplitMode(false)
       setSplits([])
     }
-  }, [pending, visible, currentUserId, accountType, budgets])
+    // Intentionally NOT depending on `budgets`: it's a freshly-mapped
+    // array on every render (`budgetsData?.budgets ?? []`), which would
+    // re-fire this effect every render and reset categoryManuallySet —
+    // pre-OTA v1.0.11 IPAs hit React's max-update-depth on modal open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, visible, currentUserId, accountType])
 
   // When category changes, deselect budget if it no longer matches
   const handleCategoryChange = (cat: ExpenseCategory) => {
@@ -1817,8 +1822,16 @@ export default function TransactionsScreen() {
     payment_method?: PaymentMethod
     start_date?: string
     end_date?: string
+    search?: string
   }>({})
   const [filtersOpen, setFiltersOpen] = useState(false)
+  const [searchInput, setSearchInput] = useState('')
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setFilters((prev) => ({ ...prev, search: searchInput.trim() || undefined }))
+    }, 300)
+    return () => clearTimeout(handle)
+  }, [searchInput])
   useEffect(() => {
     const next: typeof filters = {}
     if (localParams.beneficiary) next.beneficiary = String(localParams.beneficiary)
@@ -2131,6 +2144,18 @@ export default function TransactionsScreen() {
             <Text style={styles.addBtnText}>+ Add</Text>
           </TouchableOpacity>
         </View>
+      </View>
+
+      <View style={{ paddingHorizontal: 16, marginBottom: 6 }}>
+        <TextInput
+          value={searchInput}
+          onChangeText={setSearchInput}
+          placeholder="Search merchant or description"
+          autoCapitalize="none"
+          autoCorrect={false}
+          clearButtonMode="while-editing"
+          style={{ borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14 }}
+        />
       </View>
 
       {filtersOpen && (

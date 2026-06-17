@@ -5,8 +5,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { StatusBar } from 'expo-status-bar'
 import * as SecureStore from 'expo-secure-store'
 import { useAuthStore } from '@/store/auth'
+import { installGlobalErrorHandler } from '@/utils/debugLog'
+
+installGlobalErrorHandler()
 import { create, open } from 'react-native-plaid-link-sdk'
 import { WhatsNewSheet } from '@/components/WhatsNewSheet'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import '../global.css'
 
 const PLAID_LINK_TOKEN_KEY = 'plaid_link_token'
@@ -95,6 +99,7 @@ export default function RootLayout() {
   }, [token, isLoading])
 
   return (
+    <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <StatusBar style="light" />
       {isLoading ? (
@@ -118,5 +123,6 @@ export default function RootLayout() {
         </View>
       )}
     </QueryClientProvider>
+    </ErrorBoundary>
   )
 }
