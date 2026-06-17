@@ -146,6 +146,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.30",
+          "buildVersion": "1",
+          "date": "2026-06-17T04:07:45Z",
+          "localizedDescription": "What's changed:\n- recipe picker \u2014 auto-select first recipe + KeyboardAvoidingView",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.30/FitnessTracker.ipa",
+          "size": 20389787,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.29",
           "buildVersion": "1",
           "date": "2026-06-17T01:08:31Z",
