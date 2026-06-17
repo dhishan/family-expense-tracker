@@ -21,6 +21,24 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.17",
+          "buildVersion": "1",
+          "date": "2026-06-17T20:08:24Z",
+          "localizedDescription": "What's changed:\n- mobile: splash title in Avenir Next Demi\n- release: mobile-v1.0.17 \u2014 white splash with title\n- release: mobile-v1.0.16 \u2014 fix splash checker pattern",
+          "downloadURL": "https://github.com/dhishan/family-expense-tracker/releases/download/mobile-v1.0.17/Expenses.ipa",
+          "size": 15130673,
+          "minOSVersion": "16.0"
+        },
+        {
+          "version": "1.0.16",
+          "buildVersion": "1",
+          "date": "2026-06-17T19:56:28Z",
+          "localizedDescription": "What's changed:\n- release: mobile-v1.0.16 \u2014 fix splash checker pattern",
+          "downloadURL": "https://github.com/dhishan/family-expense-tracker/releases/download/mobile-v1.0.16/Expenses.ipa",
+          "size": 16407901,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.15",
           "buildVersion": "1",
           "date": "2026-06-17T17:21:36Z",
