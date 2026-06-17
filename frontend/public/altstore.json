@@ -21,6 +21,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.15",
+          "buildVersion": "1",
+          "date": "2026-06-17T16:55:06Z",
+          "localizedDescription": "What's changed:\n- release: mobile-v1.0.15 \u2014 Sentry + OTA diagnostics\n- OTA fetch diagnostics in Debug Logs\n- lazy-require Sentry to survive OTA on older IPAs\n- wire up Sentry on mobile + backend\n- null-safe merchant in rule-exists check (ApproveModal crash)\n- defensive budget filter in ApproveModal + diagnostic logging\n- remove ErrorBoundary wrap + splash require \u2014 both broke v1.0.13",
+          "downloadURL": "https://github.com/dhishan/family-expense-tracker/releases/download/mobile-v1.0.15/Expenses.ipa",
+          "size": 17544708,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.14",
           "buildVersion": "1",
           "date": "2026-06-17T06:52:45Z",
