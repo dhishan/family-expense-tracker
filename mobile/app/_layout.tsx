@@ -4,15 +4,25 @@ import { Stack, router } from 'expo-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { StatusBar } from 'expo-status-bar'
 import * as SecureStore from 'expo-secure-store'
-import * as Sentry from '@sentry/react-native'
 import { useAuthStore } from '@/store/auth'
 
-Sentry.init({
-  dsn: 'https://f23e8801d329fc012ad0aaf731b2c4b6@o4511581462921216.ingest.us.sentry.io/4511581464952832',
-  tracesSampleRate: 0.1,
-  enableAutoSessionTracking: true,
-  attachStacktrace: true,
-})
+// Sentry needs a native module that is only present in IPAs rebuilt
+// AFTER @sentry/react-native was added. Calling Sentry.init from an
+// OTA bundle on an older IPA throws at module init and bricks the app
+// on cold boot. Lazy require + try/catch so a missing native binding
+// can never block app launch.
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const Sentry = require('@sentry/react-native')
+  Sentry.init({
+    dsn: 'https://f23e8801d329fc012ad0aaf731b2c4b6@o4511581462921216.ingest.us.sentry.io/4511581464952832',
+    tracesSampleRate: 0.1,
+    enableAutoSessionTracking: true,
+    attachStacktrace: true,
+  })
+} catch {
+  // No native Sentry module in this IPA — skip silently.
+}
 
 // Best-effort: install the global error handler used by the Debug Logs
 // screen. Wrapped in try so a broken install can never block app boot.
