@@ -160,6 +160,21 @@ resource "google_secret_manager_secret_version" "jwt_secret" {
   secret_data = random_password.jwt_secret.result
 }
 
+# Sentry DSN for backend error reporting. Value populated manually:
+#   echo -n "<dsn>" | gcloud secrets versions add expense-tracker-backend-sentry-dsn --data-file=-
+resource "google_secret_manager_secret" "sentry_dsn" {
+  secret_id = "${var.backend_service_name}-sentry-dsn"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+
+  depends_on = [google_project_service.secretmanager]
+}
+
 # SnapTrade secrets (values populated manually via gcloud - see runbook)
 resource "google_secret_manager_secret" "snaptrade_client_id" {
   secret_id = "${var.backend_service_name}-snaptrade-client-id"
@@ -536,6 +551,16 @@ resource "google_cloud_run_service" "backend" {
           value_from {
             secret_key_ref {
               name = google_secret_manager_secret.jwt_secret.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "SENTRY_DSN"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.sentry_dsn.secret_id
               key  = "latest"
             }
           }
