@@ -16,7 +16,12 @@ interface BudgetFormData {
   category: string
   beneficiary: string
   rollover_enabled: boolean
-  ytd_view: boolean
+  start_date: string
+}
+
+function todayISO(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 export default function Budgets() {
@@ -70,13 +75,13 @@ export default function Budgets() {
     onError: () => toast.error('Failed to delete budget'),
   })
 
-  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<BudgetFormData>({
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<BudgetFormData>({
     defaultValues: {
       period: 'monthly',
       category: '',
       beneficiary: '',
       rollover_enabled: true,
-      ytd_view: false,
+      start_date: todayISO(),
     },
   })
 
@@ -88,7 +93,7 @@ export default function Budgets() {
       category: formData.category || undefined,
       beneficiary: formData.beneficiary || undefined,
       rollover_enabled: formData.rollover_enabled,
-      ytd_view: formData.ytd_view,
+      start_date: formData.start_date || undefined,
     }
 
     if (editingBudget) {
@@ -107,7 +112,7 @@ export default function Budgets() {
       category: budget.category || '',
       beneficiary: budget.beneficiary || '',
       rollover_enabled: budget.rollover_enabled ?? true,
-      ytd_view: budget.ytd_view ?? false,
+      start_date: budget.start_date?.slice(0, 10) || todayISO(),
     })
   }
 
@@ -120,7 +125,7 @@ export default function Budgets() {
       category: '',
       beneficiary: '',
       rollover_enabled: true,
-      ytd_view: false,
+      start_date: todayISO(),
     })
     setShowAddModal(true)
   }
@@ -169,11 +174,6 @@ export default function Budgets() {
                 <div>
                   <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                     {status.budget.name}
-                    {status.budget.ytd_view && (
-                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        YTD
-                      </span>
-                    )}
                   </h3>
                   <p className="text-sm text-gray-500 capitalize">
                     {status.budget.period} budget
@@ -402,12 +402,7 @@ export default function Budgets() {
                   <input
                     type="checkbox"
                     {...register('rollover_enabled')}
-                    disabled={watch('ytd_view')}
-                    onChange={(e) => {
-                      setValue('rollover_enabled', e.target.checked)
-                      if (e.target.checked) setValue('ytd_view', false)
-                    }}
-                    className="mt-0.5 h-4 w-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500 disabled:opacity-50"
+                    className="mt-0.5 h-4 w-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
                   />
                   <span className="text-sm">
                     <span className="font-medium text-gray-700">Roll over unused budget</span>
@@ -419,23 +414,17 @@ export default function Budgets() {
               </div>
 
               <div>
-                <label className="flex items-start gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    {...register('ytd_view')}
-                    onChange={(e) => {
-                      setValue('ytd_view', e.target.checked)
-                      if (e.target.checked) setValue('rollover_enabled', false)
-                    }}
-                    className="mt-0.5 h-4 w-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
-                  />
-                  <span className="text-sm">
-                    <span className="font-medium text-gray-700">Track year-to-date</span>
-                    <span className="block text-xs text-gray-500">
-                      Reports spending since Jan 1 of the current year. Quota auto-scales to amount × periods elapsed this year. Disables rollover (YTD already spans every prior period).
-                    </span>
-                  </span>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Start date
                 </label>
+                <input
+                  type="date"
+                  {...register('start_date')}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Backdate (e.g. Jan 1) to count older expenses and accumulate rollover from then.
+                </p>
               </div>
 
               <div className="flex gap-3 pt-4">

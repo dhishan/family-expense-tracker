@@ -127,6 +127,11 @@ class BudgetService:
             k: v for k, v in budget.model_dump().items()
             if v is not None
         }
+        # Firestore stores start_date as a datetime; the Pydantic model
+        # serializes it as a `date`. Convert before writing so reads stay
+        # consistent with the create() path.
+        if isinstance(update_data.get("start_date"), date) and not isinstance(update_data["start_date"], datetime):
+            update_data["start_date"] = datetime.combine(update_data["start_date"], datetime.min.time())
         update_data["updated_at"] = datetime.utcnow()
         
         doc_ref.update(update_data)
@@ -202,37 +207,6 @@ class BudgetService:
 
         import asyncio
         expense_service = get_expense_service()
-
-        # YTD short-circuit: window is Jan 1 → today, quota scales with
-        # the number of periods elapsed this year, rollover is omitted
-        # (YTD already encompasses every prior period this year).
-        if getattr(budget, "ytd_view", False):
-            today_ref = reference_date or date.today()
-            ytd_start = date(today_ref.year, 1, 1)
-            ytd_end = today_ref
-            spent = await expense_service.get_spending_for_budget(
-                family_id=family_id,
-                start_date=ytd_start,
-                end_date=ytd_end,
-                category=budget.category,
-                beneficiary=bud_beneficiary,
-                budget_id=budget.id,
-            )
-            periods_elapsed = self._ytd_period_count(period, today_ref)
-            effective_amount = budget.amount * periods_elapsed
-            remaining = effective_amount - spent
-            percentage_used = (spent / effective_amount * 100) if effective_amount > 0 else 0
-            return BudgetStatus(
-                budget=budget,
-                spent=spent,
-                remaining=remaining,
-                percentage_used=round(percentage_used, 2),
-                is_over_budget=spent > effective_amount,
-                period_start=ytd_start,
-                period_end=ytd_end,
-                rollover_amount=0.0,
-                effective_amount=effective_amount,
-            )
 
         # Run current-period spending and rollover query in parallel —
         # they don't depend on each other.
@@ -468,35 +442,6 @@ class BudgetService:
 
         import asyncio
         expense_service = get_expense_service()
-
-        # YTD short-circuit — see get_status for the rationale.
-        if getattr(budget, "ytd_view", False):
-            today_ref = reference_date or date.today()
-            ytd_start = date(today_ref.year, 1, 1)
-            ytd_end = today_ref
-            spent = await expense_service.get_spending_for_budget(
-                family_id=family_id,
-                start_date=ytd_start,
-                end_date=ytd_end,
-                category=budget.category,
-                beneficiary=bud_beneficiary,
-                budget_id=budget.id,
-            )
-            periods_elapsed = self._ytd_period_count(period, today_ref)
-            effective_amount = budget.amount * periods_elapsed
-            remaining = effective_amount - spent
-            percentage_used = (spent / effective_amount * 100) if effective_amount > 0 else 0
-            return BudgetStatus(
-                budget=budget,
-                spent=spent,
-                remaining=remaining,
-                percentage_used=round(percentage_used, 2),
-                is_over_budget=spent > effective_amount,
-                period_start=ytd_start,
-                period_end=ytd_end,
-                rollover_amount=0.0,
-                effective_amount=effective_amount,
-            )
 
         spent, rollover_amount = await asyncio.gather(
             expense_service.get_spending_for_budget(

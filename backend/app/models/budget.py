@@ -45,6 +45,7 @@ class BudgetUpdate(BaseModel):
     beneficiary: Optional[str] = None
     rollover_enabled: Optional[bool] = None
     ytd_view: Optional[bool] = None
+    start_date: Optional[date] = None
 
 
 class Budget(BudgetBase):

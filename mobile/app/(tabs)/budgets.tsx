@@ -49,11 +49,16 @@ interface BudgetFormData {
   category: string
   beneficiary: string
   rollover_enabled: boolean
-  ytd_view: boolean
+  start_date: string
+}
+
+function todayISO(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 function defaultForm(): BudgetFormData {
-  return { name: '', amount: '', period: 'monthly', category: '', beneficiary: '', rollover_enabled: true, ytd_view: false }
+  return { name: '', amount: '', period: 'monthly', category: '', beneficiary: '', rollover_enabled: true, start_date: todayISO() }
 }
 
 interface BudgetModalProps {
@@ -82,7 +87,7 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
         category: editing.budget.category ?? '',
         beneficiary: editing.budget.beneficiary ?? '',
         rollover_enabled: editing.budget.rollover_enabled ?? true,
-        ytd_view: editing.budget.ytd_view ?? false,
+        start_date: editing.budget.start_date?.slice(0, 10) || todayISO(),
       })
     } else {
       setForm(defaultForm())
@@ -109,7 +114,7 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
       category: form.category.trim() || undefined,
       beneficiary: form.beneficiary.trim() || undefined,
       rollover_enabled: form.rollover_enabled,
-      ytd_view: form.ytd_view,
+      start_date: form.start_date || undefined,
     })
   }
 
@@ -269,10 +274,7 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
 
             <View style={{ marginBottom: 16 }}>
               <TouchableOpacity
-                onPress={() => setForm((prev) => {
-                  const next = !prev.rollover_enabled
-                  return { ...prev, rollover_enabled: next, ytd_view: next ? false : prev.ytd_view }
-                })}
+                onPress={() => setForm((prev) => ({ ...prev, rollover_enabled: !prev.rollover_enabled }))}
                 style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}
               >
                 <View
@@ -294,32 +296,17 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
               </TouchableOpacity>
             </View>
 
-            <View style={{ marginBottom: 16 }}>
-              <TouchableOpacity
-                onPress={() => setForm((prev) => {
-                  const next = !prev.ytd_view
-                  return { ...prev, ytd_view: next, rollover_enabled: next ? false : prev.rollover_enabled }
-                })}
-                style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}
-              >
-                <View
-                  style={{
-                    width: 22, height: 22, borderRadius: 4, borderWidth: 1,
-                    borderColor: form.ytd_view ? '#2563eb' : '#d1d5db',
-                    backgroundColor: form.ytd_view ? '#2563eb' : '#fff',
-                    alignItems: 'center', justifyContent: 'center', marginTop: 2,
-                  }}
-                >
-                  {form.ytd_view && <Text style={{ color: '#fff', fontWeight: '700' }}>✓</Text>}
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#374151' }}>Track year-to-date</Text>
-                  <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
-                    Spent + quota since Jan 1. Quota scales by periods elapsed this year. Overrides rollover.
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            </View>
+            <Text style={modalStyles.label}>Start date</Text>
+            <TextInput
+              style={modalStyles.input}
+              value={form.start_date}
+              onChangeText={set('start_date')}
+              placeholder="YYYY-MM-DD"
+              autoCapitalize="none"
+            />
+            <Text style={{ fontSize: 12, color: '#6b7280', marginTop: -8, marginBottom: 12 }}>
+              Backdate (e.g. {todayISO().slice(0, 4)}-01-01) to count older expenses and accumulate rollover from then.
+            </Text>
           </ScrollView>
         </View>
       </KeyboardAvoidingView>
@@ -474,26 +461,7 @@ export default function BudgetsScreen() {
               >
                 <View style={styles.budgetTop}>
                   <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Text style={styles.budgetName}>{item.budget.name}</Text>
-                      {item.budget.ytd_view && (
-                        <Text
-                          style={{
-                            fontSize: 10,
-                            fontWeight: '700',
-                            color: '#4338ca',
-                            backgroundColor: '#eef2ff',
-                            borderColor: '#c7d2fe',
-                            borderWidth: 1,
-                            paddingHorizontal: 4,
-                            paddingVertical: 1,
-                            borderRadius: 4,
-                          }}
-                        >
-                          YTD
-                        </Text>
-                      )}
-                    </View>
+                    <Text style={styles.budgetName}>{item.budget.name}</Text>
                     <Text style={styles.budgetPeriod}>
                       {item.budget.period.charAt(0).toUpperCase() + item.budget.period.slice(1)}
                       {item.budget.category ? ` - ${item.budget.category}` : ''}
