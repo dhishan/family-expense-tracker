@@ -376,7 +376,31 @@ function ApproveModal({
     queryFn: () => budgetsApi.list(),
     enabled: visible,
   })
-  const budgets: BudgetStatus[] = budgetsData?.budgets ?? []
+  // Filter out any malformed BudgetStatus entries so downstream
+  // accesses like `bs.budget.id` cannot throw. The API contract
+  // guarantees this shape, but past regressions have shipped
+  // partial responses; we'd rather hide a bad row than crash the
+  // modal mid-render.
+  const budgets: BudgetStatus[] = (budgetsData?.budgets ?? []).filter(
+    (b): b is BudgetStatus => !!b && !!b.budget && !!b.budget.id,
+  )
+
+  // Diagnostic: on first render with a pending tx, dump shape to
+  // the debug log so a crash report can include what we actually
+  // received from the backend.
+  useEffect(() => {
+    if (!visible || !pending) return
+    logEntry('info', 'ApproveModal opened', {
+      context: {
+        pendingId: pending.id,
+        pendingAmount: pending.amount,
+        pendingHasSuggestedBudget: !!pending.suggested_budget_id,
+        budgetCount: budgets.length,
+        rawBudgetCount: budgetsData?.budgets?.length ?? 0,
+      },
+    }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, pending?.id])
 
   const { data: rulesData } = useQuery({
     queryKey: ['rules', 'merchant'],
@@ -2007,7 +2031,17 @@ export default function TransactionsScreen() {
         })
       }
     },
-    onError: () => Alert.alert('Error', 'Failed to approve transaction.'),
+    onError: (err: unknown) => {
+      logEntry('error', 'approve mutation failed', {
+        stack: (err as Error)?.stack,
+        context: {
+          status: (err as { response?: { status?: number } })?.response?.status,
+          data: (err as { response?: { data?: unknown } })?.response?.data,
+          message: (err as Error)?.message,
+        },
+      }).catch(() => {})
+      Alert.alert('Error', 'Failed to approve transaction.')
+    },
   })
 
   const approveSplitMutation = useMutation({
