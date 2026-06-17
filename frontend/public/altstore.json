@@ -137,6 +137,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.29",
+          "buildVersion": "1",
+          "date": "2026-06-17T01:08:31Z",
+          "localizedDescription": "What's changed:\n- recipes UI \u2014 list, builder, picker on nutrition tab\n- refactor(recipes): ingredients are per-serving + servings_used (not per-100g + grams)\n- recipes backend \u2014 schema, CRUD, log-as-foodlog + 23 tests",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.29/FitnessTracker.ipa",
+          "size": 20389616,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.28",
           "buildVersion": "1",
           "date": "2026-06-16T08:48:13Z",
