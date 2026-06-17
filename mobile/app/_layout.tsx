@@ -1,16 +1,21 @@
 import { useEffect } from 'react'
-import { ActivityIndicator, Linking, View, Keyboard, Image } from 'react-native'
+import { ActivityIndicator, Linking, View, Keyboard } from 'react-native'
 import { Stack, router } from 'expo-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { StatusBar } from 'expo-status-bar'
 import * as SecureStore from 'expo-secure-store'
 import { useAuthStore } from '@/store/auth'
-import { installGlobalErrorHandler } from '@/utils/debugLog'
 
-installGlobalErrorHandler()
+// Best-effort: install the global error handler used by the Debug Logs
+// screen. Wrapped in try so a broken install can never block app boot.
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('@/utils/debugLog').installGlobalErrorHandler?.()
+} catch {
+  // swallow — debug logging is non-essential
+}
 import { create, open } from 'react-native-plaid-link-sdk'
 import { WhatsNewSheet } from '@/components/WhatsNewSheet'
-import { ErrorBoundary } from '@/components/ErrorBoundary'
 import '../global.css'
 
 const PLAID_LINK_TOKEN_KEY = 'plaid_link_token'
@@ -99,7 +104,6 @@ export default function RootLayout() {
   }, [token, isLoading])
 
   return (
-    <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <StatusBar style="light" />
       {isLoading ? (
@@ -111,11 +115,6 @@ export default function RootLayout() {
             backgroundColor: '#2563eb',
           }}
         >
-          <Image
-            source={require('../assets/splash-icon.png')}
-            style={{ width: 160, height: 160, marginBottom: 24 }}
-            resizeMode="contain"
-          />
           <ActivityIndicator size="large" color="#ffffff" />
         </View>
       ) : (
@@ -128,6 +127,5 @@ export default function RootLayout() {
         </View>
       )}
     </QueryClientProvider>
-    </ErrorBoundary>
   )
 }
