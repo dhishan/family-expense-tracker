@@ -373,15 +373,22 @@ class BudgetService:
         seen: set[str] = set()
         items: list[dict] = []
 
-        # Pinned
+        # Pinned. For scope='all' we intentionally skip the date filter:
+        # a user-pinned expense is an explicit "this belongs to this
+        # budget" statement and should show up in the lifetime view even
+        # if its date predates budget.start_date (e.g. backdated entry).
         try:
             pinned_query = (
                 self.db.collection("expenses")
                 .where(filter=FieldFilter("family_id", "==", family_id))
                 .where(filter=FieldFilter("budget_id", "==", budget_id))
-                .where(filter=FieldFilter("date", ">=", start_dt))
-                .where(filter=FieldFilter("date", "<=", end_dt))
             )
+            if scope != "all":
+                pinned_query = (
+                    pinned_query
+                    .where(filter=FieldFilter("date", ">=", start_dt))
+                    .where(filter=FieldFilter("date", "<=", end_dt))
+                )
             if bud_beneficiary:
                 pinned_query = pinned_query.where(filter=FieldFilter("beneficiary", "==", bud_beneficiary))
             for doc in pinned_query.stream():
