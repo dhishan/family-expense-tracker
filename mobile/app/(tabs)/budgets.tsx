@@ -49,10 +49,11 @@ interface BudgetFormData {
   category: string
   beneficiary: string
   rollover_enabled: boolean
+  ytd_view: boolean
 }
 
 function defaultForm(): BudgetFormData {
-  return { name: '', amount: '', period: 'monthly', category: '', beneficiary: '', rollover_enabled: true }
+  return { name: '', amount: '', period: 'monthly', category: '', beneficiary: '', rollover_enabled: true, ytd_view: false }
 }
 
 interface BudgetModalProps {
@@ -81,6 +82,7 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
         category: editing.budget.category ?? '',
         beneficiary: editing.budget.beneficiary ?? '',
         rollover_enabled: editing.budget.rollover_enabled ?? true,
+        ytd_view: editing.budget.ytd_view ?? false,
       })
     } else {
       setForm(defaultForm())
@@ -107,6 +109,7 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
       category: form.category.trim() || undefined,
       beneficiary: form.beneficiary.trim() || undefined,
       rollover_enabled: form.rollover_enabled,
+      ytd_view: form.ytd_view,
     })
   }
 
@@ -287,6 +290,30 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
                 </View>
               </TouchableOpacity>
             </View>
+
+            <View style={{ marginBottom: 16 }}>
+              <TouchableOpacity
+                onPress={() => setForm((prev) => ({ ...prev, ytd_view: !prev.ytd_view }))}
+                style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}
+              >
+                <View
+                  style={{
+                    width: 22, height: 22, borderRadius: 4, borderWidth: 1,
+                    borderColor: form.ytd_view ? '#2563eb' : '#d1d5db',
+                    backgroundColor: form.ytd_view ? '#2563eb' : '#fff',
+                    alignItems: 'center', justifyContent: 'center', marginTop: 2,
+                  }}
+                >
+                  {form.ytd_view && <Text style={{ color: '#fff', fontWeight: '700' }}>✓</Text>}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#374151' }}>Track year-to-date</Text>
+                  <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                    Spent + quota since Jan 1. Quota scales by periods elapsed this year. Overrides rollover.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
           </ScrollView>
         </View>
       </KeyboardAvoidingView>
@@ -441,7 +468,26 @@ export default function BudgetsScreen() {
               >
                 <View style={styles.budgetTop}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.budgetName}>{item.budget.name}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.budgetName}>{item.budget.name}</Text>
+                      {item.budget.ytd_view && (
+                        <Text
+                          style={{
+                            fontSize: 10,
+                            fontWeight: '700',
+                            color: '#4338ca',
+                            backgroundColor: '#eef2ff',
+                            borderColor: '#c7d2fe',
+                            borderWidth: 1,
+                            paddingHorizontal: 4,
+                            paddingVertical: 1,
+                            borderRadius: 4,
+                          }}
+                        >
+                          YTD
+                        </Text>
+                      )}
+                    </View>
                     <Text style={styles.budgetPeriod}>
                       {item.budget.period.charAt(0).toUpperCase() + item.budget.period.slice(1)}
                       {item.budget.category ? ` - ${item.budget.category}` : ''}

@@ -20,6 +20,15 @@ class BudgetBase(BaseModel):
     category: Optional[str] = Field(None, description="Category to track, null for all")
     beneficiary: Optional[str] = Field(None, description="User ID, 'family', or null for all")
     rollover_enabled: bool = Field(True, description="Carry unused budget forward to the next period (uncapped, cumulative)")
+    ytd_view: bool = Field(
+        False,
+        description=(
+            "When true, the budget reports spent + quota year-to-date "
+            "(Jan 1 of the current year → today). Quota auto-scales by "
+            "the number of periods elapsed this year. Useful for "
+            "tracking annualized envelopes."
+        ),
+    )
 
 
 class BudgetCreate(BudgetBase):
@@ -35,6 +44,7 @@ class BudgetUpdate(BaseModel):
     category: Optional[str] = None
     beneficiary: Optional[str] = None
     rollover_enabled: Optional[bool] = None
+    ytd_view: Optional[bool] = None
 
 
 class Budget(BudgetBase):
@@ -60,6 +70,7 @@ class BudgetResponse(BaseModel):
     category: Optional[str]
     beneficiary: Optional[str]
     rollover_enabled: bool = True
+    ytd_view: bool = False
     start_date: date
     created_by: str
     created_at: datetime

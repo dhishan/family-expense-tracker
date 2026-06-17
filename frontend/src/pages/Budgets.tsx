@@ -16,6 +16,7 @@ interface BudgetFormData {
   category: string
   beneficiary: string
   rollover_enabled: boolean
+  ytd_view: boolean
 }
 
 export default function Budgets() {
@@ -75,6 +76,7 @@ export default function Budgets() {
       category: '',
       beneficiary: '',
       rollover_enabled: true,
+      ytd_view: false,
     },
   })
 
@@ -86,6 +88,7 @@ export default function Budgets() {
       category: formData.category || undefined,
       beneficiary: formData.beneficiary || undefined,
       rollover_enabled: formData.rollover_enabled,
+      ytd_view: formData.ytd_view,
     }
 
     if (editingBudget) {
@@ -104,6 +107,7 @@ export default function Budgets() {
       category: budget.category || '',
       beneficiary: budget.beneficiary || '',
       rollover_enabled: budget.rollover_enabled ?? true,
+      ytd_view: budget.ytd_view ?? false,
     })
   }
 
@@ -116,6 +120,7 @@ export default function Budgets() {
       category: '',
       beneficiary: '',
       rollover_enabled: true,
+      ytd_view: false,
     })
     setShowAddModal(true)
   }
@@ -162,7 +167,14 @@ export default function Budgets() {
             >
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <h3 className="font-semibold text-gray-900">{status.budget.name}</h3>
+                  <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                    {status.budget.name}
+                    {status.budget.ytd_view && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        YTD
+                      </span>
+                    )}
+                  </h3>
                   <p className="text-sm text-gray-500 capitalize">
                     {status.budget.period} budget
                     {status.budget.category && (
@@ -396,6 +408,22 @@ export default function Budgets() {
                     <span className="font-medium text-gray-700">Roll over unused budget</span>
                     <span className="block text-xs text-gray-500">
                       Anything you don't spend this period carries forward and increases next period's limit. Cumulative, no cap.
+                    </span>
+                  </span>
+                </label>
+              </div>
+
+              <div>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    {...register('ytd_view')}
+                    className="mt-0.5 h-4 w-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                  />
+                  <span className="text-sm">
+                    <span className="font-medium text-gray-700">Track year-to-date</span>
+                    <span className="block text-xs text-gray-500">
+                      Reports spending since Jan 1 of the current year. Quota auto-scales to amount × periods elapsed this year. Disables rollover (YTD already spans every prior period).
                     </span>
                   </span>
                 </label>

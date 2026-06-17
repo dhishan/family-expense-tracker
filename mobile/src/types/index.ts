@@ -126,6 +126,7 @@ export interface Budget {
   category: string | null
   beneficiary: string | null
   rollover_enabled?: boolean
+  ytd_view?: boolean
   start_date: string
   created_by: string
   created_at: string
@@ -139,6 +140,7 @@ export interface BudgetCreate {
   category?: string
   beneficiary?: string
   rollover_enabled?: boolean
+  ytd_view?: boolean
   start_date?: string
 }
 
@@ -149,6 +151,7 @@ export interface BudgetUpdate {
   category?: string
   beneficiary?: string
   rollover_enabled?: boolean
+  ytd_view?: boolean
 }
 
 export interface BudgetStatus {
