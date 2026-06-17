@@ -176,7 +176,13 @@ class BudgetService:
         family_id: str,
         reference_date: Optional[date] = None,
     ) -> Optional[BudgetStatus]:
-        """Get budget status with spending info."""
+        """Get budget status with spending info.
+
+        Always counts EXPENSES PINNED TO THIS BUDGET in `spent`, regardless of
+        their date. User intent (the explicit pin via budget_id) overrides
+        the period bounds. Unpinned, category-fallback expenses still respect
+        the current period as before.
+        """
         budget = await self.get(budget_id, family_id)
 
         if not budget:
@@ -206,6 +212,7 @@ class BudgetService:
                 category=budget.category,
                 beneficiary=bud_beneficiary,
                 budget_id=budget.id,
+                pinned_ignore_date=True,
             ),
             self._compute_rollover(
                 budget=budget,
@@ -419,6 +426,7 @@ class BudgetService:
                 category=budget.category,
                 beneficiary=bud_beneficiary,
                 budget_id=budget.id,
+                pinned_ignore_date=True,
             ),
             self._compute_rollover(
                 budget=budget,

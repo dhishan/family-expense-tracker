@@ -257,11 +257,14 @@ class ExpenseService:
         category: Optional[str] = None,
         beneficiary: Optional[str] = None,
         budget_id: Optional[str] = None,
+        pinned_ignore_date: bool = False,
     ) -> float:
         """Get total spending for budget tracking.
 
         Two sources are summed:
         1. Expenses explicitly pinned to this budget via budget_id (wins regardless of category).
+           If `pinned_ignore_date=True`, pinned expenses count regardless of when they
+           were dated — user intent ("this belongs to budget X") overrides period bounds.
         2. Expenses with no budget_id whose category matches (backward-compat fallback).
 
         This means existing budgets that predate the budget_id field continue to work
@@ -284,9 +287,13 @@ class ExpenseService:
                     self.collection
                     .where(filter=FieldFilter("family_id", "==", family_id))
                     .where(filter=FieldFilter("budget_id", "==", budget_id))
-                    .where(filter=FieldFilter("date", ">=", start_dt))
-                    .where(filter=FieldFilter("date", "<=", end_dt))
                 )
+                if not pinned_ignore_date:
+                    pinned_query = (
+                        pinned_query
+                        .where(filter=FieldFilter("date", ">=", start_dt))
+                        .where(filter=FieldFilter("date", "<=", end_dt))
+                    )
                 if beneficiary:
                     pinned_query = pinned_query.where(filter=FieldFilter("beneficiary", "==", beneficiary))
                 for doc in pinned_query.stream():
