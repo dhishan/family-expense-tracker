@@ -44,6 +44,7 @@ async def create_budget(
 async def list_budgets(
     current_user: User = Depends(get_current_user),
     reference_date: Optional[date] = Query(None, description="Client's local date (YYYY-MM-DD) for period calculation"),
+    view: str = Query("current", description="'current' (default) or 'ytd' for year-to-date with scaled quota"),
 ):
     """List all budgets with their current status."""
     if not current_user.family_id:
@@ -53,7 +54,7 @@ async def list_budgets(
         )
 
     budget_service = get_budget_service()
-    statuses = await budget_service.list_with_status(current_user.family_id, reference_date=reference_date)
+    statuses = await budget_service.list_with_status(current_user.family_id, reference_date=reference_date, view=view)
 
     return BudgetListResponse(
         budgets=statuses,

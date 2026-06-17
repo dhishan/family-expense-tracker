@@ -407,7 +407,7 @@ class BudgetService:
                 d[k] = _ser(d[k])
         return items
 
-    async def list_with_status(self, family_id: str, reference_date: Optional[date] = None) -> List[BudgetStatus]:
+    async def list_with_status(self, family_id: str, reference_date: Optional[date] = None, view: str = "current") -> List[BudgetStatus]:
         """List all budgets with their current status.
 
         Fans out per-budget status calls in parallel. We already have the
@@ -420,7 +420,7 @@ class BudgetService:
         budgets = await self.list(family_id)
 
         results = await asyncio.gather(
-            *[self._status_for_budget(b, family_id, reference_date=reference_date) for b in budgets],
+            *[self._status_for_budget(b, family_id, reference_date=reference_date, view=view) for b in budgets],
             return_exceptions=True,
         )
         return [s for s in results if isinstance(s, BudgetStatus)]
@@ -430,9 +430,14 @@ class BudgetService:
         budget: BudgetResponse,
         family_id: str,
         reference_date: Optional[date] = None,
+        view: str = "current",
     ) -> Optional[BudgetStatus]:
         """Status from an already-loaded Budget. Same body as get_status,
         but skips the redundant single-doc fetch.
+
+        view='current' (default) — current period spent vs amount + rollover
+        view='ytd'              — Jan 1 → today spent vs amount × periods_elapsed
+                                  (rollover folded into the scaled quota)
         """
         period = BudgetPeriod(budget.period)
         period_start, period_end = self._get_period_dates(period, reference_date=reference_date)
@@ -442,6 +447,34 @@ class BudgetService:
 
         import asyncio
         expense_service = get_expense_service()
+
+        if view == "ytd":
+            today_ref = reference_date or date.today()
+            ytd_start = date(today_ref.year, 1, 1)
+            ytd_end = today_ref
+            spent = await expense_service.get_spending_for_budget(
+                family_id=family_id,
+                start_date=ytd_start,
+                end_date=ytd_end,
+                category=budget.category,
+                beneficiary=bud_beneficiary,
+                budget_id=budget.id,
+            )
+            periods_elapsed = self._ytd_period_count(period, today_ref)
+            effective_amount = budget.amount * periods_elapsed
+            remaining = effective_amount - spent
+            percentage_used = (spent / effective_amount * 100) if effective_amount > 0 else 0
+            return BudgetStatus(
+                budget=budget,
+                spent=spent,
+                remaining=remaining,
+                percentage_used=round(percentage_used, 2),
+                is_over_budget=spent > effective_amount,
+                period_start=ytd_start,
+                period_end=ytd_end,
+                rollover_amount=0.0,
+                effective_amount=round(effective_amount, 2),
+            )
 
         spent, rollover_amount = await asyncio.gather(
             expense_service.get_spending_for_budget(

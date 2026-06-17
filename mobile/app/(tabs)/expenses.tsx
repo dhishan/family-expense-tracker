@@ -372,7 +372,7 @@ function ApproveModal({
 
   const { data: budgetsData } = useQuery({
     queryKey: ['budgets', 'list'],
-    queryFn: budgetsApi.list,
+    queryFn: () => budgetsApi.list(),
     enabled: visible,
   })
   const budgets: BudgetStatus[] = budgetsData?.budgets ?? []
@@ -1879,7 +1879,7 @@ export default function TransactionsScreen() {
   // queries; React Query dedupes by key.
   const { data: budgetsData } = useQuery({
     queryKey: ['budgets', 'list'],
-    queryFn: budgetsApi.list,
+    queryFn: () => budgetsApi.list(),
     enabled: !!user?.family_id,
   })
   const budgets: BudgetStatus[] = budgetsData?.budgets ?? []

@@ -29,6 +29,7 @@ export default function Budgets() {
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null)
   const [viewingTxBudget, setViewingTxBudget] = useState<Budget | null>(null)
   const [txScope, setTxScope] = useState<'current' | 'all'>('current')
+  const [view, setView] = useState<'current' | 'ytd'>('current')
 
   const { user, familyMembers, family } = useAuthStore()
   const queryClient = useQueryClient()
@@ -40,8 +41,8 @@ export default function Budgets() {
   ]
 
   const { data, isLoading } = useQuery({
-    queryKey: ['budgets'],
-    queryFn: () => budgetsApi.list(),
+    queryKey: ['budgets', view],
+    queryFn: () => budgetsApi.list(view),
     enabled: !!user?.family_id,
   })
 
@@ -149,6 +150,22 @@ export default function Budgets() {
         >
           <PlusIcon className="h-5 w-5" />
           Create Budget
+        </button>
+      </div>
+
+      {/* View toggle */}
+      <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1">
+        <button
+          onClick={() => setView('current')}
+          className={`px-3 py-1.5 text-sm rounded-md ${view === 'current' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600'}`}
+        >
+          This period
+        </button>
+        <button
+          onClick={() => setView('ytd')}
+          className={`px-3 py-1.5 text-sm rounded-md ${view === 'ytd' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600'}`}
+        >
+          YTD (with rollover)
         </button>
       </div>
 

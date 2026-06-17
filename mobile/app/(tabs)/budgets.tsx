@@ -370,12 +370,13 @@ export default function BudgetsScreen() {
   const [editingBudget, setEditingBudget] = useState<BudgetStatus | null>(null)
   const [viewingTxBudget, setViewingTxBudget] = useState<Budget | null>(null)
   const [txScope, setTxScope] = useState<'current' | 'all'>('current')
+  const [view, setView] = useState<'current' | 'ytd'>('current')
   const { user, familyMembers } = useAuthStore()
   const queryClient = useQueryClient()
 
   const { data, isLoading } = useQuery({
-    queryKey: ['budgets'],
-    queryFn: budgetsApi.list,
+    queryKey: ['budgets', view],
+    queryFn: () => budgetsApi.list(view),
     enabled: !!user?.family_id,
   })
 
@@ -434,6 +435,23 @@ export default function BudgetsScreen() {
         >
           <Text style={styles.addBtnText}>+ New</Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={{ flexDirection: 'row', paddingHorizontal: 16, marginBottom: 8 }}>
+        <View style={{ flexDirection: 'row', backgroundColor: '#f3f4f6', borderRadius: 8, padding: 3 }}>
+          <TouchableOpacity
+            onPress={() => setView('current')}
+            style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, backgroundColor: view === 'current' ? '#ffffff' : 'transparent' }}
+          >
+            <Text style={{ fontSize: 13, fontWeight: '600', color: view === 'current' ? '#111827' : '#6b7280' }}>This period</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setView('ytd')}
+            style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, backgroundColor: view === 'ytd' ? '#ffffff' : 'transparent' }}
+          >
+            <Text style={{ fontSize: 13, fontWeight: '600', color: view === 'ytd' ? '#111827' : '#6b7280' }}>YTD</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {isLoading ? (

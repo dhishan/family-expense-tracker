@@ -52,7 +52,7 @@ export default function DashboardScreen() {
 
   const { data: budgetsData, isLoading: loadingBudgets } = useQuery({
     queryKey: ['budgets', 'dashboard'],
-    queryFn: budgetsApi.list,
+    queryFn: () => budgetsApi.list(),
     enabled: !!user?.family_id,
   })
 

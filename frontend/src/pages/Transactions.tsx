@@ -269,7 +269,7 @@ export default function Transactions() {
 
   const { data: budgetsData } = useQuery({
     queryKey: ['budgets', 'list'],
-    queryFn: budgetsApi.list,
+    queryFn: () => budgetsApi.list(),
     enabled: !!user?.family_id,
     staleTime: 2 * 60 * 1000,
   })

@@ -174,10 +174,10 @@ export const expensesApi = {
 
 // Budgets API
 export const budgetsApi = {
-  list: async (): Promise<BudgetListResponse> => {
+  list: async (view: 'current' | 'ytd' = 'current'): Promise<BudgetListResponse> => {
     const d = new Date()
     const localDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    const response = await api.get<BudgetListResponse>('/budgets', { params: { reference_date: localDate } })
+    const response = await api.get<BudgetListResponse>('/budgets', { params: { reference_date: localDate, view } })
     return response.data
   },
 
