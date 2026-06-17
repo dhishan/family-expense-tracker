@@ -1,6 +1,8 @@
 """Main FastAPI application."""
+import os
 from contextlib import asynccontextmanager
 
+import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -9,6 +11,15 @@ from app.mcp_server import build_mcp_app, mcp
 from app.routers import auth, families, expenses, budgets, notifications, investments, chat, plaid, rules, usage
 
 settings = get_settings()
+
+_SENTRY_DSN = os.environ.get("SENTRY_DSN")
+if _SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=_SENTRY_DSN,
+        traces_sample_rate=0.05,
+        environment=settings.environment,
+        send_default_pii=False,
+    )
 
 
 def _enforce_production_jwt_secret() -> None:

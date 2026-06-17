@@ -33,6 +33,7 @@ litellm>=1.40.0
 
 # Observability
 langfuse>=3.0
+sentry-sdk[fastapi]>=2.18.0
 
 # MCP server (expose SnapTrade to Claude Desktop / Code)
 mcp>=1.0.0
