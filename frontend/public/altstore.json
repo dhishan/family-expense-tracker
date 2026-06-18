@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.36",
+          "buildVersion": "1",
+          "date": "2026-06-18T03:20:35Z",
+          "localizedDescription": "What's changed:\n- expose nutrition + recipes + favorites + body + cardio as read tools\n- use FoodEditSheet for Edit (not old PreviewModal)",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.36/FitnessTracker.ipa",
+          "size": 21589555,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.35",
           "buildVersion": "1",
           "date": "2026-06-18T02:23:09Z",
