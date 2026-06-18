@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.42",
+          "buildVersion": "1",
+          "date": "2026-06-18T06:30:37Z",
+          "localizedDescription": "What's changed:\n- inset-driven keyboard buffers, no more hardcoded gaps",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.42/FitnessTracker.ipa",
+          "size": 21591323,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.41",
           "buildVersion": "1",
           "date": "2026-06-18T04:50:21Z",
