@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.37",
+          "buildVersion": "1",
+          "date": "2026-06-18T03:28:58Z",
+          "localizedDescription": "What's changed:\n- show user recipes in food search",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.37/FitnessTracker.ipa",
+          "size": 21589862,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.36",
           "buildVersion": "1",
           "date": "2026-06-18T03:20:35Z",
