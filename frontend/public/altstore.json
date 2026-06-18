@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.38",
+          "buildVersion": "1",
+          "date": "2026-06-18T03:35:20Z",
+          "localizedDescription": "What's changed:\n- emit add-to-workout when coach recommends an exercise too\n- add Smith Machine Romanian Deadlift to seed\n- add safe-area top inset to conversations header",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.38/FitnessTracker.ipa",
+          "size": 21588048,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.37",
           "buildVersion": "1",
           "date": "2026-06-18T03:28:58Z",
