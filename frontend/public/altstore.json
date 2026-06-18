@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.32",
+          "buildVersion": "1",
+          "date": "2026-06-18T01:48:56Z",
+          "localizedDescription": "What's changed:\n- use backend source field directly for badge\n- replace inline text composer with unified Add food modal\n- add full-screen food search modal (nutrition/add)\n- add FoodEditSheet bottom-sheet component\n- refactor(mobile/nutrition): convert flat tab file to route group for child modal\n- wire Sentry into backend\n- search fan-out across USDA + OFF + IFCT\n- sign GCS object URLs before sending to OpenAI vision\n- force JSON mode + tolerate fenced output in estimate",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.32/FitnessTracker.ipa",
+          "size": 20411860,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.31",
           "buildVersion": "1",
           "date": "2026-06-17T04:25:39Z",
