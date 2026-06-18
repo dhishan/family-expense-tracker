@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.44",
+          "buildVersion": "1",
+          "date": "2026-06-18T16:18:02Z",
+          "localizedDescription": "What's changed:\n- always show + New in recipe picker",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.44/FitnessTracker.ipa",
+          "size": 21591808,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.43",
           "buildVersion": "1",
           "date": "2026-06-18T15:42:13Z",
