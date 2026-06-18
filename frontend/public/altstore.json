@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.33",
+          "buildVersion": "1",
+          "date": "2026-06-18T01:50:46Z",
+          "localizedDescription": "What's changed:\n- hide outer tab header \u2014 nested Stack already renders one",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.33/FitnessTracker.ipa",
+          "size": 20411910,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.32",
           "buildVersion": "1",
           "date": "2026-06-18T01:48:56Z",
