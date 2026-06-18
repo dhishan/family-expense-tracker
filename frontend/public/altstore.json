@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.41",
+          "buildVersion": "1",
+          "date": "2026-06-18T04:50:21Z",
+          "localizedDescription": "What's changed:\n- teach the model to re-call tools on follow-ups\n- trim tool exchanges + cap tool result payloads\n- add Maestro UI automation for iOS sim\n- /internal/sentry-test endpoint + README section\n- keyboard buffer + verified reorder save path",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.41/FitnessTracker.ipa",
+          "size": 21591271,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.40",
           "buildVersion": "1",
           "date": "2026-06-18T03:48:42Z",
