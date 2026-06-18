@@ -32,6 +32,27 @@ A family expense tracking application with brokerage portfolio integration and a
 - Silent re-auth on app launch (session survives reinstall via Google's OS-level account cache)
 - EAS Update — push JS-only changes OTA in ~10 seconds without rebuild
 
+## Install as a native-feeling app
+
+The web app is a PWA, so you can add it to your phone or Mac and launch it like a real app — no browser chrome, own icon, own window.
+
+**iPhone / iPad (Safari, iOS 17.4+):**
+1. Open `https://ui.expense-tracker.blueelephants.org` in Safari
+2. Tap **Share** (square with up-arrow) → **Add to Home Screen**
+3. If you see the **Open as Web App** toggle, turn it on
+4. Tap **Add**
+
+Launch from the Home Screen icon to get the standalone, full-screen experience.
+
+**Mac (Safari 17+):**
+1. Open the site in Safari
+2. **File → Add to Dock**
+3. Pick a name and icon → **Add**
+
+It launches as its own Dock app with no browser controls.
+
+The native mobile app (Expo + EAS) is a separate distribution — see `mobile/` and the IPA releases in GitHub Releases.
+
 ## Tech Stack
 
 - **Frontend (web)**: React 18, TypeScript, Vite, Tailwind CSS, React Query
