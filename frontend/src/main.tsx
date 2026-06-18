@@ -17,7 +17,28 @@ Sentry.init({
   replaysSessionSampleRate: 0,
   replaysOnErrorSampleRate: 1.0,
   environment: import.meta.env.MODE,
+  release: import.meta.env.VITE_RELEASE ?? `web@${import.meta.env.VITE_COMMIT_SHA ?? 'dev'}`,
 })
+
+function ErrorFallback({ error, resetError }: { error: unknown; resetError: () => void }) {
+  return (
+    <div style={{ padding: 24, fontFamily: 'system-ui' }}>
+      <h2 style={{ marginBottom: 8 }}>Something went wrong</h2>
+      <p style={{ color: '#6b7280', marginBottom: 16 }}>
+        The error has been reported. Try again or refresh the page.
+      </p>
+      <pre style={{ background: '#f3f4f6', padding: 12, borderRadius: 6, fontSize: 12, overflow: 'auto' }}>
+        {error instanceof Error ? error.message : String(error)}
+      </pre>
+      <button
+        onClick={resetError}
+        style={{ marginTop: 16, padding: '8px 16px', background: '#2563eb', color: '#fff', border: 0, borderRadius: 6, cursor: 'pointer' }}
+      >
+        Try again
+      </button>
+    </div>
+  )
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,6 +52,7 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <Sentry.ErrorBoundary fallback={ErrorFallback}>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <App />
@@ -58,5 +80,6 @@ createRoot(document.getElementById('root')!).render(
         />
       </BrowserRouter>
     </QueryClientProvider>
+    </Sentry.ErrorBoundary>
   </StrictMode>,
 )

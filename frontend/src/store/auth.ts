@@ -1,6 +1,15 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import * as Sentry from '@sentry/react'
 import type { User, Family, FamilyMember } from '../types'
+
+function syncSentryUser(user: User | null) {
+  if (user) {
+    Sentry.setUser({ id: user.id, email: user.email })
+  } else {
+    Sentry.setUser(null)
+  }
+}
 
 interface AuthState {
   user: User | null
@@ -30,23 +39,29 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       isLoading: true,
 
-      setUser: (user) => set({ user }),
-      
-      setFamily: (family) => set({ family }),
-      
+      setUser: (user) => { syncSentryUser(user); set({ user }) },
+
+      setFamily: (family) => {
+        Sentry.setTag('family_id', family?.id ?? null)
+        set({ family })
+      },
+
       setFamilyMembers: (members) => set({ familyMembers: members }),
-      
+
       setToken: (token) => set({ token }),
-      
-      login: (token, user) =>
+
+      login: (token, user) => {
+        syncSentryUser(user)
         set({
           token,
           user,
           isAuthenticated: true,
           isLoading: false,
-        }),
-      
-      logout: () =>
+        })
+      },
+
+      logout: () => {
+        syncSentryUser(null)
         set({
           user: null,
           family: null,
@@ -54,7 +69,8 @@ export const useAuthStore = create<AuthState>()(
           token: null,
           isAuthenticated: false,
           isLoading: false,
-        }),
+        })
+      },
       
       setLoading: (loading) => set({ isLoading: loading }),
     }),
@@ -67,6 +83,7 @@ export const useAuthStore = create<AuthState>()(
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
+          syncSentryUser(state.user)
           state.setLoading(false)
         }
       },

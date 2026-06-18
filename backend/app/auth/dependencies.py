@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
+import sentry_sdk
 
 from app.config import get_settings
 from app.models.user import User
@@ -101,8 +102,13 @@ async def get_current_user(
     
     user_data = user_doc.to_dict()
     user_data["id"] = user_doc.id
-    
-    return User(**user_data)
+
+    user = User(**user_data)
+    sentry_sdk.set_user({"id": user.id, "email": user.email})
+    if getattr(user, "family_id", None):
+        sentry_sdk.set_tag("family_id", user.family_id)
+
+    return user
 
 
 async def get_current_user_optional(

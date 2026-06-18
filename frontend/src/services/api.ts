@@ -47,6 +47,18 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Sentry breadcrumb for any failed API call so we have context on later errors.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const Sentry = require('@sentry/react') as typeof import('@sentry/react')
+      Sentry.addBreadcrumb({
+        category: 'api',
+        type: 'http',
+        level: error.response?.status && error.response.status >= 500 ? 'error' : 'warning',
+        message: `${error.config?.method?.toUpperCase() ?? 'REQ'} ${error.config?.url ?? '?'} → ${error.response?.status ?? 'network'}`,
+        data: { status: error.response?.status, detail: error.response?.data?.detail },
+      })
+    } catch { /* sentry not loaded */ }
     // Only redirect on 401 for authenticated routes, not for login itself
     if (error.response?.status === 401 && !error.config?.url?.includes('/auth/google')) {
       console.error('Authentication failed, redirecting to login')

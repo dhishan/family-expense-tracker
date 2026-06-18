@@ -4,6 +4,23 @@ import { GoogleSignin } from '@react-native-google-signin/google-signin'
 import type { User, Family, FamilyMember } from '../types'
 import { API_BASE_URL } from '../config/apiBase'
 
+function syncSentryUser(user: User | null, family?: Family | null) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Sentry = require('@sentry/react-native')
+    if (user) {
+      Sentry.setUser({ id: user.id, email: user.email })
+    } else {
+      Sentry.setUser(null)
+    }
+    if (family !== undefined) {
+      Sentry.setTag('family_id', family?.id ?? null)
+    }
+  } catch {
+    // Sentry not available (older IPA without native binding) — skip
+  }
+}
+
 // Lazy require so this module doesn't depend on the api module load order.
 const fetchMe = async (token: string): Promise<User | null> => {
   const base = API_BASE_URL
@@ -53,14 +70,15 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ token })
   },
 
-  setUser: (user: User) => set({ user }),
+  setUser: (user: User) => { syncSentryUser(user); set({ user }) },
 
-  setFamily: (family: Family | null) => set({ family }),
+  setFamily: (family: Family | null) => { syncSentryUser(null, family); set({ family }) },
 
   setFamilyMembers: (members: FamilyMember[]) => set({ familyMembers: members }),
 
   logout: async () => {
     await SecureStore.deleteItemAsync('jwt_token').catch(() => {})
+    syncSentryUser(null, null)
     set({ token: null, user: null, family: null, familyMembers: [] })
   },
 
@@ -75,6 +93,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         members =
           (family as unknown as { members?: FamilyMember[] })?.members ?? []
       }
+      syncSentryUser(user, family)
       set({ token, user, family, familyMembers: members, isLoading: false })
     }
 

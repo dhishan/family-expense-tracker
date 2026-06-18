@@ -100,10 +100,21 @@ api.interceptors.request.use(async (config) => {
   return config
 })
 
-// Handle 401
+// Handle 401 + Sentry breadcrumb on every API failure
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const Sentry = require('@sentry/react-native')
+      Sentry.addBreadcrumb({
+        category: 'api',
+        type: 'http',
+        level: error.response?.status && error.response.status >= 500 ? 'error' : 'warning',
+        message: `${error.config?.method?.toUpperCase?.() ?? 'REQ'} ${error.config?.url ?? '?'} → ${error.response?.status ?? 'network'}`,
+        data: { status: error.response?.status, detail: error.response?.data?.detail },
+      })
+    } catch { /* sentry not available */ }
     if (error.response?.status === 401 && !error.config?.url?.includes('/auth/google')) {
       await SecureStore.deleteItemAsync('jwt_token').catch(() => {})
     }

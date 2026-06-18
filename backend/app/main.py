@@ -19,6 +19,7 @@ if _SENTRY_DSN:
         traces_sample_rate=0.05,
         environment=settings.environment,
         send_default_pii=False,
+        release=os.environ.get("SENTRY_RELEASE") or os.environ.get("K_REVISION") or "backend@dev",
     )
 
 
