@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.46",
+          "buildVersion": "1",
+          "date": "2026-06-19T10:27:18Z",
+          "localizedDescription": "What's changed:\n- working custom date picker + de-dupe time picker",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.46/FitnessTracker.ipa",
+          "size": 21592108,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.45",
           "buildVersion": "1",
           "date": "2026-06-19T10:24:14Z",
