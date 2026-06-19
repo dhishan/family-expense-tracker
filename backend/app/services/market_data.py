@@ -1574,3 +1574,96 @@ def option_chain(
             rows = narrowed
 
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Social sentiment: ApeWisdom (Reddit ticker buzz, keyless) + Finnhub
+# news-sentiment endpoint (already-keyed).
+# ---------------------------------------------------------------------------
+
+_APEWISDOM_FILTERS = {
+    "all-stocks",
+    "wallstreetbets",
+    "stocks",
+    "options",
+    "investing",
+    "stockmarket",
+    "robinhoodpennystocks",
+    "pennystocks",
+    "shortsqueeze",
+    "spacs",
+    "all-crypto",
+    "cryptocurrency",
+    "cryptocurrencies",
+    "bitcoin",
+    "satoshistreetbets",
+    "cryptomoonshots",
+}
+
+
+def apewisdom_trending(filter: str = "all-stocks", limit: int = 25) -> dict:
+    """Top tickers ranked by Reddit mentions across investing subs in the last 24h.
+
+    Free, keyless. Returns rank, ticker, name, mentions, mentions_24h_ago,
+    upvotes, sub-level mention counts. Sentiment field is occasionally
+    populated by ApeWisdom; treat as advisory.
+
+    Args:
+        filter: Subreddit bucket. One of all-stocks, wallstreetbets, stocks,
+            options, investing, stockmarket, pennystocks, all-crypto,
+            cryptocurrency, satoshistreetbets, cryptomoonshots, etc.
+        limit: Max tickers to return (1-50).
+    """
+    f = (filter or "all-stocks").lower().strip()
+    if f not in _APEWISDOM_FILTERS:
+        f = "all-stocks"
+    try:
+        resp = httpx.get(
+            f"https://apewisdom.io/api/v1.0/filter/{f}",
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results = (data.get("results") or [])[: max(1, min(50, int(limit or 25)))]
+        return {
+            "filter": f,
+            "count": data.get("count"),
+            "results": results,
+        }
+    except Exception as exc:
+        return {"error": str(exc), "filter": f}
+
+
+def apewisdom_ticker_buzz(symbol: str, filter: str = "all-stocks") -> dict:
+    """Lookup a specific ticker's Reddit mention rank and 24h change.
+
+    Pulls the full ApeWisdom list for the given filter, finds the symbol,
+    returns rank, mentions, 24h change, and per-sub counts. Useful for
+    "is $NVDA actually trending on WSB right now" lookups.
+    """
+    sym = (symbol or "").upper().strip()
+    if not sym:
+        return {"error": "symbol required"}
+    f = (filter or "all-stocks").lower().strip()
+    if f not in _APEWISDOM_FILTERS:
+        f = "all-stocks"
+    try:
+        resp = httpx.get(
+            f"https://apewisdom.io/api/v1.0/filter/{f}",
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        for row in data.get("results") or []:
+            if (row.get("ticker") or "").upper() == sym:
+                return {"filter": f, "found": True, **row}
+        return {
+            "filter": f,
+            "found": False,
+            "symbol": sym,
+            "note": "Not in top 50 by mentions on this filter in the last 24h.",
+        }
+    except Exception as exc:
+        return {"error": str(exc), "symbol": sym, "filter": f}
+
+

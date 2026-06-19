@@ -833,6 +833,52 @@ TOOLS: list[dict] = [
             "required": [],
         },
     },
+    # --- Social sentiment (Reddit buzz + news sentiment) ---
+    {
+        "name": "social_trending",
+        "description": (
+            "Top tickers ranked by Reddit mention volume across investing subreddits "
+            "in the last 24h, via ApeWisdom. Use when the user asks 'what's trending on "
+            "wsb / reddit', 'which stocks are retail buzzing about', or 'what's hot in "
+            "crypto on reddit'. Returns rank, mentions, 24h change, and per-sub counts. "
+            "Filter buckets include all-stocks (default), wallstreetbets, stocks, options, "
+            "all-crypto, cryptocurrency, satoshistreetbets."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filter": {
+                    "type": "string",
+                    "description": "Sub bucket (default all-stocks). Use wallstreetbets for WSB-specific, all-crypto for crypto.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max tickers (1-50, default 25).",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "social_ticker_buzz",
+        "description": (
+            "Lookup a specific ticker's current Reddit buzz: mention rank, mention count, "
+            "24h delta, and which subs are driving it. Use when the user asks 'is NVDA "
+            "trending on reddit', 'what's wsb saying about my holdings', or to cross-check "
+            "social sentiment against a portfolio position. ApeWisdom data."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "Ticker symbol e.g. NVDA"},
+                "filter": {
+                    "type": "string",
+                    "description": "Sub bucket to search in (default all-stocks).",
+                },
+            },
+            "required": ["symbol"],
+        },
+    },
 ]  # END TOOLS — closing bracket moved here
 
 
@@ -854,6 +900,11 @@ _TRADIER_TOOLS = {
     "option_expirations",
     "option_chain",
     "option_strikes",
+}
+
+_SOCIAL_TOOLS = {
+    "social_trending",
+    "social_ticker_buzz",
 }
 
 
@@ -888,6 +939,7 @@ _TOPIC_TOOLS: dict[str, set[str]] = {
     "prediction_markets": set(_PREDICTION_MARKET_TOOLS),
     "options": set(_TRADIER_TOOLS) | {"alpaca_quote"},  # underlying quote + Tradier chain
     "banks": set(_PLAID_TOOLS),
+    "social": set(_SOCIAL_TOOLS),
 }
 
 # web_search is always included — it's the catch-all when no other tool fits.
@@ -906,6 +958,7 @@ _TOPIC_CLASSIFIER_SYSTEM = """You classify a user's question along two axes:
 - prediction_markets: Manifold, Polymarket, or Kalshi prediction market data
 - options: option chains, expirations, strikes, Greeks
 - banks: the user's linked bank accounts, transactions, recurring charges
+- social: social/retail sentiment on tickers — what Reddit / WSB / r/stocks / r/crypto is buzzing about, news sentiment scores, trending tickers by mention volume
 
 Return ONLY a JSON object: {"is_financial": true, "topics": ["portfolio","market"]}. No prose."""
 
@@ -1503,6 +1556,17 @@ def _execute_snaptrade_tool(name: str, tool_input: dict, user_id: str) -> str:
             result = market_data.edgar_insider_transactions(
                 ticker=tool_input["ticker"],
                 days=tool_input.get("days", 90),
+            )
+        # --- Social sentiment ---
+        elif name == "social_trending":
+            result = market_data.apewisdom_trending(
+                filter=tool_input.get("filter", "all-stocks"),
+                limit=tool_input.get("limit", 25),
+            )
+        elif name == "social_ticker_buzz":
+            result = market_data.apewisdom_ticker_buzz(
+                symbol=tool_input["symbol"],
+                filter=tool_input.get("filter", "all-stocks"),
             )
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
