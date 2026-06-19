@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.45",
+          "buildVersion": "1",
+          "date": "2026-06-19T10:24:14Z",
+          "localizedDescription": "What's changed:\n- AI estimate fallback in recipe ingredient search",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.45/FitnessTracker.ipa",
+          "size": 21592043,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.44",
           "buildVersion": "1",
           "date": "2026-06-18T16:18:02Z",
