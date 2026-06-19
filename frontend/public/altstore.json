@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.51",
+          "buildVersion": "1",
+          "date": "2026-06-19T23:18:54Z",
+          "localizedDescription": "What's changed:\n- bake servings count into logged serving label",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.51/FitnessTracker.ipa",
+          "size": 21594353,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.50",
           "buildVersion": "1",
           "date": "2026-06-19T19:24:25Z",
