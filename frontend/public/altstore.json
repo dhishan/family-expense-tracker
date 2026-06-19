@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.52",
+          "buildVersion": "1",
+          "date": "2026-06-19T23:26:10Z",
+          "localizedDescription": "What's changed:\n- servings multiplier was inert in edit mode",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.52/FitnessTracker.ipa",
+          "size": 21594443,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.51",
           "buildVersion": "1",
           "date": "2026-06-19T23:18:54Z",
