@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.49",
+          "buildVersion": "1",
+          "date": "2026-06-19T17:56:20Z",
+          "localizedDescription": "What's changed:\n- servings + save-to-favorites on photo/AI estimate",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.49/FitnessTracker.ipa",
+          "size": 21594544,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.48",
           "buildVersion": "1",
           "date": "2026-06-19T17:44:09Z",
