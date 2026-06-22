@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.54",
+          "buildVersion": "1",
+          "date": "2026-06-22T07:43:57Z",
+          "localizedDescription": "What's changed:\n- dedup duplicate items in food search history",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.54/FitnessTracker.ipa",
+          "size": 21595376,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.53",
           "buildVersion": "1",
           "date": "2026-06-22T06:58:02Z",
