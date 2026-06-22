@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.53",
+          "buildVersion": "1",
+          "date": "2026-06-22T06:58:02Z",
+          "localizedDescription": "What's changed:\n- mark a day as untracked (\"eating out\")",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.53/FitnessTracker.ipa",
+          "size": 21595150,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.52",
           "buildVersion": "1",
           "date": "2026-06-19T23:26:10Z",
