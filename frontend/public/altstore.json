@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.55",
+          "buildVersion": "1",
+          "date": "2026-06-23T03:32:47Z",
+          "localizedDescription": "What's changed:\n- tap a suggested exercise to open its preview page\n- round-robin food search so reliable sources surface\n- alias search for IFCT Indian dishes\n- make OFF + USDA food search actually return whole foods",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.55/FitnessTracker.ipa",
+          "size": 21591754,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.56",
           "buildVersion": "1",
           "date": "2026-06-23T03:30:16Z",
