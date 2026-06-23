@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.60",
+          "buildVersion": "1",
+          "date": "2026-06-23T04:04:40Z",
+          "localizedDescription": "What's changed:\n- keyboard no longer covers set inputs deep in the list\n- bias the model router toward the cheap model",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.60/FitnessTracker.ipa",
+          "size": 21601011,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.59",
           "buildVersion": "1",
           "date": "2026-06-23T03:52:02Z",
