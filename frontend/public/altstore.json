@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.58",
+          "buildVersion": "1",
+          "date": "2026-06-23T03:41:03Z",
+          "localizedDescription": "What's changed:\n- adding an exercise prefills last session's stats",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.58/FitnessTracker.ipa",
+          "size": 21598449,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.55",
           "buildVersion": "1",
           "date": "2026-06-23T03:32:47Z",
