@@ -932,10 +932,13 @@ resource "cloudflare_record" "mcp_cname" {
   name    = "mcp.expense-tracker"
   type    = "CNAME"
   content = "ghs.googlehosted.com"
-  # proxied=true is required: Cloudflare Access only injects Cf-Access-Jwt-Assertion
-  # when traffic flows through the CF proxy. DNS-only would bypass CF entirely and
-  # every MCP request would be rejected (no JWT header present).
-  proxied = true
+  # proxied=false: MCP auth is now Google OAuth bearer at the application layer
+  # (see backend/app/auth/google_oauth.py + mcp_server.py). Cloudflare proxy was
+  # previously required to inject Cf-Access-Jwt-Assertion; removing that auth
+  # path means we no longer need CF in the request path. Without proxying, the
+  # Google-managed Cloud Run cert serves directly (Cloudflare Universal SSL
+  # doesn't cover second-level subdomains like *.expense-tracker.*).
+  proxied = false
   ttl     = 1
 
   depends_on = [google_cloud_run_domain_mapping.mcp]
