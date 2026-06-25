@@ -22,6 +22,7 @@ from contextvars import ContextVar
 from datetime import date, timedelta
 from typing import Any
 
+import sentry_sdk
 from fastapi import HTTPException, Request, status
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -132,11 +133,45 @@ class McpAuthMiddleware(BaseHTTPMiddleware):
             },
         )
 
+        # Sentry: attribute any exception captured during the request to
+        # this user, matching the in-app chat path's instrumentation.
+        try:
+            sentry_sdk.set_user({"id": user_id})
+            sentry_sdk.set_tag("mcp.source", "remote")
+        except Exception:
+            pass
+
+        # Langfuse: one parent span per MCP request, tagged with user_id so
+        # MCP traffic shows up in the same Langfuse account as in-app chat.
+        # Per-tool spans aren't wired (FastMCP doesn't expose per-tool
+        # middleware here) — request-level visibility is enough to debug
+        # which user is calling MCP and how often.
+        lf_obs = None
+        try:
+            from langfuse import Langfuse  # type: ignore
+            lf_obs = Langfuse().start_observation(
+                name="mcp-request",
+                as_type="span",
+                user_id=user_id,
+                metadata={
+                    "path": request.url.path,
+                    "method": request.method,
+                    "source": "mcp",
+                },
+            )
+        except Exception as e:
+            logger.warning("Langfuse MCP init failed: %s", e)
+
         token = _current_user_id.set(user_id)
         try:
             return await call_next(request)
         finally:
             _current_user_id.reset(token)
+            if lf_obs is not None:
+                try:
+                    lf_obs.end()
+                except Exception:
+                    pass
 
 
 def _user() -> str:
