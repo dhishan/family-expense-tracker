@@ -24,6 +24,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request, status
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
@@ -157,7 +158,31 @@ def _get_family_id(user_id: str) -> str | None:
 
 # ---- MCP server + tools ----------------------------------------------------
 
-mcp = FastMCP("snaptrade-hosted", streamable_http_path="/")
+mcp = FastMCP(
+    "snaptrade-hosted",
+    streamable_http_path="/",
+    # MCP's DNS-rebinding-protection middleware rejects any Host header not
+    # in this list with HTTP 421. Without this, requests from claude.ai to
+    # mcp.expense-tracker.* return 421 even though OAuth succeeds. Include
+    # both the canonical mcp.* subdomain and the alternate api.*/mcp/ path
+    # plus localhost for local dev.
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[
+            "mcp.expense-tracker.blueelephants.org",
+            "api.expense-tracker.blueelephants.org",
+            "127.0.0.1:*",
+            "localhost:*",
+        ],
+        allowed_origins=[
+            "https://claude.ai",
+            "https://chatgpt.com",
+            "https://chat.openai.com",
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+        ],
+    ),
+)
 
 
 @mcp.tool()
