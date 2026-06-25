@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.63",
+          "buildVersion": "1",
+          "date": "2026-06-25T03:50:29Z",
+          "localizedDescription": "What's changed:\n- unified \"Saved foods\" library (foods + recipes, both editable)",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.63/FitnessTracker.ipa",
+          "size": 21604111,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.62",
           "buildVersion": "1",
           "date": "2026-06-23T20:52:28Z",
