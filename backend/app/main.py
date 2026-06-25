@@ -101,6 +101,18 @@ app.include_router(usage.router, prefix=f"{settings.api_prefix}/usage", tags=["U
 # Must serve at the literal /.well-known/... paths — no prefix.
 app.include_router(wellknown.router, tags=["Well-known"])
 
+
+@app.middleware("http")
+async def _mcp_trailing_slash(request, call_next):
+    """FastAPI's default 307 on missing trailing slash breaks POSTs from
+    claude.ai/chatgpt — many clients drop auth headers or refuse to follow
+    a 307 with a body. Rewrite /mcp -> /mcp/ in-place so the mount handles
+    it without a redirect round-trip."""
+    if request.url.path == "/mcp":
+        request.scope["path"] = "/mcp/"
+        request.scope["raw_path"] = b"/mcp/"
+    return await call_next(request)
+
 # Mount hosted MCP server at /mcp (Streamable HTTP transport).
 # Auth: Google OAuth bearer (prod) | X-Mcp-User-Id (dev only).
 # Session manager is started by the lifespan above.

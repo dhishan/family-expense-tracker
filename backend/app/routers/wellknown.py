@@ -28,14 +28,29 @@ def _resource_url() -> str:
     )
 
 
+_PROTECTED_RESOURCE_BODY = {
+    "authorization_servers": ["https://accounts.google.com"],
+    "scopes_supported": ["openid", "email", "profile"],
+    "bearer_methods_supported": ["header"],
+}
+
+
+def _protected_resource_payload() -> dict:
+    return {"resource": _resource_url(), **_PROTECTED_RESOURCE_BODY}
+
+
 @router.get("/.well-known/oauth-protected-resource", include_in_schema=False)
 async def oauth_protected_resource() -> dict:
-    return {
-        "resource": _resource_url(),
-        "authorization_servers": ["https://accounts.google.com"],
-        "scopes_supported": ["openid", "email", "profile"],
-        "bearer_methods_supported": ["header"],
-    }
+    return _protected_resource_payload()
+
+
+# RFC 9728 path-aware variants: clients append the resource path when
+# fetching metadata for a sub-resource. Claude.ai sends
+# `GET /.well-known/oauth-protected-resource/mcp` (and `/mcp/`).
+@router.get("/.well-known/oauth-protected-resource/mcp", include_in_schema=False)
+@router.get("/.well-known/oauth-protected-resource/mcp/", include_in_schema=False)
+async def oauth_protected_resource_mcp() -> dict:
+    return _protected_resource_payload()
 
 
 @router.get("/.well-known/oauth-authorization-server", include_in_schema=False)
