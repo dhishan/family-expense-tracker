@@ -1,9 +1,11 @@
 """Hosted SnapTrade MCP server, mounted on the FastAPI app at /mcp.
 
-Auth strategy (in priority order):
-  1. Cloudflare Access JWT in `Cf-Access-Jwt-Assertion` header (Phase B — production).
-  2. Bearer token = our own JWT issued by /api/v1/auth/google (Phase A fallback).
-  3. `X-Mcp-User-Id` header (LOCAL DEV ONLY — gated by ENVIRONMENT=development).
+Auth strategy:
+  1. `Authorization: Bearer <google_oauth_token>` — verified against Google
+     (ID token or access token; audience must match our OAuth client_id).
+     Used by claude.ai / chatgpt.com custom connectors and by desktop
+     `mcp-remote` walking the OAuth discovery flow.
+  2. `X-Mcp-User-Id` header — LOCAL DEV ONLY, gated by ENVIRONMENT=development.
 
 The resolved internal user_id is stashed in a ContextVar so the tool functions
 can read it without each tool re-implementing auth.
@@ -25,9 +27,7 @@ from mcp.server.fastmcp import FastMCP
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from app.auth.cloudflare import CloudflareAuthError, verify_access_jwt
-from app.auth.dependencies import decode_token
-import os
+from app.auth.google_oauth import GoogleOAuthError, verify_google_oauth_bearer
 
 from app.config import get_settings
 from app.services import market_data, snaptrade_service
@@ -46,8 +46,8 @@ def _resolve_user_id_by_email(email: str) -> str:
     """Look up the internal user_id (Google UID) by email in the `users` collection.
 
     Users are created by /api/v1/auth/google on first sign-in, keyed by Google UID
-    with `email` as a field. CF Access verifies the user has signed in with Google,
-    so the email match is sufficient to identify them.
+    with `email` as a field. A successful Google OAuth flow proves email ownership,
+    so the email match is sufficient to identify the calling user.
     """
     db = get_firestore_client()
     matches = list(db.collection("users").where("email", "==", email).limit(1).stream())
@@ -55,8 +55,8 @@ def _resolve_user_id_by_email(email: str) -> str:
         raise HTTPException(
             status_code=403,
             detail=(
-                f"User {email} authenticated with Cloudflare Access but has no account "
-                "in the expense tracker. Sign in to the web app once to create your account."
+                f"User {email} authenticated with Google but has no account in "
+                "the expense tracker. Sign in to the web app once to create your account."
             ),
         )
     return matches[0].id
@@ -65,58 +65,24 @@ def _resolve_user_id_by_email(email: str) -> str:
 def _resolve_user_id_from_request(request: Request) -> str:
     """Validate auth headers and return the internal user_id (Google UID).
 
-    Auth priority (in order):
-      1. Cloudflare Access JWT in Cf-Access-Jwt-Assertion header (production path)
-      2. Our own JWT bearer token (fallback, e.g. for service-to-service)
-      3. X-Mcp-User-Id header (LOCAL DEV ONLY — gated by ENVIRONMENT=development)
+    Two paths, evaluated in order:
+      1. Authorization: Bearer <google_oauth_token>
+      2. X-Mcp-User-Id (development only)
 
     Raises HTTPException(401/403) on any failure.
     """
-    # 1. Cloudflare Access JWT (production)
-    cf_jwt = request.headers.get("cf-access-jwt-assertion")
-    if cf_jwt:
-        try:
-            claims = verify_access_jwt(cf_jwt)
-        except CloudflareAuthError as e:
-            raise HTTPException(status_code=401, detail=f"Cloudflare Access JWT invalid: {e}")
-        email = claims.get("email")
-        if not email:
-            raise HTTPException(status_code=401, detail="Cloudflare JWT missing email claim")
-        return _resolve_user_id_by_email(email)
-
-    # 2. Bearer token: our own app JWT — DEV ONLY (or behind an explicit
-    # opt-in flag). In production we require the Cloudflare Access JWT so
-    # that policy enforcement at the edge is the single source of truth.
-    # Without this guard, a client could call api.expense-tracker.../mcp
-    # with a normal app JWT and bypass Cloudflare Access entirely.
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
-        allow_bearer = (
-            settings.environment != "production"
-            or os.getenv("ALLOW_MCP_BEARER_FALLBACK", "").lower() in ("1", "true", "yes")
-        )
-        if not allow_bearer:
-            raise HTTPException(
-                status_code=401,
-                detail=(
-                    "MCP in production requires Cloudflare Access. Bearer-token "
-                    "fallback is disabled. Reach /mcp via mcp.expense-tracker."
-                    "blueelephants.org so Cf-Access-Jwt-Assertion is injected."
-                ),
-            )
         token = auth.split(" ", 1)[1].strip()
         try:
-            payload = decode_token(token)
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=401, detail=f"Invalid bearer token: {e}")
-        user_id = payload.get("sub")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Token missing subject")
-        return user_id
+            claims = verify_google_oauth_bearer(token)
+        except GoogleOAuthError as exc:
+            raise HTTPException(status_code=401, detail=f"Google OAuth bearer invalid: {exc}")
+        email = claims.get("email")
+        if not email:
+            raise HTTPException(status_code=401, detail="Google token missing email claim")
+        return _resolve_user_id_by_email(email)
 
-    # 3. Local-dev escape hatch — header-based user injection
     if settings.environment == "development":
         dev_user = request.headers.get("x-mcp-user-id")
         if dev_user:
@@ -124,7 +90,7 @@ def _resolve_user_id_from_request(request: Request) -> str:
 
     raise HTTPException(
         status_code=401,
-        detail="MCP requires Cloudflare Access JWT or Bearer token (or X-Mcp-User-Id in dev).",
+        detail="MCP requires Authorization: Bearer <google_oauth_token> (or X-Mcp-User-Id in dev).",
     )
 
 
@@ -139,7 +105,18 @@ class McpAuthMiddleware(BaseHTTPMiddleware):
         try:
             user_id = _resolve_user_id_from_request(request)
         except HTTPException as e:
-            return JSONResponse({"error": e.detail}, status_code=e.status_code)
+            headers = {}
+            if e.status_code == 401:
+                resource_meta = (
+                    settings.mcp_public_url.rsplit("/mcp/", 1)[0]
+                    if getattr(settings, "mcp_public_url", "")
+                    else "https://mcp.expense-tracker.blueelephants.org"
+                ) + "/.well-known/oauth-protected-resource"
+                headers["WWW-Authenticate"] = (
+                    f'Bearer realm="mcp.expense-tracker", '
+                    f'resource_metadata="{resource_meta}"'
+                )
+            return JSONResponse({"error": e.detail}, status_code=e.status_code, headers=headers)
 
         # Structured log — picked up by GCP log-based metric `mcp_tool_calls`.
         logger.info(

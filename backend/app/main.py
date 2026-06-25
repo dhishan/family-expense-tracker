@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.mcp_server import build_mcp_app, mcp
-from app.routers import auth, families, expenses, budgets, notifications, investments, chat, plaid, rules, usage
+from app.routers import auth, families, expenses, budgets, notifications, investments, chat, plaid, rules, usage, wellknown
 
 settings = get_settings()
 
@@ -97,8 +97,12 @@ app.include_router(plaid.router, prefix=f"{settings.api_prefix}/plaid", tags=["P
 app.include_router(rules.router, prefix=f"{settings.api_prefix}/rules", tags=["Rules"])
 app.include_router(usage.router, prefix=f"{settings.api_prefix}/usage", tags=["Usage"])
 
+# OAuth metadata for MCP client discovery (claude.ai / chatgpt.com connectors).
+# Must serve at the literal /.well-known/... paths — no prefix.
+app.include_router(wellknown.router, tags=["Well-known"])
+
 # Mount hosted MCP server at /mcp (Streamable HTTP transport).
-# Auth: Cloudflare Access JWT (prod) | Bearer JWT (fallback) | X-Mcp-User-Id (dev only).
+# Auth: Google OAuth bearer (prod) | X-Mcp-User-Id (dev only).
 # Session manager is started by the lifespan above.
 app.mount("/mcp", build_mcp_app())
 

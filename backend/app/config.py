@@ -73,9 +73,16 @@ class Settings(BaseSettings):
     tradier_token_sandbox: str = ""           # used by CI / smoke tests
     tradier_env_sandbox_account: str = ""     # sandbox account id (only needed for /accounts endpoints)
 
-    # Cloudflare Access (gates the hosted /mcp endpoint in production)
+    # Cloudflare Access (legacy — MCP no longer gated by CF Access; auth is
+    # Google OAuth bearer at the application layer). Kept for any other
+    # future use; unused by mcp_server.py as of the OAuth migration.
     cf_access_team_domain: str = ""  # e.g. blueelephants.cloudflareaccess.com
     cf_access_aud: str = ""          # Application AUD tag
+
+    # Public URL of the MCP endpoint, used in OAuth metadata responses and
+    # the WWW-Authenticate challenge. Override in local dev to point at
+    # http://localhost:8000/mcp/ if needed.
+    mcp_public_url: str = "https://mcp.expense-tracker.blueelephants.org/mcp/"
 
     class Config:
         env_file = ".env"
