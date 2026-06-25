@@ -24,7 +24,7 @@ A family expense tracking application with brokerage portfolio integration and a
 - Auto-compaction (Anthropic beta) + per-tool result truncation to keep input-token usage bounded
 - Adaptive routing (Sonnet 4.6 by default, Opus 4.7 only on explicit "deep analysis" keywords) + "brief" system prompt by default — typical chat 25-50s instead of 130-190s
 - Langfuse tracing with per-turn LLM generations + per-tool spans for cost analytics
-- Hosted MCP gated by Cloudflare Access (Google SSO)
+- Hosted MCP gated by Google OAuth at the application layer — connectable from claude.ai and chatgpt.com as a custom connector (web + iOS + Android), tools run on your Claude Pro / ChatGPT Plus subscription instead of paying per-token
 
 ### Mobile (native iOS)
 - React Native + Expo (SDK 53) app sharing the same backend
@@ -53,14 +53,30 @@ It launches as its own Dock app with no browser controls.
 
 The native mobile app (Expo + EAS) is a separate distribution — see `mobile/` and the IPA releases in GitHub Releases.
 
+## Use it from claude.ai / ChatGPT
+
+The hosted MCP server exposes ~30 tools (portfolio holdings, expenses, budgets, market data, SEC filings, Reddit buzz). Add it as a custom connector and ask questions in your existing Claude Pro / ChatGPT Plus subscription — works on web, iOS, and Android in both apps.
+
+**claude.ai (or Claude mobile):**
+1. Settings → Connectors → **Add custom connector**
+2. URL: `https://mcp.expense-tracker.blueelephants.org/mcp/`
+3. Paste your Google OAuth `client_id` and `client_secret` from GCP Console → APIs & Services → Credentials
+4. Authorize with Google → grant
+5. Ask: *"what's my portfolio doing"*, *"what's trending on WSB"*, *"how much did we spend on groceries last month"*
+
+**ChatGPT:**
+Settings → Connectors → Add custom → same URL → same credentials.
+
+Your account must already exist in the Firestore `users` collection (sign in to the web app once to create it).
+
 ## Tech Stack
 
 - **Frontend (web)**: React 18, TypeScript, Vite, Tailwind CSS, React Query
 - **Frontend (mobile)**: React Native 0.79 + Expo SDK 53, NativeWind, expo-router
 - **Backend**: Python 3.12, FastAPI, Anthropic SDK, Langfuse v4 SDK, SnapTrade SDK, MCP SDK
 - **Database**: Google Cloud Firestore
-- **Infrastructure**: GCP Cloud Run (backend), **Firebase Hosting (frontend)**, Firestore, Secret Manager, Terraform, Cloudflare (DNS + Access for MCP)
-- **Auth**: Google OAuth 2.0 (web + iOS native clients), Cloudflare Access for the MCP endpoint
+- **Infrastructure**: GCP Cloud Run (backend), **Firebase Hosting (frontend)**, Firestore, Secret Manager, Terraform, Cloudflare DNS
+- **Auth**: Google OAuth 2.0 — web + iOS native clients for the app, same client also serves as the OAuth provider for the MCP endpoint (claude.ai / ChatGPT custom connectors)
 - **CI/CD**: GitHub Actions
 - **OTA**: EAS Update (Expo)
 
@@ -82,10 +98,11 @@ This section is the single source of truth for every account and credential the 
 
 | Account | Used for | Where to sign up |
 |---|---|---|
-| **Cloudflare** | DNS + Access for `mcp.expense-tracker.blueelephants.org` | https://dash.cloudflare.com (free tier) |
-| **Cloudflare Zero Trust** | OAuth-gated access to the MCP endpoint | Enabled inside the Cloudflare dashboard (free up to 50 users) |
+| **Cloudflare** | DNS for `mcp.expense-tracker.blueelephants.org` (DNS-only, not proxied) | https://dash.cloudflare.com (free tier) |
 
-The Cloudflare Access app is configured via API — see `docs/HOSTED_MCP_DEPLOY.md`. Required env vars: `CF_ACCESS_TEAM_DOMAIN` (e.g. `blueelephants.cloudflareaccess.com`), `CF_ACCESS_AUD` (Application AUD tag).
+MCP auth is application-layer Google OAuth — the same OAuth client the web/mobile app already uses, no extra account needed. The MCP server publishes OAuth metadata at `/.well-known/oauth-protected-resource` so claude.ai / ChatGPT can discover the auth flow. See `docs/HOSTED_MCP_DEPLOY.md` and `app/auth/google_oauth.py`.
+
+Manual GCP step when first adding the connector: in the existing OAuth client (Console → APIs & Services → Credentials), add `https://claude.ai/api/mcp/auth_callback` and `https://chatgpt.com/api/mcp/auth_callback` to the Authorized redirect URIs. Cloudflare Access is **not** used for the MCP endpoint — the proxied CNAME was unset because Cloudflare Universal SSL doesn't cover second-level subdomains and the OAuth-at-the-edge model can't be negotiated by Claude/ChatGPT mobile backends.
 
 ### Required for observability
 
