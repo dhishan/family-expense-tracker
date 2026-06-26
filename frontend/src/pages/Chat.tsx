@@ -435,6 +435,18 @@ export default function Chat() {
     }
   }, [messages, stickToBottom])
 
+  // Keep Cloud Run warm while a chat turn is in flight. The backend runs
+  // generation as a background asyncio task; with minScale=0 the container
+  // can be recycled mid-stream. A cheap /health ping every 30s prevents
+  // the idle-scale-down timer from firing during an active generation.
+  useEffect(() => {
+    if (!streaming) return
+    const t = setInterval(() => {
+      fetch(`${API_URL}/health`).catch(() => {})
+    }, 30_000)
+    return () => clearInterval(t)
+  }, [streaming])
+
   const jumpToLatest = useCallback(() => {
     setStickToBottom(true)
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })

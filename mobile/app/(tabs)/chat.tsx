@@ -17,6 +17,7 @@ import Markdown from 'react-native-markdown-display'
 import { Ionicons } from '@expo/vector-icons'
 import { useQuery } from '@tanstack/react-query'
 import { chatApi, expensesApi, budgetsApi, investmentsApi, usageApi } from '@/services/api'
+import { API_BASE_URL } from '@/config/apiBase'
 import { useAuthStore } from '@/store/auth'
 import type { BudgetStatus, HoldingGroup } from '@/types'
 
@@ -655,6 +656,19 @@ export default function ChatScreen() {
       streamCleanupRef.current = null
     }
   }, [])
+
+  // Keep Cloud Run warm during an in-flight chat turn. With minScale=0
+  // the container can be recycled mid-generation; a cheap /health ping
+  // every 30s resets the idle-scale-down timer. Pings stop the moment
+  // the turn completes (or fails). See terraform/main/main.tf comment
+  // on the backend service for the cost rationale.
+  useEffect(() => {
+    if (!isStreaming) return
+    const t = setInterval(() => {
+      fetch(`${API_BASE_URL}/health`).catch(() => {})
+    }, 30_000)
+    return () => clearInterval(t)
+  }, [isStreaming])
 
   const renderMessage = ({ item }: { item: UIMessage }) => {
     const isUser = item.role === 'user'

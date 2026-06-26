@@ -789,36 +789,30 @@ resource "google_cloud_run_service" "backend" {
 
     metadata {
       annotations = {
-        # Chat generation runs as a background asyncio.create_task that
-        # outlives the HTTP request handler. For that task to actually
-        # finish, the container must stay alive after the response
-        # completes. Two settings make that work:
+        # 2026-06-25: shifted analysis traffic to claude.ai via the MCP
+        # connector (Claude Pro subscription pays for tokens). In-app
+        # chat is now a backup surface, not the primary one. With that
+        # change two things were possible:
         #
-        #   minScale = 1
-        #     Keep at least one warm instance so a freshly-spun-up
-        #     instance with an in-flight background task isn't torn
-        #     down for scale-to-zero. Also kills cold-start latency
-        #     on the chat path (~10-30s saved per first message).
+        #   minScale = 0
+        #     Container scales to zero when truly idle. MCP requests
+        #     wake it from cold (~5-15s for first call). The Stackdriver
+        #     uptime check was also lowered to 15 min so overnight idle
+        #     actually scales down — no point paying for an always-on
+        #     instance just so a 1-min uptime check finds someone home.
         #
         #   run.googleapis.com/cpu-throttling = false
-        #     Without this, CPU is throttled to near-zero when the
-        #     container has no in-flight HTTP request — which is
-        #     exactly the situation our background task is in once
-        #     the POST /chat/start response has been sent. Throttled
-        #     CPU stretches chat generation from 30s to several
-        #     minutes and can cause Anthropic stream timeouts.
-        #
-        # Cost trade-off: one always-on instance + always-allocated
-        # CPU is roughly $7-10/month for the smallest tier; this
-        # exits the absolute free tier but is required for the
-        # disconnect-survival behavior the mobile app needs.
-        "autoscaling.knative.dev/minScale"        = "1"
+        #     Restored so background chat generation gets full CPU
+        #     during a session. To prevent scale-down mid-generation,
+        #     the web + mobile chat pages send a /health ping every
+        #     30s while a turn is in flight. This is the cheap-and-
+        #     cheerful alternative to moving chat generation to
+        #     Cloud Tasks: ~20 lines of client code instead of a
+        #     queue refactor. Cost during a chat session is bounded
+        #     by session duration (~5-10 min/day total).
+        "autoscaling.knative.dev/minScale"        = "0"
         "autoscaling.knative.dev/maxScale"        = "10"
-        # 2026-06-12: flipped to true to cut cost (~$50/mo always-allocated
-        # vs ~$6-9/mo throttled). Trade-off accepted: background chat
-        # generation throttles when no request is in flight (app backgrounded
-        # mid-turn); the durable-turn store makes this recoverable on reopen.
-        "run.googleapis.com/cpu-throttling"       = "true"
+        "run.googleapis.com/cpu-throttling"       = "false"
         # Force a new revision on every TF apply so :latest image is re-pulled.
         "client.knative.dev/user-image-sha" = "deployed-${formatdate("YYYYMMDDhhmm", timestamp())}"
       }
