@@ -200,6 +200,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.64",
+          "buildVersion": "1",
+          "date": "2026-06-26T05:13:35Z",
+          "localizedDescription": "What's changed:\n- wire EAS Update for OTA on AltStore builds\n- carry favorite micros into the edit sheet (web + mobile)\n- get_workouts called list_workouts with the wrong signature\n- save favorites as the base dish, not the multiplied entry\n- persist micros on favorites (save + log + backfill)\n- Phase 1 \u2014 multi-tenant MCP auth + gateway trust; legal pages\n- Google OAuth so claude.ai / ChatGPT custom connectors can connect\n- scanned labels failed to save (micros_source \"label\" rejected)\n- restore chat quality \u2014 route advice to the strong model",
+          "downloadURL": "https://github.com/dhishan/fitness-coach/releases/download/mobile-v1.0.64/FitnessTracker.ipa",
+          "size": 22052751,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.63",
           "buildVersion": "1",
           "date": "2026-06-25T03:50:29Z",
