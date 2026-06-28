@@ -782,7 +782,16 @@ async def _approve_pending(
         or "Bank transaction"
     )
 
+    # Budget pin is authoritative for beneficiary — a budget already
+    # represents the agreed split (e.g. Groceries → whole family). Without
+    # this, Plaid's cardholder default leaks through and personal-filter
+    # views misattribute family spending.
     beneficiary = override_beneficiary or current_user.id
+    if override_budget_id:
+        from app.services.budget_service import get_budget_service
+        budget = await get_budget_service().get(override_budget_id, current_user.family_id)
+        if budget:
+            beneficiary = budget.beneficiary or ""
 
     # Derive payment method — user override wins; else derive from account type
     if override_payment_method:
@@ -1072,6 +1081,11 @@ async def approve_split(
             category = ExpenseCategory.OTHER
 
         beneficiary = split.beneficiary or current_user.id
+        if split.budget_id:
+            from app.services.budget_service import get_budget_service
+            split_budget = await get_budget_service().get(split.budget_id, current_user.family_id)
+            if split_budget:
+                beneficiary = split_budget.beneficiary or ""
 
         expense_create = ExpenseCreate(
             amount=split_amount,
