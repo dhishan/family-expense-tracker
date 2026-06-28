@@ -13,6 +13,7 @@ import {
 } from 'react-native'
 import { router } from 'expo-router'
 import Constants from 'expo-constants'
+import * as Updates from 'expo-updates'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as SecureStore from 'expo-secure-store'
 import { useAuthStore } from '@/store/auth'
@@ -166,9 +167,43 @@ const cardStyles = StyleSheet.create({
 export default function SettingsScreen() {
   const { user, family, logout } = useAuthStore()
   const appVersion = Constants.expoConfig?.version ?? '1.0.0'
+  // Semver build stamp baked at publish time via `git describe`. Example:
+  // "1.0.17" at a release, "1.0.17+3.a1b2c3d" for an OTA 3 commits past it.
+  // Falls back to the app.json version for local dev / unstamped builds.
+  const buildVersion = process.env.EXPO_PUBLIC_OTA_VERSION || appVersion
+  const otaLabel = Updates.isEmbeddedLaunch
+    ? 'Embedded (no OTA yet)'
+    : `${(Updates.updateId ?? '').slice(0, 8)}${
+        Updates.createdAt ? ` · ${Updates.createdAt.toLocaleDateString()}` : ''
+      }`
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
   const queryClient = useQueryClient()
   const [connectingBank, setConnectingBank] = useState(false)
   const [connectingBrokerage, setConnectingBrokerage] = useState(false)
+
+  const handleCheckUpdate = async () => {
+    if (!Updates.isEnabled) {
+      Alert.alert('Updates', 'OTA updates are not available in this build.')
+      return
+    }
+    setCheckingUpdate(true)
+    try {
+      const res = await Updates.checkForUpdateAsync()
+      if (!res.isAvailable) {
+        Alert.alert('Up to date', 'You are running the latest version.')
+        return
+      }
+      await Updates.fetchUpdateAsync()
+      Alert.alert('Update ready', 'Restart now to apply the update?', [
+        { text: 'Later', style: 'cancel' },
+        { text: 'Restart', onPress: () => void Updates.reloadAsync() },
+      ])
+    } catch (e) {
+      Alert.alert('Update check failed', String(e))
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }
 
   const { data: itemsData, isLoading: itemsLoading } = useQuery({
     queryKey: ['plaid', 'items'],
@@ -535,6 +570,29 @@ export default function SettingsScreen() {
           <Text style={styles.rowValue}>{appVersion}</Text>
         </View>
         <View style={styles.row}>
+          <Text style={styles.rowLabel}>Build</Text>
+          <Text style={styles.rowValue}>{buildVersion}</Text>
+        </View>
+        <View style={styles.row}>
+          <Text style={styles.rowLabel}>Update</Text>
+          <Text style={styles.rowValue}>{otaLabel}</Text>
+        </View>
+        <Text style={styles.subtext}>
+          Runtime {Updates.runtimeVersion ?? '-'} · channel {Updates.channel ?? '-'}
+        </Text>
+        <TouchableOpacity
+          style={styles.updateBtn}
+          onPress={handleCheckUpdate}
+          disabled={checkingUpdate}
+          testID="check-updates-btn"
+        >
+          {checkingUpdate ? (
+            <ActivityIndicator size="small" color="#2563eb" />
+          ) : (
+            <Text style={styles.updateBtnText}>Check for updates</Text>
+          )}
+        </TouchableOpacity>
+        <View style={[styles.row, { marginTop: 12 }]}>
           <Text style={styles.rowLabel}>API</Text>
           <Text style={styles.rowValue}>
             {process.env.EXPO_PUBLIC_API_BASE_URL ?? 'https://api.expense-tracker.blueelephants.org'}
@@ -655,4 +713,14 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   signOutText: { fontSize: 16, color: '#dc2626', fontWeight: '600' },
+  subtext: { fontSize: 12, color: '#6b7280', marginTop: 4 },
+  updateBtn: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#2563eb',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  updateBtnText: { color: '#2563eb', fontWeight: '600', fontSize: 14 },
 })

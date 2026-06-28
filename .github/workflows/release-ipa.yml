@@ -111,6 +111,11 @@ jobs:
           json.dump(d, open(p, "w"), indent=2)
           print(f"set version to $VER, runtimeVersion stays {rv}")
           EOF
+          # Bake the same clean semver into the embedded JS bundle so the
+          # in-app Settings shows the IPA's "Build" without an OTA suffix
+          # until an OTA actually lands. The mobile-ota.yml workflow
+          # overwrites this with "VER+N.sha" for post-release commits.
+          echo "EXPO_PUBLIC_OTA_VERSION=$VER" >> "$GITHUB_ENV"
 
       - name: Expo prebuild (iOS)
         working-directory: mobile

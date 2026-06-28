@@ -46,6 +46,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need tags + history for `git describe`
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -118,8 +120,29 @@ jobs:
           echo "message=$MSG_ESCAPED" >> $GITHUB_OUTPUT
           echo "Update message: $MSG_ESCAPED"
 
+      # Semver build stamp from git: "1.0.17+5.e3784da" = 5 commits past the
+      # mobile-v1.0.17 tag. Baked into the bundle as EXPO_PUBLIC_OTA_VERSION
+      # so the Settings page shows an ordered, traceable build version
+      # instead of just the IPA's static app.json version + an OTA UUID.
+      - name: Compute build version
+        id: ver
+        run: |
+          git fetch --tags --force --quiet || true
+          RAW=$(git describe --tags --match 'mobile-v*' --always 2>/dev/null || echo "")
+          if [[ "$RAW" =~ ^mobile-v([0-9]+\.[0-9]+\.[0-9]+)-([0-9]+)-g([0-9a-f]+)$ ]]; then
+            VER="${BASH_REMATCH[1]}+${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+          elif [[ "$RAW" =~ ^mobile-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            VER="${BASH_REMATCH[1]}"
+          else
+            VER="0.0.0+${GITHUB_SHA::7}"
+          fi
+          echo "Build version: $VER"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
       - name: EAS Update → preview
         working-directory: mobile
+        env:
+          EXPO_PUBLIC_OTA_VERSION: ${{ steps.ver.outputs.version }}
         run: |
           npx eas-cli update --branch preview --message "${{ steps.msg.outputs.message }}" --non-interactive
 
