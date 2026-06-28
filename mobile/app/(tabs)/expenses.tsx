@@ -711,7 +711,10 @@ function ApproveModal({
           <ScrollView
             style={{ flex: 1 }}
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
+            // "interactive" lets the user drag the keyboard down deliberately
+            // without firing on the tiny drag a long-press text-selection
+            // gesture produces (which "on-drag" mistakes for a dismiss).
+            keyboardDismissMode="interactive"
             // iOS pageSheet adds its own top inset; KeyboardAvoidingView's
             // math doesn't account for it, so lower TextInputs (Date in
             // Advanced section) end up hidden behind the keyboard. This
@@ -1362,7 +1365,10 @@ function AddEditModal({
           <ScrollView
             style={{ flex: 1 }}
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
+            // "interactive" lets the user drag the keyboard down deliberately
+            // without firing on the tiny drag a long-press text-selection
+            // gesture produces (which "on-drag" mistakes for a dismiss).
+            keyboardDismissMode="interactive"
             // iOS pageSheet adds its own top inset; KeyboardAvoidingView's
             // math doesn't account for it, so lower TextInputs (Date in
             // Advanced section) end up hidden behind the keyboard. This

@@ -142,7 +142,10 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
           <ScrollView
             style={{ flex: 1 }}
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
+            // "interactive" — drag-to-dismiss only on a deliberate downward
+            // swipe from the keyboard. "on-drag" was breaking long-press
+            // text selection inside the TextInputs.
+            keyboardDismissMode="interactive"
             // iOS pageSheet inset isn't accounted for by KeyboardAvoidingView;
             // let UIKit adjust insets natively so lower fields aren't masked.
             automaticallyAdjustKeyboardInsets
