@@ -57,7 +57,7 @@ def test_mcp_cf_access_header_alone_no_longer_accepted(client):
 
 
 def test_mcp_google_bearer_unknown_email_returns_403(client):
-    fake_claims = {"email": "stranger@example.com", "sub": "g-99"}
+    fake_claims = {"email": "stranger@example.com", "sub": "g-99", "email_verified": True}
     with patch(
         "app.mcp_server.verify_google_oauth_bearer", return_value=fake_claims
     ), patch("app.mcp_server.get_firestore_client") as fs:
@@ -79,3 +79,20 @@ def test_mcp_google_bearer_invalid_token_returns_401(client):
         r = client.get("/mcp/", headers={"Authorization": "Bearer bad-token"})
     assert r.status_code == 401
     assert "Google OAuth bearer invalid" in r.json()["error"]
+
+
+def test_mcp_unverified_email_rejected_before_lookup(client):
+    """SECURITY: unverified email must NOT resolve to an existing account, even
+    if it matches one. Otherwise a forged/unverified claim could impersonate."""
+    unverified = {"email": "victim@example.com", "sub": "attacker", "email_verified": False}
+    with (
+        patch("app.mcp_server.verify_google_oauth_bearer", return_value=unverified),
+        patch("app.mcp_server.get_firestore_client") as fs,
+    ):
+        db = MagicMock()
+        fs.return_value = db
+        r = client.get("/mcp/", headers={"Authorization": "Bearer t"})
+    assert r.status_code == 401
+    assert "not verified" in r.json()["error"]
+    # The lookup helper must not have been touched.
+    db.collection.assert_not_called()

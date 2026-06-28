@@ -83,6 +83,14 @@ def _resolve_user_id_from_request(request: Request) -> str:
         email = claims.get("email")
         if not email:
             raise HTTPException(status_code=401, detail="Google token missing email claim")
+        # SECURITY: must check email_verified BEFORE the email->user_id lookup,
+        # otherwise a forged/unverified claim matching a victim's email could
+        # resolve to that victim's account. Mirrors fitness-tracker 5a885ec.
+        if not claims.get("email_verified"):
+            raise HTTPException(
+                status_code=401,
+                detail="Google email not verified; cannot use this token to access MCP.",
+            )
         return _resolve_user_id_by_email(email)
 
     if settings.environment == "development":
