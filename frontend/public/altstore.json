@@ -21,6 +21,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.18",
+          "buildVersion": "1",
+          "date": "2026-06-28T09:01:02Z",
+          "localizedDescription": "What's changed:\n- in-app Check-for-updates button + git-described build version\n- infra: scale Cloud Run to zero + chat keepalive pings\n- Sentry user identity + Langfuse parent span per request\n- explicit allowed_hosts so Claude's POST isn't 421'd\n- handle Claude's /mcp POST without redirect + path-aware discovery\n- Google OAuth bearer auth for claude.ai / ChatGPT connectors\n- social sentiment tools (ApeWisdom Reddit buzz)\n- Sentry instrumentation pass \u2014 identity, error boundary, release, breadcrumbs",
+          "downloadURL": "https://github.com/dhishan/family-expense-tracker/releases/download/mobile-v1.0.18/Expenses.ipa",
+          "size": 15132138,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "1.0.17",
           "buildVersion": "1",
           "date": "2026-06-17T20:08:24Z",
