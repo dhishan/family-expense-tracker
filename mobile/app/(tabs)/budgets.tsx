@@ -149,7 +149,7 @@ function BudgetModal({ visible, editing, onClose, onSave, isSaving, familyMember
             // iOS pageSheet inset isn't accounted for by KeyboardAvoidingView;
             // let UIKit adjust insets natively so lower fields aren't masked.
             automaticallyAdjustKeyboardInsets
-            contentContainerStyle={{ paddingBottom: 64 }}
+
           >
             <View style={modalStyles.form}>
               <Text style={modalStyles.label}>Name *</Text>

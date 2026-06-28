@@ -125,6 +125,37 @@ resource "google_firestore_index" "expenses_beneficiary_family_date" {
   depends_on = [google_firestore_database.database]
 }
 
+# Same shape but with date DESCENDING — required by the expense list endpoint
+# (family_id == X AND beneficiary == Y ORDER BY date DESC). Without this the
+# person filter on the Transactions screen 500s and the list silently empties.
+resource "google_firestore_index" "expenses_beneficiary_family_date_desc" {
+  project    = var.project_id
+  database   = google_firestore_database.database.name
+  collection = "expenses"
+
+  fields {
+    field_path = "beneficiary"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "family_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "date"
+    order      = "DESCENDING"
+  }
+
+  fields {
+    field_path = "__name__"
+    order      = "DESCENDING"
+  }
+
+  depends_on = [google_firestore_database.database]
+}
+
 # Index for budget spending queries: category equality + family_id equality + date range
 resource "google_firestore_index" "expenses_category_family_date" {
   project    = var.project_id

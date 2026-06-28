@@ -720,7 +720,7 @@ function ApproveModal({
             // Advanced section) end up hidden behind the keyboard. This
             // prop lets UIKit handle the inset natively for pageSheet.
             automaticallyAdjustKeyboardInsets
-            contentContainerStyle={{ paddingBottom: 64 }}
+
           >
             <View style={modalStyles.form}>
               <Text style={modalStyles.label}>Amount</Text>
@@ -1374,7 +1374,7 @@ function AddEditModal({
             // Advanced section) end up hidden behind the keyboard. This
             // prop lets UIKit handle the inset natively for pageSheet.
             automaticallyAdjustKeyboardInsets
-            contentContainerStyle={{ paddingBottom: 64 }}
+
           >
             <View style={modalStyles.form}>
               <Text style={modalStyles.label}>Amount</Text>
