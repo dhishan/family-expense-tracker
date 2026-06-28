@@ -711,6 +711,12 @@ function ApproveModal({
           <ScrollView
             style={{ flex: 1 }}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            // iOS pageSheet adds its own top inset; KeyboardAvoidingView's
+            // math doesn't account for it, so lower TextInputs (Date in
+            // Advanced section) end up hidden behind the keyboard. This
+            // prop lets UIKit handle the inset natively for pageSheet.
+            automaticallyAdjustKeyboardInsets
             contentContainerStyle={{ paddingBottom: 64 }}
           >
             <View style={modalStyles.form}>
@@ -1356,6 +1362,12 @@ function AddEditModal({
           <ScrollView
             style={{ flex: 1 }}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            // iOS pageSheet adds its own top inset; KeyboardAvoidingView's
+            // math doesn't account for it, so lower TextInputs (Date in
+            // Advanced section) end up hidden behind the keyboard. This
+            // prop lets UIKit handle the inset natively for pageSheet.
+            automaticallyAdjustKeyboardInsets
             contentContainerStyle={{ paddingBottom: 64 }}
           >
             <View style={modalStyles.form}>
