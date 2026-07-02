@@ -84,6 +84,10 @@ class PatchItemRequest(BaseModel):
     institution_name: Optional[str] = None
 
 
+class ReconnectRequest(BaseModel):
+    platform: str = "mobile"  # "web" | "mobile"
+
+
 class ApproveRequest(BaseModel):
     amount: Optional[float] = None
     category: Optional[str] = None
@@ -453,6 +457,7 @@ async def delete_item(
 @router.post("/items/{plaid_item_id}/reconnect")
 async def reconnect_item(
     plaid_item_id: str,
+    body: ReconnectRequest = ReconnectRequest(),
     current_user: User = Depends(get_current_user),
 ):
     """Create an update-mode link token for a needs_reauth item.
@@ -471,6 +476,11 @@ async def reconnect_item(
     if not access_token:
         raise HTTPException(status_code=404, detail="Item not found")
 
+    # OAuth institutions (Chase, Robinhood, etc.) require the same whitelisted
+    # redirect_uri as the original link when running update mode — otherwise the
+    # OAuth handoff back from the bank fails. Non-OAuth banks ignore it.
+    redirect_uri = PLAID_REDIRECT_URI_WEB if body.platform == "web" else PLAID_REDIRECT_URI_MOBILE
+
     client = _plaid_client()
     try:
         req = LinkTokenCreateRequest(
@@ -482,6 +492,7 @@ async def reconnect_item(
             language="en",
             webhook=WEBHOOK_URL,
             access_token=access_token,
+            redirect_uri=redirect_uri,
         )
         resp = client.link_token_create(req)
     except Exception as exc:

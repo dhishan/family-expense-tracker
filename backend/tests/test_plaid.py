@@ -1015,6 +1015,58 @@ class TestCreateLinkTokenRedirectUri:
         assert captured["req"].redirect_uri == PLAID_REDIRECT_URI_MOBILE
 
 
+class TestReconnectItemRedirectUri:
+    """Reconnect (update mode) must carry a redirect_uri, else OAuth banks
+    (Chase, Robinhood) fail the OAuth handoff. Regression for the reconnect 500."""
+
+    def _call_reconnect(self, platform: str, captured: dict):
+        import asyncio
+        from app.routers.plaid import reconnect_item, ReconnectRequest
+
+        user = _make_user()
+
+        mock_resp = MagicMock()
+        mock_resp.to_dict.return_value = {
+            "link_token": "link-sandbox-test-token",
+            "expiration": "2026-06-11T00:00:00Z",
+        }
+
+        def fake_link_token_create(req):
+            captured["req"] = req
+            return mock_resp
+
+        with (
+            patch("app.routers.plaid._plaid_client") as mock_client,
+            patch("app.routers.plaid._require_family_id", return_value="fam-001"),
+            patch("app.routers.plaid.plaid_service.get_item", return_value={"id": "item-1"}),
+            patch(
+                "app.routers.plaid.plaid_service.get_access_token_internal",
+                return_value="access-token-xyz",
+            ),
+        ):
+            mock_client.return_value.link_token_create.side_effect = fake_link_token_create
+            body = ReconnectRequest(platform=platform)
+            asyncio.run(reconnect_item("item-1", body=body, current_user=user))
+
+    def test_web_platform_uses_web_redirect_uri(self):
+        from app.routers.plaid import PLAID_REDIRECT_URI_WEB
+
+        captured: dict = {}
+        self._call_reconnect("web", captured)
+
+        req = captured["req"]
+        assert req.redirect_uri == PLAID_REDIRECT_URI_WEB
+        # update mode still passes the existing access_token
+        assert req.access_token == "access-token-xyz"
+
+    def test_mobile_platform_uses_mobile_redirect_uri(self):
+        from app.routers.plaid import PLAID_REDIRECT_URI_MOBILE
+
+        captured: dict = {}
+        self._call_reconnect("mobile", captured)
+        assert captured["req"].redirect_uri == PLAID_REDIRECT_URI_MOBILE
+
+
 # ---------------------------------------------------------------------------
 # approve-split endpoint tests
 # ---------------------------------------------------------------------------

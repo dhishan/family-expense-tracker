@@ -137,7 +137,13 @@ function BanksAndCards() {
 
   const handleReconnect = async (item: PlaidItem) => {
     try {
-      const { link_token } = await plaidApi.reconnectItem(item.id)
+      const { link_token } = await plaidApi.reconnectItem(item.id, { platform: 'web' })
+      // Persist across the OAuth redirect — OAuth banks (Chase, Robinhood, etc.)
+      // bounce out to their login page and back to /plaid-oauth-return, which
+      // restores the token from sessionStorage to resume Link in update mode.
+      if (user?.id) {
+        sessionStorage.setItem(`plaid_link_token_${user.id}`, link_token)
+      }
       setReconnectToken(link_token)
     } catch {
       toast.error('Failed to start reconnection')

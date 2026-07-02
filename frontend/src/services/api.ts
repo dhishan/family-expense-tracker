@@ -384,8 +384,10 @@ export const plaidApi = {
     await api.delete(`/plaid/items/${id}`)
   },
 
-  reconnectItem: async (id: string): Promise<{ link_token: string }> => {
-    const response = await api.post<{ link_token: string }>(`/plaid/items/${id}/reconnect`)
+  reconnectItem: async (id: string, opts?: { platform?: 'web' | 'mobile' }): Promise<{ link_token: string }> => {
+    const response = await api.post<{ link_token: string }>(`/plaid/items/${id}/reconnect`, {
+      platform: opts?.platform ?? 'mobile',
+    })
     return response.data
   },
 
