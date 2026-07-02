@@ -116,15 +116,16 @@ test.describe('Plaid integration', () => {
   })
 
   // -------------------------------------------------------------------------
-  // 01. Connection appears in Connected Accounts
+  // 01. Connection appears in Banks & Cards
   // -------------------------------------------------------------------------
 
-  test('01 connects a sandbox bank and shows it in Connected Accounts', async ({ page }) => {
+  test('01 connects a sandbox bank and shows it in Banks & Cards', async ({ page }) => {
     await page.goto(`${BASE}/settings`)
     await page.waitForLoadState('networkidle')
 
-    // Section heading exists
-    await expect(page.getByText('Connected Accounts')).toBeVisible()
+    // Section heading exists (renamed to the unified "Banks & Cards" section
+    // under Connections in commit 11b7074).
+    await expect(page.getByText('Banks & Cards')).toBeVisible()
 
     // Empty state before connection
     await expect(page.getByText(/first platypus bank/i)).not.toBeVisible()

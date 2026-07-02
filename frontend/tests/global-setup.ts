@@ -33,6 +33,39 @@ function post(hostname: string, path: string, body: string, headers: Record<stri
   })
 }
 
+// Scheme-aware unauthenticated POST (http for local CI sandbox, https for prod).
+// Used to exchange the Google id_token for a backend JWT against whatever
+// backend the tests run against — critically NOT hardcoded to prod, so the JWT
+// is signed by the same backend that later verifies it.
+function postJson(url: string, body: object): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const bodyStr = JSON.stringify(body)
+    const u = new URL(url)
+    const req = clientFor(u).request(
+      {
+        hostname: u.hostname,
+        port: u.port || undefined,
+        path: u.pathname + u.search,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(bodyStr),
+        },
+      },
+      (res) => {
+        let data = ''
+        res.on('data', (chunk) => (data += chunk))
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)) } catch { resolve(data) }
+        })
+      }
+    )
+    req.on('error', reject)
+    req.write(bodyStr)
+    req.end()
+  })
+}
+
 function get(url: string, token: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const u = new URL(url)
@@ -159,9 +192,11 @@ export default async function globalSetup() {
 
   const idToken = await getFreshIdToken()
 
-  const authRes = await post('api.expense-tracker.blueelephants.org', '/api/v1/auth/google',
-    JSON.stringify({ token: idToken, token_type: 'id_token' }),
-    { 'Content-Type': 'application/json' }
+  // Authenticate against the SAME backend the tests hit (API), not hardcoded
+  // prod. In CI, API is the local sandbox backend using a per-run ephemeral
+  // JWT secret — a prod-minted JWT would be rejected as "Invalid or expired".
+  const authRes = await postJson(`${API}/auth/google`,
+    { token: idToken, token_type: 'id_token' }
   ) as Record<string, unknown>
 
   if (!authRes.access_token) throw new Error(`Backend auth failed: ${JSON.stringify(authRes)}`)
