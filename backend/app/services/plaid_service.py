@@ -455,6 +455,9 @@ def update_item_status(plaid_item_id: str, status: str) -> None:
     db.collection(PLAID_ITEMS_COLLECTION).document(plaid_item_id).update(
         {"status": status, "updated_at": _now()}
     )
+    # Audit trail: status transitions are the thing you need when a connection
+    # silently stops syncing. Keep it in Cloud Logging so it's queryable.
+    logger.info("plaid item status set item=%s status=%s", plaid_item_id, status)
 
 
 def update_item_cursor(plaid_item_id: str, cursor: str | None, last_synced_at: datetime) -> None:

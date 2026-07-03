@@ -1067,6 +1067,45 @@ class TestReconnectItemRedirectUri:
         assert captured["req"].redirect_uri == PLAID_REDIRECT_URI_MOBILE
 
 
+class TestReconnectComplete:
+    """Update-mode reconnect has no exchange, so reconnect-complete must clear
+    needs_reauth and trigger a sync. Regression for silently-stuck items."""
+
+    def test_marks_active_and_returns_ok(self):
+        import asyncio
+        from app.routers.plaid import reconnect_complete
+
+        user = _make_user()
+        with (
+            patch("app.routers.plaid._require_family_id", return_value="fam-001"),
+            patch(
+                "app.routers.plaid.plaid_service.get_item",
+                return_value={"id": "item-1", "status": "needs_reauth", "institution_name": "Robinhood"},
+            ),
+            patch("app.routers.plaid.plaid_service.update_item_status") as mock_status,
+            patch("app.routers.plaid.plaid_service.sync_transactions", return_value={"added": 3}),
+        ):
+            result = asyncio.run(reconnect_complete("item-1", current_user=user))
+
+        mock_status.assert_called_once_with("item-1", "active")
+        assert result["ok"] is True
+        assert result["status"] == "active"
+
+    def test_404_when_item_missing(self):
+        import asyncio
+        from fastapi import HTTPException
+        from app.routers.plaid import reconnect_complete
+
+        user = _make_user()
+        with (
+            patch("app.routers.plaid._require_family_id", return_value="fam-001"),
+            patch("app.routers.plaid.plaid_service.get_item", return_value=None),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                asyncio.run(reconnect_complete("missing", current_user=user))
+        assert exc.value.status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # approve-split endpoint tests
 # ---------------------------------------------------------------------------

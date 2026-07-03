@@ -31,6 +31,7 @@ function BanksAndCards() {
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [reconnectToken, setReconnectToken] = useState<string | null>(null)
+  const [reconnectingItemId, setReconnectingItemId] = useState<string | null>(null)
   const [disconnectConfirmId, setDisconnectConfirmId] = useState<string | null>(null)
   // IDs of newly connected items whose initial sync is still running
   const [syncingItemIds, setSyncingItemIds] = useState<Set<string>>(new Set())
@@ -96,14 +97,26 @@ function BanksAndCards() {
   // Plaid Link for reconnect (update mode)
   const { open: openReconnectLink, ready: reconnectReady } = usePlaidLink({
     token: reconnectToken || '',
-    onSuccess: () => {
+    onSuccess: async () => {
+      // Update mode has no exchange, so tell the backend the reconnect landed:
+      // clears needs_reauth + triggers a sync. Without this the item stays stuck.
+      if (reconnectingItemId) {
+        try {
+          await plaidApi.reconnectComplete(reconnectingItemId)
+        } catch {
+          toast.error('Reconnected, but finishing up failed — try a manual refresh')
+        }
+      }
       queryClient.invalidateQueries({ queryKey: ['plaid', 'items'] })
+      queryClient.invalidateQueries({ queryKey: ['plaid', 'pending'] })
       toast.success('Bank reconnected!')
       setReconnectToken(null)
+      setReconnectingItemId(null)
     },
     onExit: (err, metadata) => {
       reportPlaidExit(err, metadata, 'reconnect')
       setReconnectToken(null)
+      setReconnectingItemId(null)
     },
   })
 
@@ -144,6 +157,7 @@ function BanksAndCards() {
 
   const handleReconnect = async (item: PlaidItem) => {
     try {
+      setReconnectingItemId(item.id)
       const { link_token } = await plaidApi.reconnectItem(item.id, { platform: 'web' })
       // Persist across the OAuth redirect — OAuth banks (Chase, Robinhood, etc.)
       // bounce out to their login page and back to /plaid-oauth-return, which

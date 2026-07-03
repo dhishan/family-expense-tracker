@@ -391,6 +391,14 @@ export const plaidApi = {
     return response.data
   },
 
+  // Update-mode reconnect reuses the access token, so there's no exchange to tell
+  // the backend it succeeded. Call this on Link onSuccess to clear needs_reauth
+  // and trigger a sync — otherwise the item stays stuck showing "needs reauth".
+  reconnectComplete: async (id: string): Promise<{ ok: boolean; status: string }> => {
+    const response = await api.post<{ ok: boolean; status: string }>(`/plaid/items/${id}/reconnect-complete`)
+    return response.data
+  },
+
   listPending: async (page?: number, page_size?: number): Promise<PendingListResponse> => {
     const response = await api.get<PendingListResponse>('/plaid/pending', { params: { page, page_size } })
     return response.data

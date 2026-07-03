@@ -506,6 +506,67 @@ async def reconnect_item(
     }
 
 
+@router.post("/items/{plaid_item_id}/reconnect-complete")
+async def reconnect_complete(
+    plaid_item_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Finalize a successful update-mode reconnect.
+
+    Plaid Link's update-mode flow reuses the existing access token, so there is
+    no public-token exchange to tell the backend the reconnect happened. The
+    frontend must call this on Link onSuccess so we (a) clear the needs_reauth
+    flag and (b) pull any transactions that accrued while the item was expired.
+    Without this the item is reconnected on Plaid's side but stays stuck showing
+    "needs reauth" and never syncs.
+    """
+    family_id = _require_family_id(current_user)
+    item = plaid_service.get_item(plaid_item_id, family_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    prev_status = item.get("status", "unknown")
+    plaid_service.update_item_status(plaid_item_id, "active")
+    logger.info(
+        "plaid reconnect completed item=%s institution=%s status %s->active user=%s family=%s",
+        plaid_item_id, item.get("institution_name", ""), prev_status,
+        current_user.id, family_id,
+    )
+
+    # Kick off a sync so transactions that accrued during the outage flow in.
+    # Background task (see /exchange) so the UI is not blocked; failures here
+    # must not fail the response — they surface to Sentry and retry via webhook.
+    async def _bg_sync():
+        try:
+            result = plaid_service.sync_transactions(plaid_item_id)
+            logger.info(
+                "plaid reconnect sync item=%s result=%s", plaid_item_id, result
+            )
+        except Exception as exc:
+            logger.exception("reconnect sync failed for item %s", plaid_item_id)
+            _capture_plaid_error(exc, item=plaid_item_id, stage="reconnect_sync", family_id=family_id)
+
+    task = asyncio.create_task(_bg_sync())
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+
+    return {"ok": True, "item_id": plaid_item_id, "status": "active", "sync_status": "pending"}
+
+
+def _capture_plaid_error(exc: Exception, *, item: str = "", stage: str = "", family_id: str = "") -> None:
+    """Send a Plaid failure to Sentry with context (best-effort, never raises).
+
+    Routine activity stays in Cloud Logging; only failures go to Sentry so they
+    are visible + alertable without drowning the project in info-level noise.
+    """
+    try:
+        import sentry_sdk
+        sentry_sdk.set_context("plaid", {"item_id": item, "stage": stage, "family_id": family_id})
+        sentry_sdk.capture_exception(exc)
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Webhook
 # ---------------------------------------------------------------------------
