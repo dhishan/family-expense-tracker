@@ -16,6 +16,7 @@ import { usePlaidLink } from 'react-plaid-link'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { plaidApi } from '../services/api'
+import { reportPlaidExit } from '../services/plaidErrors'
 import { useAuthStore } from '../store/auth'
 
 export default function PlaidOAuthReturn() {
@@ -59,7 +60,10 @@ export default function PlaidOAuthReturn() {
           onSuccess: (public_token) => {
             exchangeMutation.mutate(public_token)
           },
-          onExit: () => {
+          onExit: (err, metadata) => {
+            // OAuth banks (Chase, etc.) can fail mid-flow with a bank-side
+            // error; surface it instead of silently bouncing to /settings.
+            reportPlaidExit(err, metadata, 'reconnect')
             navigate('/settings', { replace: true })
           },
         }

@@ -14,6 +14,7 @@ import {
   TrashIcon,
 } from '@heroicons/react/24/outline'
 import { familyApi, plaidApi, investmentsApi } from '../services/api'
+import { reportPlaidExit } from '../services/plaidErrors'
 import type { InvestmentAccount } from '../services/api'
 import { useAuthStore } from '../store/auth'
 import { usePlaidLink } from 'react-plaid-link'
@@ -86,7 +87,10 @@ function BanksAndCards() {
       }
       setLinkToken(null)
     },
-    onExit: () => setLinkToken(null),
+    onExit: (err, metadata) => {
+      reportPlaidExit(err, metadata, 'connect')
+      setLinkToken(null)
+    },
   })
 
   // Plaid Link for reconnect (update mode)
@@ -97,7 +101,10 @@ function BanksAndCards() {
       toast.success('Bank reconnected!')
       setReconnectToken(null)
     },
-    onExit: () => setReconnectToken(null),
+    onExit: (err, metadata) => {
+      reportPlaidExit(err, metadata, 'reconnect')
+      setReconnectToken(null)
+    },
   })
 
   const renameMutation = useMutation({
