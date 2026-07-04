@@ -171,9 +171,15 @@ function BanksAndCards() {
     }
   }
 
-  // Open link when token is ready
-  if (linkToken && ready) openLink()
-  if (reconnectToken && reconnectReady) openReconnectLink()
+  // Open link when the token is ready. Must be an effect, not a render-phase
+  // call: React can re-render (Strict Mode, concurrent) and each render would
+  // re-invoke open(), opening overlapping Plaid sessions.
+  useEffect(() => {
+    if (linkToken && ready) openLink()
+  }, [linkToken, ready, openLink])
+  useEffect(() => {
+    if (reconnectToken && reconnectReady) openReconnectLink()
+  }, [reconnectToken, reconnectReady, openReconnectLink])
 
   const getLastSyncText = (lastSyncedAt: string | null) => {
     if (!lastSyncedAt) return 'Never synced'

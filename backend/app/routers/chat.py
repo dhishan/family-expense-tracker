@@ -2369,7 +2369,12 @@ async def _generate_turn(
                     error=_friendly_provider_error(exc),
                 )
             except Exception:
-                pass
+                # Loud log: if finalize fails here the turn stays "streaming"
+                # forever and mobile polls it for the full 1800s wall clock.
+                logger.exception(
+                    "finalize_turn (GPT error path) failed conv=%s turn=%s",
+                    conv_id, assistant_turn_id,
+                )
         try:
             if lf_obs:
                 lf_obs.update(metadata={"provider": "openai", "model": model_id})
@@ -2740,22 +2745,9 @@ async def _generate_turn(
             except Exception as e:
                 logger.warning("Langfuse trace close failed: %s", e)
 
-        # ── Usage metering (best-effort, never breaks chat) ────────────
-        try:
-            from app.services import usage_service as _usage_svc
-            import time as _time
-            _usage_svc.record_usage(
-                user_id=user_id,
-                family_id=None,  # not threaded into _generate_turn; look up if needed
-                source="chat",
-                model=model_id,
-                conversation_id=conv_id,
-                turn_id=assistant_turn_id,
-                usage=stream_usage,
-                duration_ms=0,  # duration tracking can be added later
-            )
-        except Exception as _ue:
-            logger.warning("usage_service record failed (non-fatal): %s", _ue)
+        # Usage is metered per model call inside the agentic loop above (one
+        # record_usage per API round). Recording again here would double-count
+        # every turn (and inflate multi-tool turns by the number of rounds).
 
     except Exception as exc:
         logger.exception("Chat generation error for user %s conv %s", user_id, conv_id)

@@ -33,6 +33,13 @@ async def verify_google_token(token: str) -> dict:
         if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
             raise ValueError('Invalid issuer')
 
+        # Reject unverified emails. Google's library does not enforce this;
+        # some Workspace configs can mint tokens with email_verified=false for
+        # an unverified custom domain. The MCP auth path already checks this —
+        # keep the two login paths consistent.
+        if not idinfo.get('email_verified'):
+            raise ValueError('Email not verified')
+
         return {
             'id': idinfo['sub'],
             'email': idinfo['email'],

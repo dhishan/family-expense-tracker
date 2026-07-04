@@ -52,7 +52,7 @@ export default function AutoRulesScreen() {
   const handleDelete = useCallback((rule: MerchantRule) => {
     Alert.alert(
       'Delete rule?',
-      `Future "${rule.merchant}" transactions will no longer be auto-categorised.`,
+      `Future "${rule.merchant_name}" transactions will no longer be auto-categorised.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -76,7 +76,7 @@ export default function AutoRulesScreen() {
     return (
       <View style={styles.ruleRow} testID={`rule-row-${item.id}`}>
         <View style={styles.ruleBody}>
-          <Text style={styles.ruleMerchant} numberOfLines={1}>{item.merchant}</Text>
+          <Text style={styles.ruleMerchant} numberOfLines={1}>{item.merchant_name}</Text>
           <View style={styles.ruleMeta}>
             <Text style={styles.ruleCat}>{emoji} {catLabel}</Text>
           </View>

@@ -330,17 +330,19 @@ export interface ApproveSplitResponse {
   pending_id: string
 }
 
-// Merchant auto-rules — mirrored from frontend/src/types/index.ts
+// Merchant auto-rules — mirrored from frontend/src/types/index.ts.
+// Field names match the backend MerchantRuleResponse (rules.py): merchant_name
+// (not `merchant`) and last_applied_at (not `updated_at`).
 export interface MerchantRule {
   id: string
   family_id: string
-  merchant: string
+  merchant_name: string
   category: ExpenseCategory
   budget_id: string | null
   beneficiary: string | null
   applied_count: number
+  last_applied_at: string | null
   created_at: string
-  updated_at: string
 }
 
 export interface MerchantRuleCreate {

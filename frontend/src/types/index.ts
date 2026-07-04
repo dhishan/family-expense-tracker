@@ -243,7 +243,7 @@ export interface PendingTransaction {
   suggested_category: ExpenseCategory
   plaid_category: string | null
   pending_until_posted: boolean
-  is_income: boolean
+  is_income?: boolean
   status: 'pending' | 'approved' | 'discarded'
   expense_id: string | null
   suggested_budget_id?: string | null
@@ -277,6 +277,7 @@ export interface PendingApproveSplit {
 // Merchant auto-rule types
 export interface MerchantRule {
   id: string
+  family_id: string
   merchant_name: string
   category: string
   budget_id: string | null

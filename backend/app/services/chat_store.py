@@ -257,10 +257,19 @@ class ChatStore:
         Single writer per turn (the background generator), so no need for
         transactions.
         """
-        updates: dict[str, Any] = {
-            "events": firestore.ArrayUnion([event]),
-            "updated_at": _now(),
-        }
+        updates: dict[str, Any] = {"updated_at": _now()}
+        # Cap the raw events array so a long tool-heavy turn can't grow past
+        # Firestore's 1MB document limit (which would start failing writes
+        # silently). The running `text`/`tool_calls` projections still carry the
+        # content, so resume rendering is unaffected past the cap.
+        seq = event.get("seq")
+        if seq is None or seq < MAX_EVENTS:
+            updates["events"] = firestore.ArrayUnion([event])
+        elif seq == MAX_EVENTS:
+            logger.warning(
+                "chat turn %s/%s hit MAX_EVENTS=%d — capping raw event array",
+                conv_id, turn_id, MAX_EVENTS,
+            )
         if text_delta:
             # Firestore doesn't have a native string-append; read-modify-write
             # would race with high-frequency text deltas. We accept the cost

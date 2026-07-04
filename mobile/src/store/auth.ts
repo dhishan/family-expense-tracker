@@ -77,6 +77,10 @@ export const useAuthStore = create<AuthState>((set) => ({
   setFamilyMembers: (members: FamilyMember[]) => set({ familyMembers: members }),
 
   logout: async () => {
+    // Sign out of Google too — otherwise loadToken()'s signInSilently() below
+    // succeeds on next launch and silently re-authenticates, making logout a
+    // no-op on any device with a cached Google session.
+    await GoogleSignin.signOut().catch(() => {})
     await SecureStore.deleteItemAsync('jwt_token').catch(() => {})
     syncSentryUser(null, null)
     set({ token: null, user: null, family: null, familyMembers: [] })

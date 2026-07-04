@@ -1106,6 +1106,27 @@ class TestReconnectComplete:
         assert exc.value.status_code == 404
 
 
+class TestAssertNonProdFailsClosed:
+    """The _test/* endpoints must be unreachable in any non-test environment.
+    The deployed service runs ENVIRONMENT=dev, so the guard must fail CLOSED
+    (block anything not explicitly a known test env), not allow-list prod."""
+
+    def test_blocks_prod_dev_and_unknown(self, monkeypatch):
+        from app.routers import plaid as plaid_mod
+        from fastapi import HTTPException
+        for env in ("production", "prod", "dev", "staging", "DEV", ""):
+            monkeypatch.setattr(plaid_mod.settings, "environment", env)
+            with pytest.raises(HTTPException) as exc:
+                plaid_mod._assert_non_prod()
+            assert exc.value.status_code == 404, f"env={env!r} should be blocked"
+
+    def test_allows_known_test_envs(self, monkeypatch):
+        from app.routers import plaid as plaid_mod
+        for env in ("sandbox", "test", "e2e", "development", "local", "E2E"):
+            monkeypatch.setattr(plaid_mod.settings, "environment", env)
+            plaid_mod._assert_non_prod()  # must not raise
+
+
 # ---------------------------------------------------------------------------
 # approve-split endpoint tests
 # ---------------------------------------------------------------------------

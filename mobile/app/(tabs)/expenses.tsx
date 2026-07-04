@@ -410,7 +410,7 @@ function ApproveModal({
   const existingRules: MerchantRule[] = rulesData ?? []
   const merchantLower = merchant.trim().toLowerCase()
   const ruleAlreadyExists = merchantLower.length > 0
-    && existingRules.some((r) => (r?.merchant ?? '').toLowerCase() === merchantLower)
+    && existingRules.some((r) => (r?.merchant_name ?? '').toLowerCase() === merchantLower)
 
   useEffect(() => {
     if (!pending || !visible) return

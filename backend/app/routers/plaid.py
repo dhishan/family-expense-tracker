@@ -359,30 +359,34 @@ async def list_items(current_user: User = Depends(get_current_user)):
     db = get_firestore_client()
     items = plaid_service.list_items(family_id)
 
-    # Attach accounts to each item
+    # Fetch ALL of the family's accounts in one query and group by item in
+    # memory, instead of one accounts query per item (N+1). Account docs carry
+    # family_id (see upsert_accounts), so this stays family-scoped.
+    accounts_by_item: dict[str, list[dict]] = {}
+    acct_snaps = (
+        db.collection(plaid_service.PLAID_ACCOUNTS_COLLECTION)
+        .where(filter=firestore.FieldFilter("family_id", "==", family_id))
+        .stream()
+    )
+    for snap in acct_snaps:
+        a = snap.to_dict() or {}
+        accounts_by_item.setdefault(a.get("plaid_item_id", ""), []).append({
+            "id": snap.id,
+            "name": a.get("name", ""),
+            "mask": a.get("mask"),
+            "type": a.get("type", ""),
+            "subtype": a.get("subtype"),
+            "balances": {
+                "current": a.get("current_balance"),
+                "available": a.get("available_balance"),
+                "iso_currency_code": a.get("iso_currency_code"),
+            },
+        })
+
     out = []
     for item in items:
         item_id = item["id"]
-        acct_snaps = (
-            db.collection(plaid_service.PLAID_ACCOUNTS_COLLECTION)
-            .where(filter=firestore.FieldFilter("plaid_item_id", "==", item_id))
-            .stream()
-        )
-        accounts = []
-        for snap in acct_snaps:
-            a = snap.to_dict() or {}
-            accounts.append({
-                "id": snap.id,
-                "name": a.get("name", ""),
-                "mask": a.get("mask"),
-                "type": a.get("type", ""),
-                "subtype": a.get("subtype"),
-                "balances": {
-                    "current": a.get("current_balance"),
-                    "available": a.get("available_balance"),
-                    "iso_currency_code": a.get("iso_currency_code"),
-                },
-            })
+        accounts = accounts_by_item.get(item_id, [])
         out.append({
             "id": item_id,
             "institution_name": item.get("institution_name", ""),
@@ -675,39 +679,69 @@ async def plaid_webhook(
 
     if webhook_type == "TRANSACTIONS":
         if webhook_code == "SYNC_UPDATES_AVAILABLE":
-            _handle_sync_updates(item_id)
+            await _handle_sync_updates(item_id)
 
     elif webhook_type == "ITEM":
         error = payload.get("error") or {}
         error_code = error.get("error_code") if isinstance(error, dict) else ""
 
         if webhook_code == "ERROR" and error_code == "ITEM_LOGIN_REQUIRED":
-            _handle_item_login_required(item_id)
+            await _handle_item_auth_event(
+                item_id,
+                status="needs_reauth",
+                title="Reconnect {inst}",
+                message=(
+                    "Your connection to {inst} needs to be renewed. Open the app "
+                    "and reconnect your account to continue syncing transactions."
+                ),
+            )
 
         elif webhook_code == "PENDING_EXPIRATION":
-            _handle_pending_expiration(item_id)
+            await _handle_item_auth_event(
+                item_id,
+                status=None,
+                title="Reconnect {inst} soon",
+                message=(
+                    "Your connection to {inst} will expire soon. Please reconnect "
+                    "to keep your transactions syncing."
+                ),
+            )
 
     # All other webhook types: log and ignore.
     return {"ok": True}
 
 
-def _handle_sync_updates(item_id: str) -> None:
+async def _handle_sync_updates(item_id: str) -> None:
     """Kick off a sync for the given item. Family_id is derived from the stored item doc."""
     if not item_id:
         return
     try:
-        result = plaid_service.sync_transactions(item_id)
+        # sync_transactions does blocking HTTP — keep it off the event loop so
+        # in-flight SSE chat streams are not stalled.
+        result = await asyncio.to_thread(plaid_service.sync_transactions, item_id)
         logger.info("webhook sync completed item=%s result=%s", item_id, result)
     except Exception:
         logger.exception("webhook sync failed for item %s", item_id)
 
 
-def _handle_item_login_required(item_id: str) -> None:
-    """Mark item as needs_reauth and optionally write a notification."""
+async def _handle_item_auth_event(
+    item_id: str, *, status: str | None, title: str, message: str
+) -> None:
+    """ITEM_LOGIN_REQUIRED / PENDING_EXPIRATION handler.
+
+    Optionally flips the item status and writes a reconnect notification.
+    `title`/`message` use the ``{inst}`` placeholder for the institution name.
+
+    Previously this ran ``asyncio.get_event_loop().run_until_complete(...)`` from
+    inside the running webhook loop, which raised RuntimeError every time and was
+    swallowed — so these notifications never fired in production.
+    """
     if not item_id:
         return
     db = get_firestore_client()
-    snap = db.collection(plaid_service.PLAID_ITEMS_COLLECTION).document(item_id).get()
+    snap = await asyncio.to_thread(
+        db.collection(plaid_service.PLAID_ITEMS_COLLECTION).document(item_id).get
+    )
     if not snap.exists:
         return
     item_data = snap.to_dict() or {}
@@ -715,67 +749,24 @@ def _handle_item_login_required(item_id: str) -> None:
     connected_by_user_id = item_data.get("connected_by_user_id", "")
     institution_name = item_data.get("institution_name", "your bank")
 
-    plaid_service.update_item_status(item_id, "needs_reauth")
-    logger.info("Item %s marked needs_reauth", item_id)
-
-    # Write a notification (best-effort)
-    try:
-        from app.models.notification import NotificationType
-        from app.services.notification_service import get_notification_service
-
-        if connected_by_user_id and family_id:
-            import asyncio
-            svc = get_notification_service()
-            asyncio.get_event_loop().run_until_complete(
-                svc.create(
-                    family_id=family_id,
-                    user_id=connected_by_user_id,
-                    notification_type=NotificationType.SYSTEM,
-                    title=f"Reconnect {institution_name}",
-                    message=(
-                        f"Your connection to {institution_name} needs to be renewed. "
-                        "Open the app and reconnect your account to continue syncing transactions."
-                    ),
-                )
-            )
-    except Exception:
-        logger.warning("Could not write ITEM_LOGIN_REQUIRED notification for item %s", item_id)
-
-
-def _handle_pending_expiration(item_id: str) -> None:
-    """Write a 'reconnect soon' notification for PENDING_EXPIRATION."""
-    if not item_id:
-        return
-    db = get_firestore_client()
-    snap = db.collection(plaid_service.PLAID_ITEMS_COLLECTION).document(item_id).get()
-    if not snap.exists:
-        return
-    item_data = snap.to_dict() or {}
-    family_id = item_data.get("family_id", "")
-    connected_by_user_id = item_data.get("connected_by_user_id", "")
-    institution_name = item_data.get("institution_name", "your bank")
+    if status:
+        plaid_service.update_item_status(item_id, status)
+        logger.info("Item %s marked %s", item_id, status)
 
     try:
         from app.models.notification import NotificationType
         from app.services.notification_service import get_notification_service
 
         if connected_by_user_id and family_id:
-            import asyncio
-            svc = get_notification_service()
-            asyncio.get_event_loop().run_until_complete(
-                svc.create(
-                    family_id=family_id,
-                    user_id=connected_by_user_id,
-                    notification_type=NotificationType.SYSTEM,
-                    title=f"Reconnect {institution_name} soon",
-                    message=(
-                        f"Your connection to {institution_name} will expire soon. "
-                        "Please reconnect to keep your transactions syncing."
-                    ),
-                )
+            await get_notification_service().create(
+                family_id=family_id,
+                user_id=connected_by_user_id,
+                notification_type=NotificationType.SYSTEM,
+                title=title.format(inst=institution_name),
+                message=message.format(inst=institution_name),
             )
     except Exception:
-        logger.warning("Could not write PENDING_EXPIRATION notification for item %s", item_id)
+        logger.exception("Could not write item-auth notification for item %s", item_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1204,7 +1195,7 @@ async def approve_split(
         budget_svc = get_budget_service()
         await budget_svc.check_budget_alerts(family_id)
     except Exception:
-        pass
+        logger.exception("budget alert check failed after approve-split family=%s", family_id)
 
     logger.info(
         "approve_split pending=%s splits=%d expense_ids=%s user=%s family=%s",
@@ -1219,9 +1210,16 @@ async def approve_split(
 # ---------------------------------------------------------------------------
 
 
+# Only these environments may reach the _test endpoints. Fail CLOSED: any
+# unrecognized value (including the deployed "dev") is treated as production.
+# The Cloud Run deploy runs with ENVIRONMENT=dev, so an allowlist-of-prod check
+# would have left these destructive endpoints live in production.
+_TEST_ENV_ALLOWLIST = frozenset({"sandbox", "test", "e2e", "development", "local"})
+
+
 def _assert_non_prod():
-    """Raise 404 if running in production so these endpoints are never exposed."""
-    if settings.environment.lower() in ("production", "prod"):
+    """Raise 404 unless running in an explicit, known test environment."""
+    if settings.environment.lower() not in _TEST_ENV_ALLOWLIST:
         raise HTTPException(status_code=404, detail="Not found")
 
 

@@ -64,18 +64,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS
+# Configure CORS. The production origins are added unconditionally: the
+# deployed service runs with ENVIRONMENT=dev, so gating them on
+# `environment == "production"` (as before) meant they were never applied and
+# the apex domain got CORS-blocked in production.
 cors_origins = [
     settings.frontend_url,
     "http://localhost:5173",
     "http://localhost:3000",
+    "https://ui.expense-tracker.blueelephants.org",
+    "https://blueelephants.org",
 ]
-
-if settings.environment == "production":
-    cors_origins.extend([
-        "https://ui.expense-tracker.blueelephants.org",
-        "https://blueelephants.org",
-    ])
 
 app.add_middleware(
     CORSMiddleware,

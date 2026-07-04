@@ -348,7 +348,7 @@ export default function Investments() {
     retry: false,
   })
 
-  const { data: holdingsRaw, isLoading: holdingsLoading } = useQuery({
+  const { data: holdingsRaw, isLoading: holdingsLoading, error: holdingsError } = useQuery({
     queryKey: ['investments', 'holdings'],
     queryFn: investmentsApi.holdings,
     enabled: !accountsError && !!accounts && accounts.length > 0,
@@ -414,7 +414,6 @@ export default function Investments() {
               // Skip accounts — that list only changes when a brokerage is
               // explicitly connected/disconnected via the Connect button.
               queryClient.invalidateQueries({ queryKey: ['investments', 'holdings'] })
-              queryClient.invalidateQueries({ queryKey: ['investments', 'activities'] })
               toast.success('Refreshing portfolio…')
             }}
             disabled={holdingsLoading}
@@ -526,7 +525,14 @@ export default function Investments() {
           </div>
         )}
 
-        {showHoldings && !holdingsLoading && positions.length === 0 && (
+        {showHoldings && !holdingsLoading && holdingsError && (
+          <div className="py-8 text-center text-red-600 text-sm">
+            Couldn't load your holdings (the brokerage sync may have failed). Try
+            refreshing; if it persists, reconnect the brokerage.
+          </div>
+        )}
+
+        {showHoldings && !holdingsLoading && !holdingsError && positions.length === 0 && (
           <div className="py-8 text-center text-gray-500 text-sm">
             {noAccounts
               ? 'Connect a brokerage above to see your holdings.'
