@@ -1,6 +1,13 @@
 # GCP observability for the backend Cloud Run service.
-# Free-tier-friendly: enables the APIs, adds an uptime check on /health,
-# log-based metric for MCP tool calls, and alert policies for uptime + 5xx.
+# Free-tier-friendly: enables the APIs, a log-based metric for MCP tool calls,
+# and a 5xx alert policy.
+#
+# NOTE: intentionally NO uptime check on /health. The backend runs minScale=0
+# with cpu-throttling=false (instance-based billing). A periodic uptime probe
+# hits /health every minute, which keeps an instance alive 24/7 so the service
+# never scales to zero and is billed for a full vCPU continuously (~$1.6/day,
+# ~$49/mo). Uptime alerting on a scale-to-zero personal app is low value anyway
+# (cold starts read as brief failures); the 5xx alert below covers real errors.
 
 resource "google_project_service" "monitoring" {
   service            = "monitoring.googleapis.com"
@@ -24,65 +31,6 @@ resource "google_monitoring_notification_channel" "email" {
   labels = {
     email_address = var.notification_email
   }
-  depends_on = [google_project_service.monitoring]
-}
-
-# Uptime check on /health (executes from multiple regions, every 1 min).
-# Free tier: 1M check executions/month — comfortably covers 1 check at 60s.
-resource "google_monitoring_uptime_check_config" "backend_health" {
-  display_name = "expense-tracker-backend /health"
-  timeout      = "10s"
-  period       = "60s"
-
-  http_check {
-    path           = "/health"
-    port           = "443"
-    use_ssl        = true
-    validate_ssl   = true
-    request_method = "GET"
-  }
-
-  monitored_resource {
-    type = "uptime_url"
-    labels = {
-      project_id = var.project_id
-      host       = local.backend_domain_fqdn
-    }
-  }
-
-  depends_on = [google_project_service.monitoring]
-}
-
-# Alert: uptime check failing.
-resource "google_monitoring_alert_policy" "backend_uptime" {
-  display_name = "Backend uptime check failing"
-  combiner     = "OR"
-
-  conditions {
-    display_name = "Uptime check failure"
-    condition_threshold {
-      filter          = "metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id=\"${google_monitoring_uptime_check_config.backend_health.uptime_check_id}\" AND resource.type=\"uptime_url\""
-      duration        = "180s"
-      comparison      = "COMPARISON_GT"
-      threshold_value = 1
-      trigger {
-        count = 1
-      }
-      aggregations {
-        alignment_period     = "60s"
-        per_series_aligner   = "ALIGN_NEXT_OLDER"
-        cross_series_reducer = "REDUCE_COUNT_FALSE"
-        group_by_fields      = ["resource.label.host"]
-      }
-    }
-  }
-
-  notification_channels = [google_monitoring_notification_channel.email.id]
-
-  alert_strategy {
-    auto_close = "1800s"
-  }
-
   depends_on = [google_project_service.monitoring]
 }
 
