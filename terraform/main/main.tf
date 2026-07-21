@@ -813,6 +813,11 @@ resource "google_cloud_run_service" "backend" {
         "autoscaling.knative.dev/minScale"        = "0"
         "autoscaling.knative.dev/maxScale"        = "10"
         "run.googleapis.com/cpu-throttling"       = "false"
+        # Startup CPU boost: full CPU during container startup so the
+        # import-heavy app (FastAPI + MCP + Anthropic/OpenAI/SnapTrade SDKs)
+        # cold-starts fast enough that scale-to-zero is usable. No code change;
+        # only applies during the boot window, so it does not affect steady cost.
+        "run.googleapis.com/startup-cpu-boost"    = "true"
         # Force a new revision on every TF apply so :latest image is re-pulled.
         "client.knative.dev/user-image-sha" = "deployed-${formatdate("YYYYMMDDhhmm", timestamp())}"
       }
