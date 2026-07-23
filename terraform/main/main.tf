@@ -801,18 +801,20 @@ resource "google_cloud_run_service" "backend" {
         #     actually scales down — no point paying for an always-on
         #     instance just so a 1-min uptime check finds someone home.
         #
-        #   run.googleapis.com/cpu-throttling = false
-        #     Restored so background chat generation gets full CPU
-        #     during a session. To prevent scale-down mid-generation,
-        #     the web + mobile chat pages send a /health ping every
-        #     30s while a turn is in flight. This is the cheap-and-
-        #     cheerful alternative to moving chat generation to
-        #     Cloud Tasks: ~20 lines of client code instead of a
-        #     queue refactor. Cost during a chat session is bounded
-        #     by session duration (~5-10 min/day total).
+        #   run.googleapis.com/cpu-throttling = true (throttled when idle)
+        #     2026-07-22: flipped from false to true to match the fitness
+        #     backend and cut cost (~$9/mo -> ~$2-3/mo). CPU is now billed
+        #     only during active requests, not for the whole time an instance
+        #     is warm. Tradeoff: in-app chat generation is a detached asyncio
+        #     task (POST /chat/start), so under throttling it runs choppy/slow
+        #     between the 30s keepalive pings. Acceptable because in-app chat
+        #     is a backup surface - primary analysis is the claude.ai MCP
+        #     connector. Normal request/response endpoints (expenses, budgets,
+        #     Plaid, investments) complete within their request and are
+        #     unaffected.
         "autoscaling.knative.dev/minScale"        = "0"
         "autoscaling.knative.dev/maxScale"        = "10"
-        "run.googleapis.com/cpu-throttling"       = "false"
+        "run.googleapis.com/cpu-throttling"       = "true"
         # Startup CPU boost: full CPU during container startup so the
         # import-heavy app (FastAPI + MCP + Anthropic/OpenAI/SnapTrade SDKs)
         # cold-starts fast enough that scale-to-zero is usable. No code change;
